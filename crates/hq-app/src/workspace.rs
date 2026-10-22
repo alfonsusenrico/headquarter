@@ -504,10 +504,9 @@ impl Workspace {
             }
         }
         let chrome = self.theme.chrome;
-        let live = self.live_colour();
         match &self.modal {
             Some(Modal::Open { view: window, .. }) => {
-                window.update(cx, |window, cx| window.set_chrome(chrome, live, cx));
+                window.update(cx, |window, cx| window.set_chrome(chrome, cx));
             }
             Some(Modal::New { view: window, .. }) => {
                 window.update(cx, |window, cx| window.set_chrome(chrome, cx));
@@ -1235,10 +1234,9 @@ impl Workspace {
         let agents = self.enabled_agents();
         let home = self.home_folder();
         let chrome = self.theme.chrome;
-        let live = self.live_colour();
         let marks = self.marks.clone();
         let open =
-            cx.new(|cx| OpenSessions::new(sessions, agents, home, chrome, live, marks, window, cx));
+            cx.new(|cx| OpenSessions::new(sessions, agents, home, chrome, marks, window, cx));
         let events =
             cx.subscribe_in(
                 &open,
@@ -1493,11 +1491,6 @@ impl Workspace {
         self.home
             .as_ref()
             .map_or_else(|| PathBuf::from("/"), PathBuf::from)
-    }
-
-    /// The green that marks a session running now.
-    fn live_colour(&self) -> Rgb {
-        self.theme.palette.ansi[2]
     }
 
     /// Finds each enabled provider's executable and version as `hq agents` does, off
