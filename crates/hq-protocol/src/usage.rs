@@ -103,6 +103,46 @@ pub fn fill(usage: &AgentUsage, now_secs: u64) -> Option<f64> {
     tightest(usage, now_secs).map(|window| window.used_percent.clamp(0.0, 100.0))
 }
 
+/// The footer's two rings (owner, 2026-10-22): the inner one for the agent's shortest
+/// all-models window that still holds (Claude Code's and Codex's 5 hours), the outer one
+/// for its longest (the week). With one window, only the outer ring is filled; `None`
+/// leaves a ring empty.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rings {
+    pub inner: Option<f64>,
+    pub outer: Option<f64>,
+}
+
+impl Rings {
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_none() && self.outer.is_none()
+    }
+}
+
+/// The fills of the footer's rings, 0 to 100.
+pub fn rings(usage: &AgentUsage, now_secs: u64) -> Rings {
+    let mut windows: Vec<&UsageWindow> = current_windows(usage, now_secs)
+        .into_iter()
+        .filter(|window| window.model.is_none())
+        .collect();
+    windows.sort_by_key(|window| window.minutes.unwrap_or(u64::MAX));
+    let percent = |window: &UsageWindow| window.used_percent.clamp(0.0, 100.0);
+    match windows.as_slice() {
+        [] => Rings {
+            inner: None,
+            outer: None,
+        },
+        [only] => Rings {
+            inner: None,
+            outer: Some(percent(only)),
+        },
+        [shortest, .., longest] => Rings {
+            inner: Some(percent(shortest)),
+            outer: Some(percent(longest)),
+        },
+    }
+}
+
 pub fn percent_text(percent: f64) -> String {
     format!("{}%", percent.round() as i64)
 }
@@ -233,6 +273,48 @@ mod tests {
             }),
             "Google Vertex AI"
         );
+    }
+
+    #[test]
+    fn rings_show_the_short_window_inside_and_the_week_outside() {
+        let claude = usage(
+            Agent::Claude,
+            vec![
+                window(10_080, 67.0, NOW + 5_000),
+                window(300, 42.0, NOW + 100),
+                UsageWindow {
+                    model: Some("Fable".into()),
+                    ..window(10_080, 99.0, NOW + 5_000)
+                },
+            ],
+            Some(NOW),
+        );
+        assert_eq!(
+            rings(&claude, NOW),
+            Rings {
+                inner: Some(42.0),
+                outer: Some(67.0)
+            },
+            "per-model windows stay in the details"
+        );
+        let single = usage(Agent::Codex, vec![window(10_080, 12.0, NOW + 5)], Some(NOW));
+        assert_eq!(
+            rings(&single, NOW),
+            Rings {
+                inner: None,
+                outer: Some(12.0)
+            }
+        );
+        let reset = usage(
+            Agent::Codex,
+            vec![window(300, 80.0, NOW - 1)],
+            Some(NOW - 10),
+        );
+        assert!(
+            rings(&reset, NOW).is_empty(),
+            "a reset window no longer counts"
+        );
+        assert!(rings(&usage(Agent::Agy, Vec::new(), None), NOW).is_empty());
     }
 
     #[test]

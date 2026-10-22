@@ -2159,41 +2159,56 @@ impl Workspace {
     fn usage_ring(&self, usage: &AgentUsage, now: u64, cx: &mut Context<Self>) -> AnyElement {
         let chrome = self.theme.chrome;
         let agent = usage.agent;
-        let fill = usage::fill(usage, now);
+        let rings = usage::rings(usage, now);
         let note = usage::update_note(usage, &chrono::Local::now());
-        let color = if note.is_some() {
-            chrome.muted
-        } else if fill.is_some_and(|percent| percent >= usage::HIGH_PERCENT) {
-            chrome.amber
-        } else {
-            chrome.text
+        let color = |percent: Option<f64>| {
+            if note.is_some() {
+                chrome.muted
+            } else if percent.is_some_and(|percent| percent >= usage::HIGH_PERCENT) {
+                chrome.amber
+            } else {
+                chrome.text
+            }
         };
         let who = usage.account.as_ref().map_or_else(
             || agent.to_string(),
             |account| format!("{agent} ({})", usage::account_text(account)),
         );
-        let description = match (usage.read_at, fill) {
-            (Some(_), Some(percent)) => match &note {
-                Some(note) => format!("{who}: {} used. {note}", usage::percent_text(percent)),
-                None => format!("{who}: {} used", usage::percent_text(percent)),
+        let used: Vec<String> = usage::current_windows(usage, now)
+            .into_iter()
+            .filter(|window| window.model.is_none())
+            .map(|window| {
+                format!(
+                    "{} {}",
+                    usage::window_name(window),
+                    usage::percent_text(window.used_percent)
+                )
+            })
+            .collect();
+        let description = match (usage.read_at, used.is_empty()) {
+            (Some(_), false) => match &note {
+                Some(note) => format!("{who}: {} used. {note}", used.join(", ")),
+                None => format!("{who}: {} used", used.join(", ")),
             },
             _ => format!(
                 "{who}: {}",
                 usage.problem.as_deref().unwrap_or("usage not available")
             ),
         };
+        let mark_size = if rings.inner.is_some() { 11. } else { 16. };
         let mut ring = div()
             .id(SharedString::from(format!("usage-{agent}")))
             .rounded(px(8.))
             .cursor_pointer()
             .child(glyph::usage_ring(
                 agent,
-                fill,
-                color,
+                rings,
+                color(rings.outer),
+                color(rings.inner),
                 chrome,
                 self.marks
                     .has(agent)
-                    .then(|| self.marks.element(agent, 16., chrome.muted)),
+                    .then(|| self.marks.element(agent, mark_size, chrome.muted)),
             ))
             .tooltip(move |window, cx| Tooltip::new(description.clone()).build(window, cx))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_usage(agent, cx)))
