@@ -115,6 +115,7 @@ pub fn read_claude_account(executable: &Path, timeout: Duration) -> Option<Accou
     let mut command = Command::new(executable);
     command
         .args(["auth", "status", "--json"])
+        .env("PATH", hq_discovery::shell::agent_path(executable))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -223,6 +224,7 @@ fn query_codex(executable: &Path, timeout: Duration) -> Result<CodexAnswers, Str
     let mut command = Command::new(executable);
     command
         .arg("app-server")
+        .env("PATH", hq_discovery::shell::agent_path(executable))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

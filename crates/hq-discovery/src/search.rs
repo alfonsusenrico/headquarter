@@ -221,6 +221,7 @@ fn newest_nvm_bin(versions: &Path) -> Option<PathBuf> {
 pub fn probe_version(executable: &Path, timeout: Duration) -> Option<String> {
     let mut child = Command::new(executable)
         .arg("--version")
+        .env("PATH", crate::shell::agent_path(executable))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
