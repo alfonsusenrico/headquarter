@@ -791,7 +791,7 @@ impl Workspace {
         let Some(id) = self.pending_shown.take() else {
             return;
         };
-        let Some(info) = self.session(&id).cloned() else {
+        let Some(info) = model::kept_session(&self.sessions, &id).cloned() else {
             return;
         };
         if info.live {
