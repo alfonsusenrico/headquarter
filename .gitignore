@@ -25,3 +25,8 @@ build/
 
 # Rust build output
 /target/
+
+# Development material kept beside the product, never committed (AGENTS.md).
+research/
+openspec/changes/archive/
+docs/ref *.jpg
