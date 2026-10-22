@@ -4,7 +4,7 @@
 //! the log (owner decision 2026-10-20).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,13 +18,41 @@ use crate::session::Hosted;
 
 /// How often history is re-read; spec: outside activity shows within a minute.
 const HISTORY_INTERVAL: Duration = Duration::from_secs(60);
+/// The longest a list request waits for the first import after the host starts.
+pub(super) const FIRST_IMPORT_WAIT: Duration = Duration::from_secs(10);
+
+/// Set once the first history import has finished, so the first list a client gets
+/// already holds the owner's past conversations.
+#[derive(Default)]
+pub(super) struct FirstImport {
+    done: Mutex<bool>,
+    signal: Condvar,
+}
 
 impl Host {
     pub(super) fn history_loop(self: Arc<Self>) {
         loop {
             self.import_history();
+            let mut done = lock(&self.first_import.done);
+            if !*done {
+                *done = true;
+                self.first_import.signal.notify_all();
+            }
+            drop(done);
             thread::sleep(HISTORY_INTERVAL);
         }
+    }
+
+    /// Waits until the first history import has finished, at most `limit`.
+    pub(super) fn wait_for_first_import(&self, limit: Duration) {
+        let done = lock(&self.first_import.done);
+        if *done {
+            return;
+        }
+        let _ = self
+            .first_import
+            .signal
+            .wait_timeout_while(done, limit, |done| !*done);
     }
 
     fn import_history(&self) {

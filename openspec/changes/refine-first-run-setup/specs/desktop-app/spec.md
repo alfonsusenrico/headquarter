@@ -8,3 +8,7 @@ The system SHALL show, until the host answers with its first session list, the a
 #### Scenario: First seconds after opening
 - **WHEN** the app opens and the host has not answered yet
 - **THEN** the sidebar shows the marks lighting up in turn and the pane shows no hint, until the sessions are listed
+
+#### Scenario: Add sessions while starting
+- **WHEN** the owner opens Add sessions before the first list has arrived
+- **THEN** it shows the marks lighting up in turn above "Loading your sessions…" rather than "No sessions match."

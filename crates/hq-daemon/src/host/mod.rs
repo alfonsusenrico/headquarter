@@ -130,6 +130,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         busy_agy: Mutex::new(Vec::new()),
         outside: Mutex::new(outside::OutsideView::default()),
         outside_wake: outside::OutsideWake::default(),
+        first_import: history::FirstImport::default(),
         settings: Mutex::new(SettingsWatcher::new(
             hq_config::settings_path(),
             hq_discovery::KNOWN_AGENTS
@@ -235,6 +236,7 @@ struct Host {
     busy_agy: Mutex<Vec<(String, String)>>,
     outside: Mutex<outside::OutsideView>,
     outside_wake: outside::OutsideWake,
+    first_import: history::FirstImport,
     settings: Mutex<SettingsWatcher>,
     platform: Platform,
     /// The owner's login-shell `PATH`, captured once in the background at startup.
@@ -375,6 +377,9 @@ impl Host {
                         }
                         Request::List {} => {
                             self.wake_outside();
+                            // Right after the host starts, the list would miss the
+                            // owner's past conversations; wait for the first import.
+                            self.wait_for_first_import(history::FIRST_IMPORT_WAIT);
                             send(self.list().unwrap_or_else(|error| *error));
                         }
                         Request::New {

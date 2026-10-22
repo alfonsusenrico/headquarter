@@ -18,6 +18,10 @@ each in a local preview):
 - **While agents are being found,** the agents' marks light up in turn above "Looking
   for your agents…". The app's first seconds, before the host answers, show the same
   thing with "Starting Headquarter…", instead of an empty sidebar.
+- **Add sessions opened during those first seconds shows the same animation** ("Loading
+  your sessions…"), not "No sessions match". The host's first list now waits, at most
+  10 s, for its first history import, so the list never arrives without the owner's
+  past conversations (found on screen, 2026-10-22).
 - **The Ready step drops the settings file's path and backup.** It shows "Ready" and
   the three shortcuts worth knowing (New session, Add sessions, Next one that needs
   you).
@@ -43,6 +47,8 @@ each in a local preview):
 
 - `hq-discovery`: each hosted agent's install page (`install_url`) in the known-agent
   table.
+- `hq-daemon`: the first list request after start waits for the first history import
+  (`history::FIRST_IMPORT_WAIT`, 10 s).
 - `hq-app`:
   - `loading.rs`: the marks lighting up in turn (still under Reduce motion), used by
     setup and by the workspace until the host's first list;

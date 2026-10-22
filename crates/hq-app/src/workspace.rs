@@ -628,7 +628,11 @@ impl Workspace {
         }
         if let Some(Modal::Open { view: window, .. }) = &self.modal {
             let sessions = self.sessions.clone();
-            window.update(cx, |window, cx| window.update_sessions(sessions, cx));
+            let loaded = self.listed;
+            window.update(cx, |window, cx| {
+                window.set_loaded(loaded, cx);
+                window.update_sessions(sessions, cx);
+            });
         }
         cx.notify();
     }
@@ -1258,6 +1262,8 @@ impl Workspace {
         let marks = self.marks.clone();
         let open =
             cx.new(|cx| OpenSessions::new(sessions, agents, home, chrome, live, marks, window, cx));
+        let loaded = self.listed;
+        open.update(cx, |open, cx| open.set_loaded(loaded, cx));
         let events =
             cx.subscribe_in(
                 &open,
