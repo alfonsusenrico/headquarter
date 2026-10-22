@@ -1,6 +1,7 @@
 //! Connection to the Headquarter host, starting it on demand. Shared by the `hq`
 //! command and the desktop app.
 
+use std::collections::VecDeque;
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -172,32 +173,57 @@ impl FeedControl {
 /// Every session, then each change as the host reports it.
 pub struct SessionFeed {
     client: Client,
+    /// Changes that arrived before the opening answers, reported first and in order.
+    early: VecDeque<Change>,
 }
 
 impl SessionFeed {
-    /// Connects (starting the host if needed), lists every session, and subscribes;
+    /// Connects (starting the host if needed), subscribes, and lists every session;
     /// with `usage`, also reads usage and follows its changes.
     pub fn open(paths: &HostPaths, usage: bool) -> Result<(SessionFeed, Catalog)> {
-        let mut client = Client::connect_or_start(paths)?;
-        let (sessions, groups) = match expect_ok(client.request(&Request::List {})?)? {
+        SessionFeed::start(Client::connect_or_start(paths)?, usage)
+    }
+
+    /// Subscribes before listing: the host tells only subscribers about a change, so
+    /// one made between a list and a later subscription would never reach this client.
+    fn start(client: Client, usage: bool) -> Result<(SessionFeed, Catalog)> {
+        let mut feed = SessionFeed {
+            client,
+            early: VecDeque::new(),
+        };
+        match feed.answer(&Request::Subscribe { usage })? {
+            Response::Done => {}
+            other => bail!("unexpected answer to subscribe: {other:?}"),
+        }
+        let (sessions, groups) = match feed.answer(&Request::List {})? {
             Response::Sessions { sessions, groups } => (sessions, groups),
             other => bail!("unexpected answer to list: {other:?}"),
         };
         let usage_now = if usage {
-            match expect_ok(client.request(&Request::Usage {})?)? {
+            match feed.answer(&Request::Usage {})? {
                 Response::Usage { agents } => agents,
                 other => bail!("unexpected answer to usage: {other:?}"),
             }
         } else {
             Vec::new()
         };
-        expect_ok(client.request(&Request::Subscribe { usage })?)?;
         let catalog = Catalog {
             sessions,
             groups,
             usage: usage_now,
         };
-        Ok((SessionFeed { client }, catalog))
+        Ok((feed, catalog))
+    }
+
+    /// Sends `request` and returns its answer, keeping the changes that arrive first.
+    fn answer(&mut self, request: &Request) -> Result<Response> {
+        self.client.send(request)?;
+        loop {
+            match incoming(self.client.next_response()?) {
+                Incoming::Change(change) => self.early.push_back(change),
+                Incoming::Answer(response) => return expect_ok(response),
+            }
+        }
     }
 
     /// A handle for telling the host what this feed's client shows.
@@ -209,28 +235,39 @@ impl SessionFeed {
 
     /// The next change, or `None` when the host closes the connection.
     pub fn next_change(&mut self) -> Result<Option<Change>> {
+        if let Some(change) = self.early.pop_front() {
+            return Ok(Some(change));
+        }
         loop {
             let frame = read_frame(&mut self.client.reader).map_err(|error| anyhow!(error))?;
             match frame {
-                Some(Frame::Control(bytes)) => match Response::parse(&bytes) {
-                    Ok(Response::SessionChanged { session }) => {
-                        return Ok(Some(Change::Session(session)));
+                Some(Frame::Control(bytes)) => {
+                    if let Ok(Incoming::Change(change)) = Response::parse(&bytes).map(incoming) {
+                        return Ok(Some(change));
                     }
-                    Ok(Response::GroupsChanged { groups }) => {
-                        return Ok(Some(Change::Groups(groups)));
-                    }
-                    Ok(Response::UsageChanged { agents }) => {
-                        return Ok(Some(Change::Usage(agents)));
-                    }
-                    Ok(Response::DetailsChanged { session, details }) => {
-                        return Ok(Some(Change::Details { session, details }));
-                    }
-                    _ => {}
-                },
+                }
                 Some(_) => {}
                 None => return Ok(None),
             }
         }
+    }
+}
+
+/// What the host sent a feed: a change, or the answer to the feed's request.
+enum Incoming {
+    Change(Change),
+    Answer(Response),
+}
+
+fn incoming(response: Response) -> Incoming {
+    match response {
+        Response::SessionChanged { session } => Incoming::Change(Change::Session(session)),
+        Response::GroupsChanged { groups } => Incoming::Change(Change::Groups(groups)),
+        Response::UsageChanged { agents } => Incoming::Change(Change::Usage(agents)),
+        Response::DetailsChanged { session, details } => {
+            Incoming::Change(Change::Details { session, details })
+        }
+        other => Incoming::Answer(other),
     }
 }
 
@@ -450,4 +487,88 @@ fn start_host() -> Result<()> {
         .spawn()
         .context("start the Headquarter host")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hq_protocol::{External, Origin};
+    use hq_signals::status::Status;
+
+    fn session(external: Option<External>) -> SessionInfo {
+        SessionInfo {
+            id: "row-1".to_owned(),
+            agent: Agent::Claude,
+            cwd: "/w".to_owned(),
+            name: "claude-1".to_owned(),
+            agent_session_id: Some("conv-1".to_owned()),
+            status: Status::Inactive,
+            needs_reason: None,
+            created_at: 0,
+            last_activity_at: 0,
+            ended_at: None,
+            live: false,
+            origin: Origin::History,
+            title: None,
+            external,
+            in_sidebar: false,
+            group: None,
+            owner_named: false,
+            interrupted: false,
+        }
+    }
+
+    /// Answers like the host, with the outside scan linking the row to a process in
+    /// another terminal right after the list is answered. Like the host, it tells only
+    /// subscribed connections about the change.
+    fn host_linking_after_the_list(stream: UnixStream) {
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut writer = stream;
+        let mut send = |response: &Response| {
+            write_frame(&mut writer, &Frame::response(response)).unwrap();
+        };
+        let mut subscribed = false;
+        while let Ok(Some(Frame::Control(bytes))) = read_frame(&mut reader) {
+            match Request::parse(&bytes).unwrap() {
+                Request::List {} => {
+                    send(&Response::Sessions {
+                        sessions: vec![session(None)],
+                        groups: Vec::new(),
+                    });
+                    if subscribed {
+                        send(&Response::SessionChanged {
+                            session: session(Some(External {
+                                pid: Some(42),
+                                status: Some(Status::Done),
+                            })),
+                        });
+                    }
+                }
+                Request::Usage {} => send(&Response::Usage { agents: Vec::new() }),
+                Request::Subscribe { .. } => {
+                    subscribed = true;
+                    send(&Response::Done);
+                }
+                other => panic!("unexpected request {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_change_while_the_feed_opens_is_not_lost() {
+        let (near, far) = UnixStream::pair().unwrap();
+        let host = std::thread::spawn(move || host_linking_after_the_list(far));
+        let client = Client {
+            reader: BufReader::new(near.try_clone().unwrap()),
+            writer: near.try_clone().unwrap(),
+        };
+        let (mut feed, catalog) = SessionFeed::start(client, true).unwrap();
+        assert!(catalog.sessions[0].external.is_none());
+        near.shutdown(std::net::Shutdown::Write).unwrap();
+        host.join().unwrap();
+        match feed.next_change().unwrap() {
+            Some(Change::Session(session)) => assert!(session.external.is_some()),
+            other => panic!("expected the link, got {other:?}"),
+        }
+    }
 }
