@@ -83,8 +83,9 @@ system folders (`absent_agent`).
   the window, shown session, theme and sidebar in `app-state.json`.
 - `crates/hq-probe`: the Phase 0 evidence tool.
 - `openspec/`: proposals, designs, and specs; the source of truth for behaviour.
-- `research/`: notes, prototypes and evidence; local only, never committed
-  (`.git/info/exclude`).
+  Archived changes (`openspec/changes/archive/`) stay local, as do `research/` (notes,
+  prototypes, evidence) and the `docs/ref *.jpg` references: development material,
+  never committed (`.gitignore`). The repository carries the product only.
 
 ## Project rules
 
