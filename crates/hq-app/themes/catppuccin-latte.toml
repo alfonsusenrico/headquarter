@@ -1,0 +1,38 @@
+# Catppuccin Latte: colours from alacritty/alacritty-theme `themes/catppuccin_latte.toml` (Apache-2.0);
+# the theme's own licence is in NOTICE.md.
+
+[colors.primary]
+background = "#eff1f5"
+foreground = "#4c4f69"
+
+[colors.cursor]
+cursor = "#dc8a78"
+
+[colors.normal]
+black = "#5c5f77"
+red = "#d20f39"
+green = "#40a02b"
+yellow = "#df8e1d"
+blue = "#1e66f5"
+magenta = "#ea76cb"
+cyan = "#179299"
+white = "#acb0be"
+
+[colors.bright]
+black = "#6c6f85"
+red = "#d20f39"
+green = "#40a02b"
+yellow = "#df8e1d"
+blue = "#1e66f5"
+magenta = "#ea76cb"
+cyan = "#179299"
+white = "#bcc0cc"
+
+[headquarter]
+name = "Catppuccin Latte"
+credit = "Catppuccin · MIT"
+
+[headquarter.colors]
+accent = "#1e66f5"
+needs_you = "#df8e1d"
+needs_you_icon = "#df8e1d"

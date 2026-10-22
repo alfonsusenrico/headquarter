@@ -1,0 +1,26 @@
+#!/bin/sh
+# The project's CI: Rust format, lint, tests and dependency policy, then OpenSpec
+# validation. Run it before every push; there is no hosted CI (AGENTS.md, Overrides).
+set -eu
+
+cd "$(dirname "$0")/.."
+
+# The Cargo workspace arrives with the first crate; until then only OpenSpec is checked.
+if [ -f Cargo.toml ]; then
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+    cargo test --workspace --locked
+    if cargo deny --version > /dev/null 2>&1; then
+        cargo deny check
+    else
+        echo "check: cargo-deny is not installed; skipping dependency policy." >&2
+    fi
+else
+    echo "check: no Cargo.toml yet; skipping Rust checks."
+fi
+
+if command -v openspec > /dev/null 2>&1; then
+    openspec validate --all --strict
+else
+    echo "check: openspec is not installed; skipping OpenSpec validation." >&2
+fi

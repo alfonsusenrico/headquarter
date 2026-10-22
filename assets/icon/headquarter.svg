@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Headquarter's icon (add-release-installer D7, option D chosen by the owner on
+       2026-10-22): an H whose crossbar is a terminal cursor, with the amber "needs you"
+       ping. Drawn on Apple's 1024 grid: an 824 body with continuous corners. -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#262b37"/>
+      <stop offset="1" stop-color="#11141a"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#body)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="184" fill="none" stroke="rgba(255,255,255,.09)" stroke-width="3"/>
+  <rect x="330" y="300" width="96" height="424" rx="22" fill="#e6e8ec"/>
+  <rect x="598" y="300" width="96" height="424" rx="22" fill="#e6e8ec"/>
+  <rect x="442" y="470" width="140" height="84" rx="10" fill="#8ab4ff"/>
+  <circle cx="772" cy="262" r="72" fill="#11141a"/>
+  <circle cx="772" cy="262" r="50" fill="#f5a524"/>
+</svg>

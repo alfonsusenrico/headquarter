@@ -1,0 +1,54 @@
+[package]
+name = "hq-app"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "headquarter-app"
+path = "src/main.rs"
+
+# Release archives: precompiled shaders, and the icon and theme notices the installer
+# and the licences need.
+[package.metadata.dist]
+dist = true
+default-features = false
+include = ["../../assets/icon/Headquarter.icns", "../../assets/icon/png", "themes/NOTICE.md"]
+
+[features]
+default = ["runtime-shaders"]
+# Compile Metal shaders when the app starts, so local builds need no Xcode. Release
+# builds turn it off and precompile in CI.
+runtime-shaders = ["gpui_platform/runtime_shaders"]
+
+[dependencies]
+alacritty_terminal = "=0.26.0"
+anyhow = "1"
+# Reads the one file Headquarter needs from a vendor's zipped logo pack (`marks.rs`).
+flate2 = "1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+futures = "0.3"
+log = { version = "0.4", features = ["std"] }
+gpui = { package = "gpui-pre", version = "=0.3.9" }
+gpui-component = "=0.8.0"
+# The component library's icons (the checkbox tick, for one); registered at start-up.
+gpui-kit-assets = "=0.8.0"
+# `font-kit` is the macOS text system; without it GPUI draws no text at all.
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit"] }
+hq-client = { path = "../hq-client" }
+hq-config = { path = "../hq-config" }
+hq-discovery = { path = "../hq-discovery" }
+hq-protocol = { path = "../hq-protocol" }
+hq-signals = { path = "../hq-signals" }
+# The app-state file (`app_state.rs`).
+serde_json = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAccessibility", "NSApplication", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray"] }
+
+[lints]
+workspace = true

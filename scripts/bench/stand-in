@@ -1,0 +1,45 @@
+#!/usr/bin/perl
+# Stand-in agent for the benchmark, configured as every agent's executable.
+#
+# - With $BENCH_DIR/replay naming a recording (record.sh), it replays that real
+#   session's terminal output at its recorded timing, over and over.
+# - Otherwise it idles, and while $BENCH_DIR/busy exists it works like an agent: a
+#   spinner redrawn every 100 ms and a new line each second, reporting its status the
+#   way the agents do (OSC 7501).
+#
+# Utility subcommands the host runs (agents, auth, app-server, ...) answer at once.
+use strict;
+use warnings;
+
+$| = 1;
+my $dir = $ENV{BENCH_DIR} // '/tmp/hq-bench';
+my $first = $ARGV[0] // '';
+if ($first =~ /^(agents|auth|app-server|login|logout|mcp|version|--version|-V)$/) {
+    print $first eq 'agents' ? "[]\n" : "{}\n";
+    exit 0;
+}
+
+if (open(my $named, '<', "$dir/replay")) {
+    chomp(my $recording = <$named> // '');
+    close $named;
+    while (1) {
+        system('script', '-p', $recording) == 0 or sleep 1;
+    }
+}
+
+print "stand-in agent ready\r\n";
+my ($state, $step) = ('', 0);
+my @spinner = ("\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8");
+while (1) {
+    my $busy = -e "$dir/busy";
+    if ($busy && $state ne 'working') { print "\e]7501;state=working\a"; $state = 'working'; }
+    if (!$busy && $state ne 'done') { print "\e]7501;state=done\a"; $state = 'done'; }
+    if ($busy) {
+        $step++;
+        print "\r\e[2K", $spinner[$step % 4], " Working\xe2\x80\xa6 ($step)";
+        print "\r\n", "step $step: ", ('x' x 70), "\r\n" if $step % 10 == 0;
+        select(undef, undef, undef, 0.1);
+    } else {
+        select(undef, undef, undef, 0.5);
+    }
+}

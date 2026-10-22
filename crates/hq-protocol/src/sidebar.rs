@@ -1,0 +1,301 @@
+//! How the sidebar arranges its sessions, shared by `hq ls` and the app so both show
+//! the same thing: sessions needing the owner first, then the owner's groups, then the
+//! sessions in no group.
+
+use std::collections::HashMap;
+
+use hq_signals::status::Status;
+
+use crate::{GroupInfo, SessionInfo, group_labels};
+
+pub struct Layout<'a> {
+    /// Sessions needing the owner, longest waiting first; also listed in their group or
+    /// the ungrouped list.
+    pub needs_you: Vec<&'a SessionInfo>,
+    /// The owner's groups, in the owner's order, including empty ones.
+    pub groups: Vec<GroupSection<'a>>,
+    /// Sidebar sessions in no group (or in a group that no longer exists), most
+    /// recently active first.
+    pub ungrouped: Vec<&'a SessionInfo>,
+    /// Each sidebar folder's label: its final name, with parents added only to tell
+    /// same-named folders apart, and `~` for the home folder.
+    pub folders: HashMap<&'a str, String>,
+}
+
+pub struct GroupSection<'a> {
+    pub group: &'a GroupInfo,
+    /// The group's sessions, most recently active first.
+    pub sessions: Vec<&'a SessionInfo>,
+    pub needing: usize,
+}
+
+impl Layout<'_> {
+    /// The label of a session's folder.
+    pub fn folder<'s>(&'s self, session: &'s SessionInfo) -> &'s str {
+        self.folders
+            .get(session.cwd.as_str())
+            .map_or(session.cwd.as_str(), String::as_str)
+    }
+}
+
+/// Age in the sidebar's style: `0m`, `12m`, `3h`, `2d`, `5w`. Seconds are not shown,
+/// so a row does not tick every few seconds (owner, 2026-10-21).
+pub fn age(elapsed_ms: u64) -> String {
+    let secs = elapsed_ms / 1000;
+    match secs {
+        0..3_600 => format!("{}m", secs / 60),
+        3_600..86_400 => format!("{}h", secs / 3_600),
+        86_400..1_209_600 => format!("{}d", secs / 86_400),
+        _ => format!("{}w", secs / 604_800),
+    }
+}
+
+/// A folder as people read it: the home folder and anything under it start with `~`.
+pub fn home_path(folder: &str, home: Option<&str>) -> String {
+    let Some(home) = home.map(|home| home.trim_end_matches('/')) else {
+        return folder.to_owned();
+    };
+    if folder == home {
+        "~".to_owned()
+    } else if let Some(rest) = folder
+        .strip_prefix(home)
+        .filter(|rest| rest.starts_with('/'))
+    {
+        format!("~{rest}")
+    } else {
+        folder.to_owned()
+    }
+}
+
+/// What a session is called on screen: the owner's name when they gave one, else the
+/// agent's own title on one line, else the generated name.
+pub fn display_title(session: &SessionInfo) -> String {
+    match &session.title {
+        Some(title) if !session.owner_named => {
+            title.split_whitespace().collect::<Vec<_>>().join(" ")
+        }
+        _ => session.name.clone(),
+    }
+}
+
+/// Whether the session waits for the owner, here or in another terminal.
+pub fn needs_you(session: &SessionInfo) -> bool {
+    session.status == Status::NeedsYou
+        || session
+            .external
+            .as_ref()
+            .is_some_and(|external| external.status == Some(Status::NeedsYou))
+}
+
+/// Arranges the sessions that are in the sidebar; others are left out. `home` is the
+/// owner's home folder, labelled `~`.
+pub fn layout<'a>(
+    sessions: &'a [SessionInfo],
+    groups: &'a [GroupInfo],
+    home: Option<&str>,
+) -> Layout<'a> {
+    let mut members: Vec<&SessionInfo> = sessions
+        .iter()
+        .filter(|session| session.in_sidebar)
+        .collect();
+    members.sort_by_key(|session| {
+        (
+            std::cmp::Reverse(session.last_activity_at),
+            session.id.as_str(),
+        )
+    });
+    let mut needing: Vec<&SessionInfo> = members
+        .iter()
+        .copied()
+        .filter(|session| needs_you(session))
+        .collect();
+    needing.sort_by_key(|session| (session.last_activity_at, session.id.as_str()));
+
+    let sections: Vec<GroupSection<'_>> = groups
+        .iter()
+        .map(|group| {
+            let sessions: Vec<&SessionInfo> = members
+                .iter()
+                .copied()
+                .filter(|session| session.group == Some(group.id))
+                .collect();
+            GroupSection {
+                group,
+                needing: sessions.iter().filter(|session| needs_you(session)).count(),
+                sessions,
+            }
+        })
+        .collect();
+    let ungrouped: Vec<&SessionInfo> = members
+        .iter()
+        .copied()
+        .filter(|session| {
+            session
+                .group
+                .is_none_or(|id| !groups.iter().any(|group| group.id == id))
+        })
+        .collect();
+
+    let mut paths: Vec<&str> = members.iter().map(|session| session.cwd.as_str()).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let mut folders = group_labels(&paths);
+    if let Some(home) = home.map(|home| home.trim_end_matches('/'))
+        && let Some(label) = folders.get_mut(home)
+    {
+        *label = "~".to_owned();
+    }
+    Layout {
+        needs_you: needing,
+        groups: sections,
+        ungrouped,
+        folders,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hq_signals::event::Agent;
+
+    use super::*;
+    use crate::{External, Origin};
+
+    fn session(id: &str, cwd: &str, status: Status, at: u64) -> SessionInfo {
+        SessionInfo {
+            id: id.to_owned(),
+            agent: Agent::Claude,
+            cwd: cwd.to_owned(),
+            name: id.to_owned(),
+            agent_session_id: None,
+            status,
+            needs_reason: None,
+            created_at: 0,
+            last_activity_at: at,
+            ended_at: None,
+            live: true,
+            origin: Origin::Hosted,
+            title: None,
+            external: None,
+            in_sidebar: true,
+            group: None,
+            owner_named: false,
+            interrupted: false,
+        }
+    }
+
+    fn group(id: i64, name: &str) -> GroupInfo {
+        GroupInfo {
+            id,
+            name: name.to_owned(),
+            collapsed: false,
+        }
+    }
+
+    fn ids(sessions: &[&SessionInfo]) -> Vec<String> {
+        sessions.iter().map(|session| session.id.clone()).collect()
+    }
+
+    #[test]
+    fn the_owners_name_wins_over_the_agents_title() {
+        let mut session = session("a", "/w", Status::Done, 0);
+        session.name = "claude-3".into();
+        assert_eq!(display_title(&session), "claude-3");
+        session.title = Some("Fix the\n  login flow".into());
+        assert_eq!(display_title(&session), "Fix the login flow");
+        session.name = "Smoke test".into();
+        session.owner_named = true;
+        assert_eq!(display_title(&session), "Smoke test");
+    }
+
+    #[test]
+    fn needs_you_then_groups_in_order_then_ungrouped() {
+        let mut outside = session("outside", "/u/web", Status::Inactive, 5);
+        outside.external = Some(External {
+            pid: Some(9),
+            status: Some(Status::NeedsYou),
+        });
+        let mut not_added = session("not-added", "/u/api", Status::NeedsYou, 1);
+        not_added.in_sidebar = false;
+        let mut asking = session("api-asking", "/u/api", Status::NeedsYou, 20);
+        asking.group = Some(2);
+        let mut old = session("api-old", "/u/api", Status::Done, 10);
+        old.group = Some(2);
+        let mut lost = session("lost", "/u/api", Status::Done, 40);
+        lost.group = Some(99);
+        let sessions = [
+            old,
+            asking,
+            session("web-new", "/u/web", Status::Working, 50),
+            session("api-new", "/u/api", Status::Done, 30),
+            outside,
+            not_added,
+            lost,
+        ];
+        let groups = [group(2, "Backend"), group(1, "Empty")];
+        let layout = layout(&sessions, &groups, None);
+        assert_eq!(ids(&layout.needs_you), ["outside", "api-asking"]);
+        let names: Vec<&str> = layout
+            .groups
+            .iter()
+            .map(|section| section.group.name.as_str())
+            .collect();
+        assert_eq!(names, ["Backend", "Empty"], "the owner's order");
+        let backend = &layout.groups[0];
+        assert_eq!(
+            ids(&backend.sessions),
+            ["api-asking", "api-old"],
+            "sessions needing the owner stay in their group too"
+        );
+        assert_eq!((backend.sessions.len(), backend.needing), (2, 1));
+        assert!(layout.groups[1].sessions.is_empty());
+        assert_eq!(
+            ids(&layout.ungrouped),
+            ["web-new", "lost", "api-new", "outside"],
+            "most recent first; a vanished group's sessions are ungrouped"
+        );
+    }
+
+    #[test]
+    fn folder_labels_tell_apart_and_shorten_home() {
+        let sessions = [
+            session("a", "/u/one/api", Status::Done, 1),
+            session("b", "/u/two/api", Status::Done, 2),
+            session("c", "/home/me", Status::Done, 3),
+        ];
+        let layout = layout(&sessions, &[], Some("/home/me/"));
+        assert_eq!(layout.folder(&sessions[0]), "one/api");
+        assert_eq!(layout.folder(&sessions[1]), "two/api");
+        assert_eq!(layout.folder(&sessions[2]), "~");
+    }
+
+    #[test]
+    fn home_paths_start_with_a_tilde() {
+        assert_eq!(home_path("/home/me", Some("/home/me")), "~");
+        assert_eq!(
+            home_path("/home/me/work/api", Some("/home/me/")),
+            "~/work/api"
+        );
+        assert_eq!(home_path("/home/meadow", Some("/home/me")), "/home/meadow");
+        assert_eq!(home_path("/srv/app", None), "/srv/app");
+    }
+
+    #[test]
+    fn ages() {
+        assert_eq!(age(1_000), "0m");
+        assert_eq!(age(59_999), "0m");
+        assert_eq!(age(60_000), "1m");
+        assert_eq!(age(12 * 60_000), "12m");
+        assert_eq!(age(3 * 3_600_000), "3h");
+        assert_eq!(age(2 * 86_400_000), "2d");
+        assert_eq!(age(5 * 604_800_000), "5w");
+    }
+
+    #[test]
+    fn empty_when_nothing_is_added() {
+        let mut only = session("a", "/w", Status::Done, 1);
+        only.in_sidebar = false;
+        let sessions = [only];
+        let layout = layout(&sessions, &[], None);
+        assert!(layout.needs_you.is_empty() && layout.ungrouped.is_empty());
+    }
+}

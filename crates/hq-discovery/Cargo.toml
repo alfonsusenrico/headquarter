@@ -1,0 +1,13 @@
+[package]
+name = "hq-discovery"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+
+[lints]
+workspace = true

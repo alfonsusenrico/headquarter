@@ -1,0 +1,23 @@
+schema: spec-driven
+
+context: |
+  Project: Headquarter - the owner's desktop terminal (macOS and Linux) that hosts many coding-agent CLI sessions (Claude Code, Codex, Antigravity agy, and others it discovers), groups them by working folder in a sidebar, flags each session's status (working, needs you, done unread, done, inactive), and shows provider usage quotas.
+  Capabilities: database (local SQLite session index).
+  Stack: Rust (pinned in rust-toolchain.toml); GPUI for the UI, alacritty_terminal for VT and grid, portable-pty; a session daemon (agentd) owning PTYs, SQLite state, and a Unix socket.
+  Sources of truth: approved specs; official agent CLI documentation and observed behaviour of the installed CLI versions; owner confirmations.
+  Boundaries: owns sessions it launches, per-launch hook injection, its index, groups, unread flags, and quota snapshots. Observes but never attaches to or signals sessions started elsewhere. Never edits the agents' own configuration files. Never persists prompt text or model output.
+
+rules:
+  proposal:
+    - State the Expected Outcome as an observable result for the user or owner.
+    - List Non-goals.
+    - State whether the change adds a project capability and which standards that requires.
+    - Name which agent CLIs and versions the change was verified against.
+  design:
+    - Number each decision and record rejected alternatives with reasons.
+    - Describe data, API, and failure behaviour; include migration and rollback when data changes.
+    - For agent integrations, state the signal source, what happens when it is absent or malformed, and confirm no agent configuration file is written.
+  tasks:
+    - Group tasks in phases; end each phase with an "Expected Result" line.
+    - Every task names the evidence that proves it (command, test, recorded event log, screenshot).
+    - The final task reports the topic branch and verification record; the owner reviews and merges.

@@ -1,0 +1,38 @@
+# Release builds (add-release-installer D1, D5). `dist` builds the archives and the
+# release workflow; scripts/install.sh installs them. Regenerate the workflow with
+# `target/tools/bin/dist generate` after changing this file.
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
+# gzip, not xz: minimal Linux systems (Debian slim, Alpine) have no xz.
+unix-archive = ".tar.gz"
+# Our own installer replaces dist's per-package ones (D1); it ships beside the archives.
+installers = []
+# Releases run only on version tags (D5); nothing runs on pull requests.
+pr-run-mode = "skip"
+install-updater = false
+
+[dist.github-custom-runners]
+aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
+x86_64-unknown-linux-gnu = "ubuntu-24.04"
+
+# GPUI's Linux platform links these at build time.
+[dist.dependencies.apt]
+libxkbcommon-dev = "*"
+libxkbcommon-x11-dev = "*"
+libwayland-dev = "*"
+libxcb1-dev = "*"
+libx11-xcb-dev = "*"
+libvulkan-dev = "*"
+libfontconfig-dev = "*"
+libfreetype-dev = "*"
+
+# The installer (D2) is published beside the archives, so the install line can fetch it
+# from the latest release.
+[[dist.extra-artifacts]]
+artifacts = ["install.sh"]
+build = ["cp", "scripts/install.sh", "install.sh"]

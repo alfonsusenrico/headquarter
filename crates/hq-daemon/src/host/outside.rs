@@ -1,0 +1,379 @@
+//! Agents running in other terminals: observed every few seconds and linked to their
+//! conversation's row. Observe only: nothing here signals or touches those processes,
+//! and none of it is stored.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant, SystemTime};
+
+use hq_protocol::{External, Origin, SessionInfo};
+use hq_signals::event::Agent;
+use hq_signals::external::{self, ExternalSession};
+use hq_signals::paths;
+use hq_signals::status::Status;
+use hq_signals::subagents::{self, RunningSubagent};
+
+use super::{Host, lock};
+
+/// The scan's pace while a client shows the sessions or a hosted session works.
+const OUTSIDE_INTERVAL: Duration = Duration::from_secs(5);
+/// The scan's pace while nobody looks and nothing hosted works (pace-outside-scan).
+const UNSEEN_INTERVAL: Duration = Duration::from_secs(60);
+/// How often `claude agents --json` is started for Claude Code's background agents when
+/// none of them changed; running sessions come from Claude Code's records every scan.
+const CLAUDE_BACKGROUND_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Default)]
+pub(super) struct OutsideView {
+    /// Row id → the outside process running that row's conversation.
+    pub linked: HashMap<String, External>,
+    /// Outside agents no known conversation matches, listed while they run.
+    pub unlinked: Vec<SessionInfo>,
+    /// Source failures last reported, so the log records changes, not every scan.
+    failures: HashSet<String>,
+    /// Row id → Codex sub-agents still running for that hosted session.
+    pub subagents: HashMap<String, Vec<RunningSubagent>>,
+    /// Claude Code processes in other terminals that were busy at the last scan.
+    claude_busy: HashSet<u32>,
+    /// When `claude agents --json` was last started, and the background agents it
+    /// listed then.
+    claude_asked: Option<(Instant, SystemTime)>,
+    claude_background: Vec<ExternalSession>,
+}
+
+/// Asks the scan loop for a scan at the fast pace now: a client started showing the
+/// sessions or listed them.
+#[derive(Default)]
+pub(super) struct OutsideWake {
+    asked: Mutex<bool>,
+    signal: Condvar,
+}
+
+/// How old a scan may grow before the next one runs.
+fn scan_pace(someone_looks: bool, hosted_working: bool) -> Duration {
+    if someone_looks || hosted_working {
+        OUTSIDE_INTERVAL
+    } else {
+        UNSEEN_INTERVAL
+    }
+}
+
+impl Host {
+    /// Checks every `OUTSIDE_INTERVAL` whether a scan is due at the current pace, so a
+    /// change of pace takes effect within that time without other code waking it.
+    pub(super) fn outside_loop(self: Arc<Self>) {
+        let mut memory = external::ScanMemory::default();
+        let mut scanned_at: Option<Instant> = None;
+        let mut asked = false;
+        loop {
+            let pace = if asked {
+                OUTSIDE_INTERVAL
+            } else {
+                let hosted_working = lock(&self.live)
+                    .values()
+                    .any(|hosted| hosted.status() == Status::Working);
+                scan_pace(self.someone_looks(), hosted_working)
+            };
+            if scanned_at.is_none_or(|at| at.elapsed() >= pace) {
+                scanned_at = Some(Instant::now());
+                self.refresh_outside(&mut memory);
+            }
+            asked = self.wait_for_ask();
+        }
+    }
+
+    /// Waits up to `OUTSIDE_INTERVAL` for a client to ask for a scan; true if one did.
+    fn wait_for_ask(&self) -> bool {
+        let mut asked = lock(&self.outside_wake.asked);
+        if !*asked {
+            asked = self
+                .outside_wake
+                .signal
+                .wait_timeout(asked, OUTSIDE_INTERVAL)
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .0;
+        }
+        std::mem::take(&mut *asked)
+    }
+
+    /// A subscribed client shows the sessions.
+    fn someone_looks(&self) -> bool {
+        lock(&self.subscribers)
+            .iter()
+            .any(|subscriber| subscriber.visible)
+    }
+
+    /// Asks for a scan at once unless the last one is younger than `OUTSIDE_INTERVAL`.
+    /// Never waits for it: a scan can take seconds when an agent is slow to answer.
+    pub(super) fn wake_outside(&self) {
+        *lock(&self.outside_wake.asked) = true;
+        self.outside_wake.signal.notify_one();
+    }
+
+    fn refresh_outside(self: &Arc<Self>, memory: &mut external::ScanMemory) {
+        let mut exclude: Vec<u32> = lock(&self.live)
+            .values()
+            .filter_map(|hosted| hosted.pid)
+            .collect();
+        exclude.push(std::process::id());
+        let claude = self.locate_claude();
+        let asked = lock(&self.outside).claude_asked;
+        let ask_claude = match asked {
+            None => true,
+            Some((at, wall)) => {
+                at.elapsed() >= CLAUDE_BACKGROUND_INTERVAL
+                    || external::claude_background_changed_since(wall)
+            }
+        };
+        let mut report = external::scan(memory, &exclude, claude.as_deref(), ask_claude);
+        {
+            let mut view = lock(&self.outside);
+            if ask_claude {
+                // Recorded even when the command failed, so a failing one is retried
+                // on the slow interval rather than every scan.
+                view.claude_asked = Some((Instant::now(), SystemTime::now()));
+            }
+            match report.claude_background.take() {
+                Some(background) => view.claude_background = background,
+                None => report
+                    .sessions
+                    .extend(view.claude_background.iter().cloned()),
+            }
+        }
+        self.refresh_background(&report.hosted_claude);
+        self.notice_claude_turns_elsewhere(&report.sessions);
+        let busy_agy = lock(&self.busy_agy).clone();
+
+        let mut linked = HashMap::new();
+        let mut unlinked = Vec::new();
+        for session in report.sessions {
+            let row = conversation_of(&session, &busy_agy).and_then(|conversation| {
+                lock(&self.store)
+                    .find_by_conversation(session.agent, &conversation)
+                    .ok()
+                    .flatten()
+            });
+            let external = External {
+                pid: session.pid,
+                status: session.status,
+            };
+            match row {
+                Some(row) => {
+                    linked.insert(row.id, external);
+                }
+                None => unlinked.push(unlinked_entry(&session, external)),
+            }
+        }
+
+        let failures: HashSet<String> = report
+            .failures
+            .iter()
+            .map(|failure| format!("{}: {}", failure.source, failure.error))
+            .collect();
+        let changed_rows: Vec<String> = {
+            let mut view = lock(&self.outside);
+            for failure in failures.difference(&view.failures) {
+                self.log
+                    .line(&format!("outside scan source failed: {failure}"));
+            }
+            let changed = linked
+                .iter()
+                .filter(|(id, external)| view.linked.get(*id) != Some(*external))
+                .map(|(id, _)| id.clone())
+                .chain(
+                    view.linked
+                        .keys()
+                        .filter(|id| !linked.contains_key(*id))
+                        .cloned(),
+                )
+                .collect();
+            view.linked = linked;
+            view.unlinked = unlinked;
+            view.failures = failures;
+            changed
+        };
+        for id in changed_rows {
+            self.broadcast(&id);
+        }
+    }
+}
+
+impl Host {
+    /// A Claude session in another terminal that was busy and is no longer has finished
+    /// a turn, which changed the owner's usage.
+    fn notice_claude_turns_elsewhere(self: &Arc<Self>, sessions: &[ExternalSession]) {
+        let busy: HashSet<u32> = sessions
+            .iter()
+            .filter(|session| {
+                session.agent == Agent::Claude && session.status == Some(Status::Working)
+            })
+            .filter_map(|session| session.pid)
+            .collect();
+        let finished = {
+            let mut view = lock(&self.outside);
+            let finished = view.claude_busy.difference(&busy).next().is_some();
+            view.claude_busy = busy;
+            finished
+        };
+        if finished {
+            self.claude_turn_ended_elsewhere();
+        }
+    }
+
+    /// Marks the hosted sessions whose agent runs work for them in the background:
+    /// Claude Code reporting itself busy after its turn, or Codex sub-agents still
+    /// running. Hosted Claude agents are matched by the process they run under.
+    fn refresh_background(&self, hosted_claude: &[(u32, Status)]) {
+        let live: Vec<_> = lock(&self.live).values().cloned().collect();
+        let codex_threads: Vec<(String, String)> = live
+            .iter()
+            .filter(|hosted| hosted.agent == Agent::Codex)
+            .filter_map(|hosted| {
+                let row = lock(&self.store).get(&hosted.id).ok().flatten()?;
+                Some((hosted.id.clone(), row.agent_session_id?))
+            })
+            .collect();
+        let parents: Vec<String> = codex_threads
+            .iter()
+            .map(|(_, thread)| thread.clone())
+            .collect();
+        let running = paths::codex_home()
+            .map(|home| subagents::running_subagents(&home.join("sessions"), &parents))
+            .unwrap_or_default();
+        let by_row: HashMap<String, Vec<RunningSubagent>> = codex_threads
+            .into_iter()
+            .filter_map(|(row, thread)| Some((row, running.get(&thread)?.clone())))
+            .collect();
+        for hosted in &live {
+            let busy = match hosted.agent {
+                Agent::Claude => hosted
+                    .pid
+                    .is_some_and(|pid| hosted_claude.contains(&(pid, Status::Working))),
+                Agent::Codex => by_row.contains_key(&hosted.id),
+                Agent::Agy => false,
+            };
+            hosted.set_background(busy);
+            self.refresh(hosted);
+        }
+        lock(&self.outside).subagents = by_row;
+    }
+}
+
+/// The conversation an outside process runs, when it can be known: Claude and Codex
+/// report it; for agy, the single not-idle conversation in the same folder.
+fn conversation_of(session: &ExternalSession, busy_agy: &[(String, String)]) -> Option<String> {
+    match session.agent {
+        Agent::Claude | Agent::Codex => session.session_id.clone(),
+        Agent::Agy => {
+            let cwd = session.cwd.as_ref()?;
+            let mut matches = busy_agy.iter().filter(|(folder, _)| folder == cwd);
+            match (matches.next(), matches.next()) {
+                (Some((_, conversation)), None) => Some(conversation.clone()),
+                _ => None,
+            }
+        }
+    }
+}
+
+fn unlinked_entry(session: &ExternalSession, external: External) -> SessionInfo {
+    let pid = session
+        .pid
+        .map_or_else(|| "unknown".to_owned(), |pid| pid.to_string());
+    let seen_at = session
+        .last_activity_at
+        .or(session.started_at)
+        .map_or(0, |secs| secs * 1000);
+    SessionInfo {
+        id: format!("external-{}-{pid}", session.agent),
+        agent: session.agent,
+        cwd: session.cwd.clone().unwrap_or_default(),
+        name: format!("{} pid {pid}", session.agent),
+        agent_session_id: session.session_id.clone(),
+        // Not tracked by the index; the live state is in `external`.
+        status: Status::Inactive,
+        needs_reason: None,
+        created_at: session.started_at.map_or(0, |secs| secs * 1000),
+        last_activity_at: seen_at,
+        ended_at: None,
+        live: false,
+        origin: Origin::External,
+        title: None,
+        external: Some(external),
+        in_sidebar: false,
+        group: None,
+        owner_named: false,
+        interrupted: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(agent: Agent, cwd: &str, session_id: Option<&str>) -> ExternalSession {
+        ExternalSession {
+            agent,
+            pid: Some(42),
+            cwd: Some(cwd.to_owned()),
+            session_id: session_id.map(str::to_owned),
+            started_at: Some(1),
+            last_activity_at: None,
+            status: None,
+        }
+    }
+
+    #[test]
+    fn the_scan_slows_only_when_nobody_looks_and_nothing_hosted_works() {
+        assert_eq!(scan_pace(true, false), OUTSIDE_INTERVAL);
+        assert_eq!(scan_pace(false, true), OUTSIDE_INTERVAL);
+        assert_eq!(scan_pace(true, true), OUTSIDE_INTERVAL);
+        assert_eq!(scan_pace(false, false), UNSEEN_INTERVAL);
+    }
+
+    #[test]
+    fn claude_and_codex_link_by_their_reported_id() {
+        assert_eq!(
+            conversation_of(&session(Agent::Claude, "/w", Some("c1")), &[]),
+            Some("c1".into())
+        );
+        assert_eq!(
+            conversation_of(&session(Agent::Codex, "/w", None), &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn agy_links_only_to_a_single_busy_conversation_in_its_folder() {
+        let busy = vec![
+            ("/w".to_owned(), "a1".to_owned()),
+            ("/x".to_owned(), "b1".to_owned()),
+            ("/x".to_owned(), "b2".to_owned()),
+        ];
+        assert_eq!(
+            conversation_of(&session(Agent::Agy, "/w", None), &busy),
+            Some("a1".into())
+        );
+        assert_eq!(
+            conversation_of(&session(Agent::Agy, "/x", None), &busy),
+            None
+        );
+        assert_eq!(
+            conversation_of(&session(Agent::Agy, "/y", None), &busy),
+            None
+        );
+    }
+
+    #[test]
+    fn unlinked_entries_are_marked_external() {
+        let entry = unlinked_entry(
+            &session(Agent::Agy, "/w", None),
+            External {
+                pid: Some(42),
+                status: None,
+            },
+        );
+        assert_eq!(entry.origin, Origin::External);
+        assert_eq!(entry.id, "external-agy-42");
+        assert_eq!(entry.external.unwrap().pid, Some(42));
+    }
+}

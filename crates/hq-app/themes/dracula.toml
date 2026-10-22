@@ -1,0 +1,35 @@
+# Dracula: colours from alacritty/alacritty-theme `themes/dracula.toml` (Apache-2.0);
+# the theme's own licence is in NOTICE.md.
+
+[colors.primary]
+background = "#282a36"
+foreground = "#f8f8f2"
+
+[colors.normal]
+black = "#000000"
+red = "#ff5555"
+green = "#50fa7b"
+yellow = "#f1fa8c"
+blue = "#bd93f9"
+magenta = "#ff79c6"
+cyan = "#8be9fd"
+white = "#bbbbbb"
+
+[colors.bright]
+black = "#555555"
+red = "#ff5555"
+green = "#50fa7b"
+yellow = "#f1fa8c"
+blue = "#caa9fa"
+magenta = "#ff79c6"
+cyan = "#8be9fd"
+white = "#ffffff"
+
+[headquarter]
+name = "Dracula"
+credit = "Dracula · MIT"
+
+[headquarter.colors]
+accent = "#bd93f9"
+needs_you = "#f1fa8c"
+needs_you_icon = "#f1fa8c"
