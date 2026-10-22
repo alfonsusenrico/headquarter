@@ -147,6 +147,9 @@ struct HoverSlide {
 
 pub struct Workspace {
     sessions: Vec<SessionInfo>,
+    /// Whether the host has answered with its first list; until then the sidebar shows
+    /// the agents checking in rather than an empty list.
+    listed: bool,
     /// The owner's groups, in the owner's order.
     groups: Vec<GroupInfo>,
     /// The owner's home folder, labelled `~` on rows.
@@ -313,6 +316,7 @@ impl Workspace {
         let mut workspace = Workspace {
             sidebar_view,
             sessions: Vec::new(),
+            listed: false,
             groups: Vec::new(),
             home: hq_signals::paths::home().map(|home| home.to_string_lossy().into_owned()),
             selected: None,
@@ -599,6 +603,7 @@ impl Workspace {
                 self.sessions = sessions;
                 self.groups = groups;
                 self.usage = usage;
+                self.listed = true;
                 self.show_kept_session(window, cx);
             }
             ListEvent::Usage(usage) => self.usage = usage,
@@ -616,7 +621,10 @@ impl Workspace {
             ListEvent::Details { session, details } => {
                 self.details.insert(session, details);
             }
-            ListEvent::Failed(message) => self.message = Some(message),
+            ListEvent::Failed(message) => {
+                self.listed = true;
+                self.message = Some(message);
+            }
         }
         if let Some(Modal::Open { view: window, .. }) = &self.modal {
             let sessions = self.sessions.clone();
@@ -983,7 +991,18 @@ impl Workspace {
             self.render_items(&items, window, cx)
         };
         let header = (!rail).then(|| self.render_header(cx));
-        let empty_state = (empty && !rail).then(|| self.render_empty_sidebar(cx));
+        let empty_state = (empty && !rail).then(|| {
+            if self.listed {
+                self.render_empty_sidebar(cx).into_any_element()
+            } else {
+                crate::loading::agents_checking_in(
+                    "workspace-starting",
+                    &self.marks,
+                    self.theme.chrome,
+                    "Starting Headquarter…",
+                )
+            }
+        });
         let interrupted_note = (!rail).then(|| self.render_interrupted_note(cx)).flatten();
         let usage_strip = if rail {
             self.render_rail_usage(cx)
@@ -2505,6 +2524,7 @@ impl Workspace {
                 .size_full()
                 .child(view.clone().cached(StyleRefinement::default().size_full()))
                 .into_any_element(),
+            Pane::Empty if !self.listed => centred.into_any_element(),
             Pane::Empty => centred
                 .child(note(if self.items().is_empty() {
                     "Add sessions with + to keep them in view here.".to_owned()

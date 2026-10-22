@@ -15,7 +15,9 @@ use gpui_component::checkbox::Checkbox;
 use hq_config::setup::{self, AlacrittyLook, Choices};
 use hq_config::{ColorSettings, Settings, SettingsError};
 use hq_discovery::AgentReport;
+use hq_signals::event::Agent;
 
+use crate::marks::{self, Marks};
 use crate::modal::theme_switcher::{self, ThemeRow};
 use crate::terminal::view::hsla;
 use crate::theme::{Mode, Paint, Theme};
@@ -44,22 +46,10 @@ pub enum RowState {
 pub struct AgentRow {
     pub id: &'static str,
     pub name: &'static str,
-    pub path: Option<String>,
+    pub agent: Option<Agent>,
     pub version: Option<String>,
+    pub install_url: Option<&'static str>,
     pub state: RowState,
-}
-
-impl AgentRow {
-    pub fn note(&self) -> String {
-        match &self.state {
-            RowState::Choosable => self
-                .version
-                .clone()
-                .unwrap_or_else(|| "version unknown".to_owned()),
-            RowState::NotInstalled => "not installed".to_owned(),
-            RowState::Problem(problem) => problem.clone(),
-        }
-    }
 }
 
 /// The agents step's rows, and which are ticked: only the agents Headquarter can host
@@ -89,9 +79,8 @@ pub fn agent_rows(
             AgentRow {
                 id: agent.id,
                 name: agent.name,
-                path: report
-                    .used_path()
-                    .map(|path| path.to_string_lossy().into_owned()),
+                agent: Agent::from_id(agent.id),
+                install_url: agent.install_url,
                 version: report.version.clone(),
                 state,
             }
@@ -196,16 +185,12 @@ enum Step {
     Done,
 }
 
-/// What finishing wrote, for the last step.
+/// What finishing did, for the last step. The file's path and backup are not shown
+/// (owner, 2026-10-22: the Ready step says what to do next instead).
 enum Outcome {
-    Written(PathBuf),
+    Saved,
     /// A file appeared while first-run setup was open; it was left alone.
     LeftAlone(PathBuf),
-    Edited {
-        file: PathBuf,
-        backup: PathBuf,
-        kept: Vec<String>,
-    },
     Failed(String),
 }
 
@@ -226,6 +211,8 @@ pub struct Setup {
     chosen: usize,
     system: Mode,
     library: Library,
+    /// The agents' marks, as the sidebar draws them; drawn marks until fetched.
+    marks: Marks,
     outcome: Option<Outcome>,
     theme: Theme,
     focus: FocusHandle,
@@ -292,13 +279,49 @@ impl Setup {
             chosen,
             system,
             library,
+            marks: Marks::default(),
             outcome: None,
             theme,
             focus,
             _discovery: discovery,
         };
         setup.theme = setup.preview();
+        setup.load_marks(cx);
         setup
+    }
+
+    /// The one-colour marks the sidebar uses by default, fetching any missing.
+    fn load_marks(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = marks::dir() else {
+            return;
+        };
+        self.marks = Marks::load(&dir, marks::Style::Mono);
+        self.marks.set_ink(self.ink());
+        let fetch = cx
+            .background_executor()
+            .spawn(async move { marks::fetch_missing(&dir, marks::Style::Mono) });
+        cx.spawn(async move |this, cx| {
+            let fetched = fetch.await;
+            let _ = this.update(cx, |setup, cx| {
+                setup.marks = fetched;
+                setup.marks.set_ink(setup.ink());
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// One-colour marks in black on a light theme, white on a dark one.
+    fn ink(&self) -> alacritty_terminal::vte::ansi::Rgb {
+        let level = match self.theme.mode {
+            Mode::Light => 0,
+            Mode::Dark => 255,
+        };
+        alacritty_terminal::vte::ansi::Rgb {
+            r: level,
+            g: level,
+            b: level,
+        }
     }
 
     fn chosen_theme(&self) -> ThemeChoice {
@@ -323,6 +346,7 @@ impl Setup {
         if self.looks.get(index).is_some_and(|row| row.available) {
             self.chosen = index;
             self.theme = self.preview();
+            self.marks.set_ink(self.ink());
             cx.notify();
         }
     }
@@ -377,7 +401,7 @@ impl Setup {
             None => {
                 let text = setup::render(&choices, &now.format("%Y-%m-%d").to_string());
                 match setup::write_new(&self.file, &text) {
-                    Ok(true) => Outcome::Written(self.file.clone()),
+                    Ok(true) => Outcome::Saved,
                     Ok(false) => Outcome::LeftAlone(self.file.clone()),
                     Err(error) => {
                         Outcome::Failed(format!("cannot write {}: {error}", self.file.display()))
@@ -392,11 +416,7 @@ impl Setup {
                             &now.format("%Y%m%d-%H%M%S").to_string(),
                         );
                         match setup::replace_with_copy(&self.file, &backup, &edited.text) {
-                            Ok(()) => Outcome::Edited {
-                                file: self.file.clone(),
-                                backup,
-                                kept: edited.kept,
-                            },
+                            Ok(()) => Outcome::Saved,
                             Err(error) => Outcome::Failed(format!(
                                 "cannot write {}: {error}",
                                 self.file.display()
@@ -469,29 +489,34 @@ impl Setup {
     fn render_agents(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let chrome = self.theme.chrome;
         let Some(rows) = &self.rows else {
-            return div()
-                .text_color(hsla(chrome.muted))
-                .child("Looking for installed agents…")
-                .into_any_element();
+            return crate::loading::agents_checking_in(
+                "setup-finding",
+                &self.marks,
+                chrome,
+                "Looking for your agents…",
+            );
         };
-        let mut list = div().flex().flex_col().gap(px(10.));
+        let mut list = div().flex().flex_col().gap(px(4.));
         for row in rows {
             let choosable = row.state == RowState::Choosable;
             let id = row.id;
-            let detail = match &row.path {
-                Some(path) if choosable => format!("{} · {path}", row.note()),
-                _ => row.note(),
-            };
-            list = list.child(
-                div()
+            let mark = row
+                .agent
+                .map(|agent| self.marks.element(agent, 24., chrome.muted));
+            let trailing = match &row.state {
+                RowState::Choosable => div()
                     .flex()
-                    .flex_col()
-                    .gap(px(2.))
+                    .items_center()
+                    .gap(px(10.))
+                    .children(row.version.clone().map(|version| {
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(hsla(chrome.muted))
+                            .child(version)
+                    }))
                     .child(
                         Checkbox::new(SharedString::from(format!("agent-{id}")))
-                            .label(format!("{} ({id})", row.name))
                             .checked(self.ticked.contains(id))
-                            .disabled(!choosable)
                             .on_click(cx.listener(move |this, checked: &bool, _, cx| {
                                 if *checked {
                                     this.ticked.insert(id);
@@ -501,19 +526,50 @@ impl Setup {
                                 cx.notify();
                             })),
                     )
-                    .child(
-                        div()
-                            .pl(px(24.))
-                            .text_size(px(12.5))
-                            .text_color(hsla(chrome.muted))
-                            .truncate()
-                            .child(detail),
-                    ),
-            );
+                    .into_any_element(),
+                RowState::NotInstalled => match row.install_url {
+                    Some(url) => div()
+                        .id(SharedString::from(format!("install-{id}")))
+                        .text_size(px(12.5))
+                        .text_color(hsla(chrome.accent))
+                        .cursor_pointer()
+                        .child("How to install")
+                        .on_click(move |_, _, cx| cx.open_url(url))
+                        .into_any_element(),
+                    None => div().into_any_element(),
+                },
+                RowState::Problem(problem) => div()
+                    .max_w(px(260.))
+                    .truncate()
+                    .text_size(px(12.5))
+                    .text_color(hsla(chrome.amber))
+                    .child(problem.clone())
+                    .into_any_element(),
+            };
+            let mut line = div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .px(px(10.))
+                .py(px(8.))
+                .rounded(px(10.))
+                .bg(crate::modal::tint(chrome, 0.04))
+                .children(mark)
+                .child(
+                    div()
+                        .flex_1()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(row.name),
+                )
+                .child(trailing);
+            if !choosable {
+                line = line.opacity(0.6);
+            }
+            list = list.child(line);
         }
         list.child(
             div()
-                .pt(px(4.))
+                .pt(px(6.))
                 .text_size(px(13.))
                 .text_color(hsla(chrome.muted))
                 .child("More agents are on the way."),
@@ -622,47 +678,53 @@ impl Setup {
 
     fn render_done(&self) -> gpui::AnyElement {
         let chrome = self.theme.chrome;
-        let line = |text: String| div().text_color(hsla(chrome.text)).child(text);
-        let muted = |text: String| {
-            div()
-                .text_size(px(13.))
-                .text_color(hsla(chrome.muted))
-                .child(text)
+        let problem = match &self.outcome {
+            Some(Outcome::Failed(message)) => Some(message.clone()),
+            Some(Outcome::LeftAlone(file)) => Some(format!(
+                "{} appeared while setup was open, so it was left as it is.",
+                file.display()
+            )),
+            _ => None,
         };
-        let mut panel = div().flex().flex_col().gap(px(8.));
-        match &self.outcome {
-            Some(Outcome::Written(file)) => {
-                panel = panel.child(line(format!("Settings saved to {}.", file.display())));
-            }
-            Some(Outcome::LeftAlone(file)) => {
-                panel = panel.child(line(format!(
-                    "{} appeared while setup was open, so it was left as it is.",
-                    file.display()
-                )));
-            }
-            Some(Outcome::Edited { file, backup, kept }) => {
-                panel = panel
-                    .child(line(format!("Settings updated in {}.", file.display())))
-                    .child(muted(format!(
-                        "The previous file is kept as {}.",
-                        backup.display()
-                    )));
-                if !kept.is_empty() {
-                    panel = panel.child(muted(format!(
-                        "Kept because you changed them after the import: {}.",
-                        kept.join(", ")
-                    )));
-                }
-            }
-            Some(Outcome::Failed(message)) => {
-                panel = panel.child(div().text_color(hsla(chrome.amber)).child(message.clone()));
-            }
-            None => {}
+        if let Some(problem) = problem {
+            return div()
+                .text_color(hsla(chrome.amber))
+                .child(problem)
+                .into_any_element();
         }
-        panel
-            .child(muted(
-                "Next: choose the sessions to keep in your sidebar.".to_owned(),
-            ))
+        let key = |keys: &'static str, what: &'static str| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .min_w(px(28.))
+                        .px(px(6.))
+                        .py(px(1.))
+                        .rounded(px(6.))
+                        .border_1()
+                        .border_b_2()
+                        .border_color(hsla(chrome.sidebar_line))
+                        .text_size(px(12.))
+                        .flex()
+                        .justify_center()
+                        .child(keys),
+                )
+                .child(what)
+        };
+        let (new, add, next) = if cfg!(target_os = "macos") {
+            ("⌘N", "⌘O", "⌘J")
+        } else {
+            ("Ctrl-Shift-N", "Ctrl-Shift-O", "Ctrl-Shift-J")
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(key(new, "New session"))
+            .child(key(add, "Add sessions"))
+            .child(key(next, "Next one that needs you"))
             .into_any_element()
     }
 }
@@ -812,7 +874,6 @@ mod tests {
         );
         assert_eq!(rows[0].state, RowState::Choosable);
         assert_eq!(rows[2].state, RowState::NotInstalled);
-        assert_eq!(rows[2].note(), "not installed");
         assert_eq!(ticked, HashSet::from(["claude", "codex"]));
 
         let mut ticked = ticked;
