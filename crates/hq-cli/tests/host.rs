@@ -2089,6 +2089,54 @@ fi"#,
     }
 }
 
+/// Refresh answers once the readings are taken, so the details can show "Refreshing"
+/// until then and the new numbers right after.
+#[test]
+fn refresh_answers_after_the_new_reading() {
+    let mut env = TestEnv::new("refresh");
+    // Codex takes a second to answer, with the percentage the test sets.
+    env.stub(
+        "codex",
+        &CODEX_USAGE_STUB.replace(
+            r#"*rateLimits*) echo '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"#,
+            r#"*rateLimits*) sleep 1; echo '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":'"$(cat "$STUB_ARGS.percent" 2>/dev/null || echo 42)"',"#,
+        ),
+    );
+    env.stub("claude", "exit 1");
+    let mut daemon = env.command();
+    daemon.env("HQ_USAGE_INTERVAL_SECS", "1");
+    env.daemons.push(
+        daemon
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    let codex_percent = |conn: &mut Conn| match conn.request(&Request::Usage {}) {
+        Response::Usage { agents } => agents
+            .iter()
+            .find(|usage| usage.agent == Agent::Codex)
+            .and_then(|usage| usage.windows.first())
+            .map(|window| window.used_percent),
+        other => panic!("unexpected answer {other:?}"),
+    };
+
+    let mut conn = env.connect();
+    assert_eq!(codex_percent(&mut conn), Some(42.0));
+    std::fs::write(env.root.join("stub-args.txt.percent"), "77").unwrap();
+    // Past the refresh floor, which follows the one-second interval here.
+    std::thread::sleep(Duration::from_millis(1_100));
+    assert!(matches!(
+        conn.request(&Request::RefreshUsage {}),
+        Response::Done
+    ));
+    assert_eq!(codex_percent(&mut conn), Some(77.0));
+}
+
 #[test]
 fn usage_is_read_only_when_someone_looks() {
     let mut env = TestEnv::new("usage");
