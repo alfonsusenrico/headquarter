@@ -17,7 +17,9 @@ each in a local preview):
   installed.
 - **While agents are being found,** the agents' marks light up in turn above "Looking
   for your agents…". The app's first seconds, before the host answers, show the same
-  thing with "Starting Headquarter…", instead of an empty sidebar.
+  thing, larger, with "Starting Headquarter…" in the main pane, where there is room and
+  the eye goes; the sidebar stays blank until the list arrives (owner, 2026-10-23,
+  replacing the first placement in the sidebar).
 - **Add sessions opened during those first seconds shows the same animation** ("Loading
   your sessions…"), not "No sessions match". The host's first list now waits, at most
   10 s, for its first history import, so the list never arrives without the owner's

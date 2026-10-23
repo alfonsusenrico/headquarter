@@ -836,6 +836,7 @@ impl Render for OpenSessions {
                                 .child(crate::loading::agents_checking_in(
                                     "open-sessions-loading",
                                     &self.marks,
+                                    28.,
                                     chrome,
                                     "Loading your sessions…",
                                 ))

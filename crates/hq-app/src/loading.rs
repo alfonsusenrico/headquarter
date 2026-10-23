@@ -31,16 +31,17 @@ pub fn brightness(delta: f32, index: usize) -> f32 {
     }
 }
 
-/// The hosted agents' marks lighting up in turn, above `label`.
+/// The hosted agents' marks, `size` pixels each, lighting up in turn above `label`.
 pub fn agents_checking_in(
     key: &'static str,
     marks: &Marks,
+    size: f32,
     chrome: Chrome,
     label: &'static str,
 ) -> AnyElement {
     let still = crate::settings::reduce_motion();
     let row = Agent::ALL.into_iter().enumerate().map(|(index, agent)| {
-        let mark = div().child(marks.element(agent, 28., chrome.muted));
+        let mark = div().child(marks.element(agent, size, chrome.muted));
         if still {
             return mark.into_any_element();
         }

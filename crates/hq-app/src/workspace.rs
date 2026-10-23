@@ -61,6 +61,8 @@ const ROW_GAP: f32 = 8.0;
 /// The ✕ that slides in on hover, and how long it takes.
 const CLOSE_SLOT: f32 = 22.0;
 const SLIDE: Duration = Duration::from_millis(150);
+/// The agents' marks in the pane while the host starts.
+const STARTING_MARK: f32 = 44.0;
 /// One breath of a working session's "working" word, out and back.
 const BREATH: Duration = Duration::from_secs(2);
 /// A usage ring and the gap between rings.
@@ -995,18 +997,9 @@ impl Workspace {
             self.render_items(&items, window, cx)
         };
         let header = (!rail).then(|| self.render_header(cx));
-        let empty_state = (empty && !rail).then(|| {
-            if self.listed {
-                self.render_empty_sidebar(cx).into_any_element()
-            } else {
-                crate::loading::agents_checking_in(
-                    "workspace-starting",
-                    &self.marks,
-                    self.theme.chrome,
-                    "Starting Headquarter…",
-                )
-            }
-        });
+        // While the host starts, the pane shows it; the sidebar stays quiet.
+        let empty_state = (empty && !rail && self.listed)
+            .then(|| self.render_empty_sidebar(cx).into_any_element());
         let interrupted_note = (!rail).then(|| self.render_interrupted_note(cx)).flatten();
         let usage_strip = if rail {
             self.render_rail_usage(cx)
@@ -2530,7 +2523,15 @@ impl Workspace {
                 .size_full()
                 .child(view.clone().cached(StyleRefinement::default().size_full()))
                 .into_any_element(),
-            Pane::Empty if !self.listed => centred.into_any_element(),
+            Pane::Empty if !self.listed => centred
+                .child(crate::loading::agents_checking_in(
+                    "workspace-starting",
+                    &self.marks,
+                    STARTING_MARK,
+                    chrome,
+                    "Starting Headquarter…",
+                ))
+                .into_any_element(),
             Pane::Empty => centred
                 .child(note(if self.items().is_empty() {
                     "Add sessions with + to keep them in view here.".to_owned()

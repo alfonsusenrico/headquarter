@@ -492,6 +492,7 @@ impl Setup {
             return crate::loading::agents_checking_in(
                 "setup-finding",
                 &self.marks,
+                28.,
                 chrome,
                 "Looking for your agents…",
             );
