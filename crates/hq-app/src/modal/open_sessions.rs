@@ -17,7 +17,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
 use hq_protocol::SessionInfo;
-use hq_protocol::sidebar::{age, display_title};
+use hq_protocol::sidebar::{UNTITLED, age, display_title, untitled_id};
 use hq_signals::event::Agent;
 
 use super::folders::{self, FolderRow};
@@ -46,6 +46,8 @@ pub struct PickRow {
     pub id: String,
     pub agent: Agent,
     pub title: String,
+    /// The short id after "Untitled conversation", shown muted.
+    pub untitled_id: Option<String>,
     pub folder: String,
     pub age: String,
     pub external: bool,
@@ -167,7 +169,11 @@ pub fn pick_items<Tz: TimeZone>(
         items.push(PickItem::Session(PickRow {
             id: session.id.clone(),
             agent: session.agent,
-            title: display_title(session),
+            title: match untitled_id(session) {
+                Some(_) => UNTITLED.to_owned(),
+                None => display_title(session),
+            },
+            untitled_id: untitled_id(session).map(str::to_owned),
             folder: folders::shown(Path::new(&session.cwd), home),
             age: age(now_ms.saturating_sub(session.last_activity_at)),
             external: session.external.is_some(),
@@ -505,10 +511,21 @@ impl OpenSessions {
                     .flex_col()
                     .child(
                         div()
-                            .truncate()
+                            .flex()
+                            .min_w_0()
                             .text_size(px(14.))
-                            .text_color(hsla(chrome.text))
-                            .child(row.title.clone()),
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_color(hsla(chrome.text))
+                                    .child(row.title.clone()),
+                            )
+                            .children(row.untitled_id.clone().map(|id| {
+                                div()
+                                    .flex_none()
+                                    .text_color(hsla(chrome.muted))
+                                    .child(format!(" · {id}"))
+                            })),
                     )
                     .child(
                         div()
