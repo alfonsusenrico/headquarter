@@ -2820,7 +2820,7 @@ dependencies = [
 
 [[package]]
 name = "hq-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -2845,7 +2845,7 @@ dependencies = [
 
 [[package]]
 name = "hq-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2863,7 +2863,7 @@ dependencies = [
 
 [[package]]
 name = "hq-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "hq-daemon",
@@ -2873,7 +2873,7 @@ dependencies = [
 
 [[package]]
 name = "hq-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "toml 1.1.8+spec-1.1.0",
@@ -2882,7 +2882,7 @@ dependencies = [
 
 [[package]]
 name = "hq-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
  "chrono",
@@ -2901,14 +2901,14 @@ dependencies = [
 
 [[package]]
 name = "hq-discovery"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "hq-probe"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2922,7 +2922,7 @@ dependencies = [
 
 [[package]]
 name = "hq-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "hq-signals",
@@ -2932,7 +2932,7 @@ dependencies = [
 
 [[package]]
 name = "hq-signals"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "hq-discovery",
@@ -2945,7 +2945,7 @@ dependencies = [
 
 [[package]]
 name = "hq-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hq-signals",
  "rusqlite",
