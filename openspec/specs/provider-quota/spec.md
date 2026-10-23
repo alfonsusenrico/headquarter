@@ -24,8 +24,8 @@ The system SHALL report a provider's quota as unavailable, with the reason, when
 - **THEN** Claude's quota is reported as unavailable with the reason that no session has reported limits yet
 
 #### Scenario: Provider exposes no quota source
-- **WHEN** quotas are requested for a provider whose quota is only available through its own configuration files
-- **THEN** that provider's quota is reported as unavailable with that reason
+- **WHEN** quotas are requested for a provider Headquarter has no way to read, such as agy when it cannot be found
+- **THEN** that provider's quota is reported as "<Name> usage not available", for example "Agy usage not available"
 
 #### Scenario: Old reading
 - **WHEN** the latest reading for a provider is older than a window's reset time
@@ -47,18 +47,38 @@ The system SHALL read quotas only through the providers' documented local interf
 - **THEN** the read stops without answering and counts as a failed update
 
 ### Requirement: Usage strip
-The system SHALL show, under the sidebar, centred rings for the enabled agents nearest their limits, as many as fit on one line, each filled to the share used of its tightest current window, SHALL fold the rest into a "+N" chip that opens every agent's usage, and SHALL name the agent nearest its limit when one has used at least half of a window.
+The system SHALL show, under the sidebar, centred usage marks for the enabled agents nearest their limits, as many as fit on one line, each with an outer ring filled to the share used of the agent's longest current window (the week) and an inner ring for its shortest (5 hours) when it has two, per-model windows left to the details, SHALL fold the rest into a "+N" chip that opens every agent's usage, SHALL draw a ring red when its window has used 80% or more, and SHALL, from 80%, name the one agent near its limit with its nearest window (the shorter window when the whole percentages are equal) or, when several agents are, say how many.
 
 #### Scenario: Three agents
-- **WHEN** Claude, Codex and agy are enabled and Codex has used 82% of its five-hour window
-- **THEN** three centred rings are shown, Codex's first and filled to 82%, agy's dotted, and the label reads "codex 82% · 5h"
+- **WHEN** Claude, Codex and agy are enabled and Codex has used 82% of its five-hour window and 30% of its week
+- **THEN** three centred marks are shown, Codex's first with its inner ring at 82% and its outer ring at 30%, agy's dotted, and the label reads "codex 82% · 5h"
+
+#### Scenario: Several agents near their limits
+- **WHEN** Claude has used 91% of its week and Codex 85% of its five hours
+- **THEN** both rings are red and the label reads "2 agents near their limit"
+
+#### Scenario: One agent, both windows near the limit
+- **WHEN** only Claude is near its limit, with 85% of its five hours and 92% of its week used
+- **THEN** both of Claude's rings are red and the label reads "claude 92% · week"
+
+#### Scenario: Equal shares
+- **WHEN** Claude's five hours and week both show 88%
+- **THEN** the label reads "claude 88% · 5h"
+
+#### Scenario: Below the threshold
+- **WHEN** no agent has used 80% of any window
+- **THEN** no label is shown and no ring is red
+
+#### Scenario: One window
+- **WHEN** an agent reports a single current window
+- **THEN** its mark has only the outer ring, filled to that window
 
 #### Scenario: Narrow sidebar
 - **WHEN** the rings do not fit on one line
 - **THEN** the agents furthest from their limits fold into a "+N" chip, and every agent stays reachable from it
 
 ### Requirement: Usage details
-The system SHALL show, when the owner opens an agent's ring, each window with its percentage used and its reset time in local 12-hour time, including per-model windows the agent reports, and SHALL let the owner refresh the reading. Clicking the ring that opened the panel, pressing Escape, or clicking outside SHALL close it.
+The system SHALL show, when the owner opens an agent's ring, each window with its percentage used and its reset time in local 12-hour time, including per-model windows the agent reports, and SHALL let the owner refresh the reading, keeping the details open and showing that the refresh is under way until the new readings are in. Clicking the ring that opened the panel, pressing Escape, or clicking outside SHALL close it.
 
 #### Scenario: Codex details
 - **WHEN** the owner opens the Codex ring
@@ -66,7 +86,11 @@ The system SHALL show, when the owner opens an agent's ring, each window with it
 
 #### Scenario: Refresh
 - **WHEN** the owner presses Refresh
-- **THEN** the reading is taken again and the popover updates without being reopened
+- **THEN** the popover stays open, the button shows "Refreshing…" with a spinner until the reading is taken again, and the popover then shows the new numbers without being reopened
+
+#### Scenario: Refresh just after a reading
+- **WHEN** the owner presses Refresh within the refresh floor after a reading
+- **THEN** no new reading is taken and the button returns to Refresh at once
 
 #### Scenario: Unavailable agent
 - **WHEN** the owner opens agy's ring
@@ -81,15 +105,19 @@ The system SHALL show, when the owner opens an agent's ring, each window with it
 - **THEN** Claude's details list "week · Fable" at 3% below the all-models week
 
 ### Requirement: Reading cadence
-The system SHALL read Codex usage 10 seconds after a hosted Codex session's turn ends, every five minutes while a client shows usage, and on refresh; SHALL take Claude usage from each report of a hosted Claude session and with a hidden `/usage` read on refresh, every ten minutes while a client shows usage and no hosted Claude session has reported, and after a Claude session in another terminal finishes a turn, at most every two minutes; and SHALL NOT read either when no client is showing usage.
+The system SHALL read Codex usage 10 seconds after a hosted Codex session's turn ends, every five minutes while a client shows usage, and on refresh; SHALL take Claude usage from each report of a hosted Claude session and with a hidden `/usage` read on refresh, every ten minutes while a client shows usage and no hosted Claude session has reported, and after a Claude session in another terminal finishes a turn, at most every two minutes; SHALL read agy usage 10 seconds after a hosted agy session's turn ends, every ten minutes while a client shows usage, and on refresh; and SHALL NOT read any of them when no client is showing usage.
 
 #### Scenario: App closed
 - **WHEN** no app window is open
-- **THEN** no Codex reading and no hidden Claude read is started
+- **THEN** no Codex reading, no hidden Claude read and no agy read is started
 
 #### Scenario: Codex turn ends
 - **WHEN** a hosted Codex session finishes a turn while the app is open
 - **THEN** Codex usage is read again within about 10 seconds
+
+#### Scenario: agy turn ends
+- **WHEN** a hosted agy session finishes a turn while the app is open
+- **THEN** agy usage is read again within about 10 seconds
 
 #### Scenario: Read fails
 - **WHEN** a Codex reading fails after an earlier one succeeded
@@ -131,3 +159,40 @@ The system SHALL show no reading age, SHALL show "Couldn't update since" the las
 #### Scenario: Window reset since the reading
 - **WHEN** Claude's five-hour window reset after its last reading
 - **THEN** the five-hour window shows as reset rather than with the old percentage
+
+### Requirement: Usage failures point at the provider
+The system SHALL tell the owner, when a provider does not report its usage, which provider it was and what to try, without internal detail, SHALL record the reason in the host log, and SHALL try a failed Codex read again after a minute.
+
+#### Scenario: Codex does not report
+- **WHEN** Codex's usage read fails
+- **THEN** the details read "Codex didn't report its usage. Open Codex once to check it is signed in, then refresh." and Codex is read again a minute later
+
+#### Scenario: agy does not report
+- **WHEN** agy's `/usage` read fails or times out
+- **THEN** the details read "agy didn't report its usage. Open agy once to check it is signed in, then refresh."
+
+#### Scenario: An agent that does not share its usage
+- **WHEN** agy is enabled but Headquarter cannot find it
+- **THEN** its usage details read "Agy usage not available", the same line any agent without a usage source gets, with no further detail
+
+#### Scenario: Claude Code asks to trust a folder
+- **WHEN** Claude Code's hidden usage read stops at its folder-trust question
+- **THEN** the details say Claude Code asked to trust a folder and that opening Claude Code once and answering fixes it
+
+### Requirement: agy usage from its own usage command
+The system SHALL read agy's usage with agy's headless `/usage` command and its JSON output, run in an empty folder of Headquarter's own, SHALL report each window of each pool of models agy lists with the pool's name, and SHALL NOT change agy's settings files.
+
+#### Scenario: agy reports two pools
+- **WHEN** agy's `/usage` lists "Gemini Models" with a 5-hour window 42% used and "Claude and GPT models" with a weekly window 10% used
+- **THEN** agy's details list "5h · Gemini" at 42% and "week · Claude and GPT" at 10%, with their reset times
+
+#### Scenario: Nothing of the owner's is touched
+- **WHEN** agy's usage is read
+- **THEN** agy runs in Headquarter's `quota/agy-workspace` folder, no agy conversation is started, and no file under agy's settings is written by Headquarter
+
+### Requirement: Rings for pools of models
+The system SHALL fill the rings of an agent that reports only pools of models from the pool nearest its limit, by the highest whole percentage used and, on a tie, the shorter window; between equal pools, the first one the agent reports.
+
+#### Scenario: Claude and GPT pool nearer its limit
+- **WHEN** agy's Gemini pool has used 11% of its week and its Claude and GPT pool 85% of its five hours and 40% of its week
+- **THEN** agy's inner ring is filled to 85% and its outer ring to 40%, both from the Claude and GPT pool, and the label reads "agy 85% · 5h · Claude and GPT"
