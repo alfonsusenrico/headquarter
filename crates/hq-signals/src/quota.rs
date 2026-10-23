@@ -377,11 +377,12 @@ pub fn migrate_snapshot(old: &Path, current: &Path) -> std::io::Result<bool> {
     Ok(true)
 }
 
+/// agy keeps its usage to its own status line, which Headquarter does not change; the
+/// owner is told only that it is not shared (owner, 2026-10-23).
 pub fn read_agy() -> QuotaReport {
     QuotaReport::Unavailable {
         provider: Agent::Agy,
-        reason: "agy exposes usage only through the status line in its own settings files"
-            .to_owned(),
+        reason: "agy doesn't share its usage yet.".to_owned(),
     }
 }
 
@@ -530,7 +531,7 @@ mod tests {
         match read_agy() {
             QuotaReport::Unavailable { provider, reason } => {
                 assert_eq!(provider, Agent::Agy);
-                assert!(reason.contains("settings files"));
+                assert_eq!(reason, "agy doesn't share its usage yet.");
             }
             QuotaReport::Available(_) => panic!("agy quota should be unavailable"),
         }

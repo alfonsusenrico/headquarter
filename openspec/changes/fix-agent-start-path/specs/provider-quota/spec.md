@@ -9,6 +9,10 @@ The system SHALL tell the owner, when a provider does not report its usage, whic
 - **WHEN** Codex's usage read fails
 - **THEN** the details read "Codex didn't report its usage. Open Codex once to check it is signed in, then refresh." and Codex is read again a minute later
 
+#### Scenario: An agent that does not share its usage
+- **WHEN** the owner opens agy's usage details
+- **THEN** they read "agy doesn't share its usage yet." with no detail of how agy keeps it
+
 #### Scenario: Claude Code asks to trust a folder
 - **WHEN** Claude Code's hidden usage read stops at its folder-trust question
 - **THEN** the details say Claude Code asked to trust a folder and that opening Claude Code once and answering fixes it

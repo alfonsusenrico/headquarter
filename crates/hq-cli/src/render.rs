@@ -399,7 +399,7 @@ mod tests {
                 agent: Agent::Agy,
                 windows: vec![],
                 read_at: None,
-                problem: Some("agy exposes usage only through its settings files".into()),
+                problem: Some("agy doesn't share its usage yet.".into()),
                 account: None,
             },
         ];
@@ -427,7 +427,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("agy     not available: agy exposes usage only"),
+            text.contains("agy     not available: agy doesn't share its usage yet."),
             "{text}"
         );
     }
