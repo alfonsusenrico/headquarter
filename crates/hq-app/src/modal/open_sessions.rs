@@ -19,7 +19,7 @@ use gpui_component::popover::Popover;
 use gpui_component::scroll::Scrollbar;
 use hq_client::HostPaths;
 use hq_protocol::sidebar::{UNTITLED, age, display_title, untitled_id};
-use hq_protocol::{RemoveWay, SessionInfo, removal_ways};
+use hq_protocol::{Origin, RemoveWay, SessionInfo, removal_ways};
 use hq_signals::event::Agent;
 
 use super::folders::{self, FolderRow};
@@ -35,7 +35,6 @@ const SUGGESTIONS: usize = 6;
 const UNDO_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
 /// The ⋯ slot, kept on every row so the ages line up.
 const MORE_SLOT: f32 = 28.0;
-const ELSEWHERE_INFO: &str = "Open in another terminal. Headquarter shows their status; close one there to continue it here.";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filters {
@@ -56,16 +55,18 @@ pub struct PickRow {
     pub untitled_id: Option<String>,
     pub folder: String,
     pub age: String,
+    /// Running in another terminal: tagged "In another terminal".
     pub external: bool,
-    /// Why the session cannot be added, when it cannot; shown as a tag on the row.
-    pub blocked: Option<&'static str>,
+    /// False for an outside agent with no known conversation: there is nothing to
+    /// continue here later, so it is greyed and cannot be picked.
+    pub addable: bool,
     /// How it can be removed from its agent: none while it runs, or for an agent
     /// Headquarter cannot remove from (remove-conversations).
     pub ways: Vec<RemoveWay>,
 }
 
-/// The tag on a session running in another terminal: that terminal owns it, so it
-/// cannot be added here (owner, 2026-10-22).
+/// The tag on a session running in another terminal. It can still be added, to watch
+/// it here and continue it once closed there (owner, 2026-10-23).
 pub const IN_ANOTHER_TERMINAL: &str = "In another terminal";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,7 +187,7 @@ pub fn pick_items<Tz: TimeZone>(
             folder: folders::shown(Path::new(&session.cwd), home),
             age: age(now_ms.saturating_sub(session.last_activity_at)),
             external: session.external.is_some(),
-            blocked: session.external.is_some().then_some(IN_ANOTHER_TERMINAL),
+            addable: session.origin != Origin::External,
             ways: if session.live || session.external.is_some() {
                 Vec::new()
             } else {
@@ -229,7 +230,6 @@ pub struct OpenSessions {
     /// Folder suggestions for a path in the search field, and the highlighted one.
     suggestions: Vec<PathBuf>,
     suggestion: usize,
-    info_open: bool,
     agents: Vec<Agent>,
     home: PathBuf,
     search: Entity<InputState>,
@@ -298,7 +298,6 @@ impl OpenSessions {
             cursor: None,
             suggestions: Vec::new(),
             suggestion: 0,
-            info_open: false,
             agents,
             home,
             search,
@@ -485,7 +484,7 @@ impl OpenSessions {
         ids.extend(hidden);
         if ids.is_empty()
             && let Some(PickItem::Session(row)) = self.cursor.and_then(|cursor| items.get(cursor))
-            && row.blocked.is_none()
+            && row.addable
         {
             ids.push(row.id.clone());
         }
@@ -565,10 +564,6 @@ impl OpenSessions {
                 self.menu = None;
                 cx.notify();
             }
-            "escape" if self.info_open => {
-                self.info_open = false;
-                cx.notify();
-            }
             "escape" => cx.emit(OpenEvent::Close),
             // Tab completes a folder and never leaves the field.
             "tab" => self.complete(window, cx),
@@ -589,7 +584,7 @@ impl OpenSessions {
                 if let Some(PickItem::Session(row)) = self
                     .cursor
                     .and_then(|cursor| self.items().get(cursor).cloned())
-                    && row.blocked.is_none()
+                    && row.addable
                 {
                     self.toggle(&row.id, cx);
                 }
@@ -619,7 +614,7 @@ impl OpenSessions {
     fn render_session(&self, row: &PickRow, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let chrome = self.chrome;
         let picked = self.picked.contains(&row.id);
-        let pickable = row.blocked.is_none();
+        let pickable = row.addable;
         let id = row.id.clone();
         let mut line = div()
             .id(SharedString::from(format!("pick-{}", row.id)))
@@ -664,7 +659,7 @@ impl OpenSessions {
                             .child(row.folder.clone()),
                     ),
             )
-            .children(row.blocked.map(|why| {
+            .children(row.external.then(|| {
                 div()
                     .flex_none()
                     .px(px(8.))
@@ -674,7 +669,7 @@ impl OpenSessions {
                     .border_color(hsla(chrome.sidebar_line))
                     .text_size(px(11.5))
                     .text_color(hsla(chrome.muted))
-                    .child(why)
+                    .child(IN_ANOTHER_TERMINAL)
             }))
             .child(
                 div()
@@ -1118,28 +1113,6 @@ impl Render for OpenSessions {
         )
         .track_scroll(&self.scroll)
         .size_full();
-        let info = self.info_open.then(|| {
-            div()
-                .id("elsewhere-info-text")
-                .absolute()
-                .top(px(64.))
-                .left(px(26.))
-                .w(px(300.))
-                .p(px(10.))
-                .rounded(px(9.))
-                .border_1()
-                .border_color(hsla(chrome.sidebar_line))
-                .bg(hsla(chrome.sidebar))
-                .shadow_lg()
-                .text_size(px(12.5))
-                .text_color(hsla(chrome.text))
-                .occlude()
-                .child(ELSEWHERE_INFO)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.info_open = false;
-                    cx.notify();
-                }))
-        });
         let body = div()
             .relative()
             .flex_1()
@@ -1175,8 +1148,7 @@ impl Render for OpenSessions {
                         }
                     }))
                     .child(list)
-                    .child(Scrollbar::vertical(&self.scroll))
-                    .children(info),
+                    .child(Scrollbar::vertical(&self.scroll)),
             )
             .child(self.render_footer(cx))
             .children(self.render_suggestions(cx))
@@ -1362,21 +1334,24 @@ mod tests {
     }
 
     #[test]
-    fn rows_show_title_folder_and_why_they_cannot_be_added() {
+    fn rows_show_title_folder_and_whether_they_can_be_added() {
         let items = items(&Filters::default());
         let fix = row(&items, "fix");
         assert_eq!(fix.title, "Fix the login flow");
         assert_eq!(fix.folder, "~/api");
-        assert!(fix.blocked.is_none());
-        assert!(row(&items, "ext-linked").external);
-        assert_eq!(
-            row(&items, "ext-linked").blocked,
-            Some(IN_ANOTHER_TERMINAL),
-            "a session open in another terminal cannot be added"
+        assert!(!fix.external);
+        assert!(fix.addable);
+        let linked = row(&items, "ext-linked");
+        assert!(linked.external);
+        assert!(
+            linked.addable,
+            "a session open in another terminal can be added to continue it later"
         );
-        assert_eq!(
-            row(&items, "external-agy-9").blocked,
-            Some(IN_ANOTHER_TERMINAL)
+        let unlinked = row(&items, "external-agy-9");
+        assert!(unlinked.external);
+        assert!(
+            !unlinked.addable,
+            "an outside agent with no known conversation has nothing to continue"
         );
     }
 

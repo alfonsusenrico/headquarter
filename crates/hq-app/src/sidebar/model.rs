@@ -428,6 +428,14 @@ pub fn next_needing(sessions: &[SessionInfo], current: Option<&str>) -> Option<S
     next.map(|id| (*id).to_owned())
 }
 
+/// Whether an update shows the agent in another terminal was closed there: it ran
+/// elsewhere and now runs nowhere. Nothing is started for it (add-sessions-running-elsewhere D2).
+pub fn closed_elsewhere(previous: Option<&SessionInfo>, current: &SessionInfo) -> bool {
+    previous.is_some_and(|previous| previous.external.is_some())
+        && current.external.is_none()
+        && !current.live
+}
+
 #[cfg(test)]
 mod tests {
     use hq_protocol::{External, Origin};
@@ -458,6 +466,34 @@ mod tests {
             interrupted: false,
             offered: true,
         }
+    }
+
+    #[test]
+    fn closing_the_other_terminal_is_told_apart() {
+        let mut elsewhere = session("s", "/u/api", Status::Done, 0);
+        elsewhere.live = false;
+        elsewhere.external = Some(External {
+            pid: Some(5),
+            status: None,
+        });
+        let mut closed = elsewhere.clone();
+        closed.external = None;
+        assert!(closed_elsewhere(Some(&elsewhere), &closed));
+        assert!(
+            !closed_elsewhere(Some(&elsewhere), &elsewhere),
+            "still running there"
+        );
+        assert!(
+            !closed_elsewhere(Some(&closed), &closed),
+            "it ended earlier, not now"
+        );
+        assert!(!closed_elsewhere(None, &closed), "first seen ended");
+        let mut hosted = closed.clone();
+        hosted.live = true;
+        assert!(
+            !closed_elsewhere(Some(&elsewhere), &hosted),
+            "continued here at once"
+        );
     }
 
     #[test]

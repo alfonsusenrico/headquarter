@@ -215,6 +215,9 @@ pub struct Workspace {
     resuming: Option<String>,
     /// Why starting a session's agent again failed: (session id, reason).
     resume_failed: Option<(String, String)>,
+    /// The shown session whose agent was closed in another terminal; it waits for
+    /// "Open here" (add-sessions-running-elsewhere D2).
+    closed_elsewhere: Option<String>,
     /// The sidebar, drawn as a view GPUI keeps between frames (fix-terminal-redraw-cost).
     sidebar_view: Entity<sidebar_view::SidebarView>,
     /// Steps sidebar motion while any is on screen (fix-sidebar-motion-redraw).
@@ -358,6 +361,7 @@ impl Workspace {
             confirm_close: None,
             resuming: None,
             resume_failed: None,
+            closed_elsewhere: None,
             motion: None,
             motion_epoch: Instant::now(),
             rename: None,
@@ -658,6 +662,11 @@ impl Workspace {
         });
         let previous = self.session(&id).cloned();
         self.notify_change(previous.as_ref(), &session, window, cx);
+        if self.shown_id() == Some(id.as_str())
+            && model::closed_elsewhere(previous.as_ref(), &session)
+        {
+            self.closed_elsewhere = Some(id.clone());
+        }
         match self.sessions.iter_mut().find(|known| known.id == id) {
             Some(known) => *known = session,
             None => self.sessions.push(session),
@@ -759,6 +768,7 @@ impl Workspace {
             return;
         };
         self.selected = Some(info.id.clone());
+        self.closed_elsewhere = None;
         if let Some(path) = crate::app_state::path() {
             // A lost write only means the next launch shows nothing in particular.
             let _ = crate::app_state::save_shown(&path, &info.id);
@@ -948,6 +958,7 @@ impl Workspace {
     fn resume(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.resuming = Some(id.clone());
         self.resume_failed = None;
+        self.closed_elsewhere = None;
         let wanted = id.clone();
         self.host_call(
             window,
@@ -2618,6 +2629,20 @@ impl Workspace {
                     return centred
                         .child(heading)
                         .child(note("Opening…".to_owned()))
+                        .into_any_element();
+                }
+                if self.closed_elsewhere.as_deref() == Some(id.as_str()) {
+                    return centred
+                        .child(heading)
+                        .child(note("Closed in the other terminal.".to_owned()))
+                        .child(
+                            Button::new("pane-open-here")
+                                .primary()
+                                .label("Open here")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.resume(id.clone(), window, cx)
+                                })),
+                        )
                         .into_any_element();
                 }
                 // Starting failed, or the agent stopped while shown.
