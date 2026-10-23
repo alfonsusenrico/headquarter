@@ -15,6 +15,28 @@ pub const WALK_LIMIT: usize = 50_000;
 pub const MAX_FOUND: usize = 50;
 /// Trees that never hold projects and would swamp the walk.
 const SKIPPED: [&str; 4] = ["node_modules", "target", "Library", ".git"];
+/// Media folders directly in the home folder. They hold no projects, and reading the
+/// Music and Photos libraries inside them makes macOS ask the owner for access.
+const HOME_MEDIA: [&str; 3] = ["Music", "Movies", "Pictures"];
+/// Package folders (apps, media libraries) are files to the owner; reading into one
+/// can also make macOS ask for access.
+const PACKAGES: [&str; 6] = [
+    ".app",
+    ".photoslibrary",
+    ".musiclibrary",
+    ".tvlibrary",
+    ".imovielibrary",
+    ".bundle",
+];
+
+/// Whether the walk leaves the folder `name`, found `depth` levels below the home
+/// folder (0 for its own subfolders), unread.
+fn skipped(name: &str, depth: usize) -> bool {
+    name.starts_with('.')
+        || SKIPPED.contains(&name)
+        || (depth == 0 && HOME_MEDIA.contains(&name))
+        || PACKAGES.iter().any(|suffix| name.ends_with(suffix))
+}
 /// Folders found by the walk reach the window in batches of this size.
 const BATCH: usize = 500;
 
@@ -229,7 +251,7 @@ pub fn walk(home: &Path, mut send: impl FnMut(Vec<PathBuf>) -> bool) {
             };
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if !kind.is_dir() || name.starts_with('.') || SKIPPED.contains(&name.as_ref()) {
+            if !kind.is_dir() || skipped(&name, depth) {
                 continue;
             }
             let path = entry.path();
@@ -431,6 +453,42 @@ mod tests {
             ],
             "hidden folders, node_modules and Library are not walked"
         );
+    }
+
+    #[test]
+    fn the_walk_leaves_media_libraries_and_packages_unread() {
+        let root = Scratch::new("media");
+        for folder in [
+            "Music/Music/Media.localized",
+            "Pictures/Photos Library.photoslibrary/originals",
+            "Movies/clips",
+            "Applications/Tool.app/Contents",
+            "code/site/Music",
+            "code/site/Pictures",
+        ] {
+            fs::create_dir_all(root.path().join(folder)).unwrap();
+        }
+        let found = walked(root.path());
+        let shown: Vec<String> = found
+            .iter()
+            .map(|path| {
+                path.strip_prefix(root.path())
+                    .unwrap()
+                    .display()
+                    .to_string()
+            })
+            .collect();
+        for unread in ["Music", "Pictures", "Movies", "Applications/Tool.app"] {
+            assert!(
+                !shown.iter().any(|path| path.starts_with(unread)),
+                "{unread} was read: {shown:?}"
+            );
+        }
+        assert!(
+            shown.contains(&"code/site/Music".to_owned()),
+            "a project's own Music folder is still found: {shown:?}"
+        );
+        assert!(shown.contains(&"Applications".to_owned()));
     }
 
     #[test]
