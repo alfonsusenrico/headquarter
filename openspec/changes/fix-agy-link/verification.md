@@ -24,3 +24,8 @@ with this change, 2026-10-23.
 - Whether agy clears `not_fully_idle` while waiting for approval was not observed
   directly; the new rule does not depend on it.
 - On screen (task 1.2): waits for the owner.
+
+## On screen and final check (2026-10-23)
+
+- The owner confirmed it on the test build (`test/combined-build`).
+- `./scripts/check` on the branch as pushed: passed, 377 tests, 17 OpenSpec items (at 37fb879).
