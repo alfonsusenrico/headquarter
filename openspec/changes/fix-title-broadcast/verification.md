@@ -21,3 +21,8 @@ this change, 2026-10-22.
 ## Not verified
 
 - On screen with the owner's history (task 1.2): waits for the owner's test build.
+
+## On screen and final check (2026-10-23)
+
+- The owner confirmed it on the test build (`test/combined-build`).
+- `./scripts/check` on the branch as pushed: passed, 376 tests, 16 OpenSpec items (at 2c25807).
