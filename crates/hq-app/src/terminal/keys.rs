@@ -166,6 +166,24 @@ pub fn paste(text: &str, bracketed: bool) -> Vec<u8> {
     [b"\x1b[200~".as_slice(), clean.as_bytes(), b"\x1b[201~"].concat()
 }
 
+/// What a drop of files types, as Terminal.app does: each path with shell characters
+/// escaped by a backslash, separated by spaces, with a space after the last so the next
+/// word does not join it. Agents read an image path typed this way as an attachment.
+pub fn dropped_paths(paths: &[std::path::PathBuf]) -> String {
+    let mut text = String::new();
+    for path in paths {
+        for c in path.to_string_lossy().chars() {
+            let plain = !c.is_ascii() || c.is_ascii_alphanumeric() || "-_./,:@+=%".contains(c);
+            if !plain {
+                text.push('\\');
+            }
+            text.push(c);
+        }
+        text.push(' ');
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +327,27 @@ mod tests {
             encode(key("enter"), KeyModes::default(), &bindings).unwrap(),
             b"\r"
         );
+    }
+
+    #[test]
+    fn dropped_paths_are_escaped_and_spaced() {
+        use std::path::PathBuf;
+        let screenshot = PathBuf::from("/Users/me/Desktop/Screenshot 2026-10-23 at 14.29.43.png");
+        assert_eq!(
+            dropped_paths(&[screenshot]),
+            "/Users/me/Desktop/Screenshot\\ 2026-10-23\\ at\\ 14.29.43.png "
+        );
+        let several = [
+            PathBuf::from("/tmp/a.png"),
+            PathBuf::from("/tmp/it's (1)&$x.txt"),
+            PathBuf::from("/tmp/Résumé 日本.pdf"),
+        ];
+        assert_eq!(
+            dropped_paths(&several),
+            "/tmp/a.png /tmp/it\\'s\\ \\(1\\)\\&\\$x.txt /tmp/Résumé\\ 日本.pdf ",
+            "shell characters escaped, other letters kept"
+        );
+        assert_eq!(dropped_paths(&[]), "");
     }
 
     #[test]
