@@ -1,12 +1,49 @@
 //! The owner's login-shell `PATH`, which a process started from a desktop launcher
 //! does not inherit.
 
+use std::ffi::OsString;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 pub const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The login-shell `PATH`, once a process has learnt it (`remember_login_path`).
+static LOGIN_PATH: OnceLock<String> = OnceLock::new();
+
+/// Keeps the login-shell `PATH` for [`agent_path`]; only the first value counts.
+pub fn remember_login_path(path: &str) {
+    let _ = LOGIN_PATH.set(path.to_owned());
+}
+
+/// The `PATH` an agent runs with. A process started from a desktop launcher has only
+/// the system folders, so a CLI written for Node (`#!/usr/bin/env node`) cannot find
+/// `node`. First the agent's own folder (Homebrew and nvm put `node` beside it), then
+/// the login-shell `PATH` once known, then this process's own; repeats removed.
+pub fn agent_path(executable: &Path) -> OsString {
+    let login = LOGIN_PATH.get().map(OsString::from);
+    path_for(executable, login, std::env::var_os("PATH"))
+}
+
+fn path_for(executable: &Path, login: Option<OsString>, process: Option<OsString>) -> OsString {
+    let mut folders: Vec<PathBuf> = Vec::new();
+    let own = executable
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .map(Path::to_path_buf);
+    let rest = [login, process]
+        .into_iter()
+        .flatten()
+        .flat_map(|value| std::env::split_paths(&value).collect::<Vec<_>>());
+    for folder in own.into_iter().chain(rest) {
+        if !folder.as_os_str().is_empty() && !folders.contains(&folder) {
+            folders.push(folder);
+        }
+    }
+    std::env::join_paths(folders).unwrap_or_default()
+}
 
 const START: &str = "__HQ_PATH__";
 const END: &str = "__HQ_END__";
@@ -58,16 +95,61 @@ pub fn path_from_shell(shell: &Path, timeout: Duration) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_agent_runs_with_its_own_folder_first_then_the_login_path() {
+        let path = super::path_for(
+            std::path::Path::new("/opt/homebrew/bin/codex"),
+            Some("/Users/me/.nvm/bin:/opt/homebrew/bin".into()),
+            Some("/usr/bin:/bin".into()),
+        );
+        assert_eq!(
+            path,
+            std::ffi::OsString::from("/opt/homebrew/bin:/Users/me/.nvm/bin:/usr/bin:/bin")
+        );
+        let before_login = super::path_for(
+            std::path::Path::new("/opt/homebrew/bin/codex"),
+            None,
+            Some("/usr/bin:/bin".into()),
+        );
+        assert_eq!(
+            before_login,
+            std::ffi::OsString::from("/opt/homebrew/bin:/usr/bin:/bin")
+        );
+    }
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
 
     /// A fake shell: runs `body` and ignores the arguments a real shell would read.
-    fn fake_shell(name: &str, body: &str) -> PathBuf {
+    /// A path under the system's temporary folder, removed when the test ends.
+    struct TempPath(std::path::PathBuf);
+
+    impl std::ops::Deref for TempPath {
+        type Target = std::path::Path;
+
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for TempPath {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempPath {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn fake_shell(name: &str, body: &str) -> TempPath {
         let path = std::env::temp_dir().join(format!("hq-shell-{}-{name}", std::process::id()));
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        path
+        TempPath(path)
     }
 
     #[test]
@@ -80,7 +162,6 @@ mod tests {
             path_from_shell(&shell, LOGIN_SHELL_TIMEOUT).as_deref(),
             Some("/opt/x/bin:/usr/bin")
         );
-        let _ = std::fs::remove_file(shell);
     }
 
     #[test]
@@ -89,14 +170,12 @@ mod tests {
         let started = Instant::now();
         assert_eq!(path_from_shell(&shell, Duration::from_millis(500)), None);
         assert!(started.elapsed() < Duration::from_secs(3));
-        let _ = std::fs::remove_file(shell);
     }
 
     #[test]
     fn failing_or_missing_shell_gives_nothing() {
         let shell = fake_shell("failing", "exit 3");
         assert_eq!(path_from_shell(&shell, LOGIN_SHELL_TIMEOUT), None);
-        let _ = std::fs::remove_file(shell);
         assert_eq!(
             path_from_shell(Path::new("/no/such/shell"), LOGIN_SHELL_TIMEOUT),
             None

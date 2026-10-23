@@ -16,7 +16,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, mpsc};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -124,6 +124,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         live: Mutex::new(HashMap::new()),
         subscribers: Mutex::new(Vec::new()),
         usage: Mutex::new(usage::UsageBook::default()),
+        usage_settled: Condvar::new(),
         details: Mutex::new(details::DetailsBook::default()),
         clients: AtomicUsize::new(0),
         next_viewer: AtomicU64::new(1),
@@ -144,6 +145,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         )),
         platform: hq_discovery::platform::detect(),
         login_path: Mutex::new(None),
+        login_path_settled: AtomicBool::new(false),
         _lock: lock,
     });
     host.log.line(&format!(
@@ -228,6 +230,8 @@ struct Host {
     live: Mutex<HashMap<String, Arc<Hosted>>>,
     subscribers: Mutex<Vec<Subscriber>>,
     usage: Mutex<usage::UsageBook>,
+    /// Signalled when a usage read finishes and its result has gone out.
+    usage_settled: Condvar,
     /// Sessions' details, in memory only.
     details: Mutex<details::DetailsBook>,
     clients: AtomicUsize,
@@ -250,6 +254,9 @@ struct Host {
     platform: Platform,
     /// The owner's login-shell `PATH`, captured once in the background at startup.
     login_path: Mutex<Option<String>>,
+    /// Set once the login-shell `PATH` is known, unavailable, or turned off; agents
+    /// started earlier may not find what they need (`hq_discovery::shell::agent_path`).
+    login_path_settled: AtomicBool,
     /// Held for the host's lifetime: the single-instance lock.
     _lock: std::fs::File,
 }
@@ -823,6 +830,7 @@ impl Host {
             .map_or(true, |settings| settings.login_shell);
         if !allowed {
             self.log.line("login shell PATH skipped by settings");
+            self.login_path_settled.store(true, Ordering::SeqCst);
             return;
         }
         let path = hq_discovery::shell::login_shell_path(hq_discovery::shell::LOGIN_SHELL_TIMEOUT);
@@ -834,7 +842,11 @@ impl Host {
                 "unavailable"
             }
         ));
+        if let Some(path) = &path {
+            hq_discovery::shell::remember_login_path(path);
+        }
         *lock(&self.login_path) = path;
+        self.login_path_settled.store(true, Ordering::SeqCst);
     }
 
     fn ensure_name_free(&self, name: &str) -> OpResult<()> {
@@ -1209,6 +1221,7 @@ impl Host {
         command.env(SESSION_ENV, plan.id);
         command.env("TERM", plan.term.as_deref().unwrap_or("xterm-256color"));
         command.env("COLORTERM", "truecolor");
+        command.env("PATH", hq_discovery::shell::agent_path(&plan.program));
         let child = pair
             .slave
             .spawn_command(command)
@@ -1350,11 +1363,14 @@ impl Host {
         if status == Status::DoneUnread {
             self.resolve_conversation(hosted);
         }
-        if hosted.agent == Agent::Codex
-            && change.previous == Some(Status::Working)
+        if change.previous == Some(Status::Working)
             && matches!(status, Status::DoneUnread | Status::Done)
         {
-            self.codex_turn_ended();
+            match hosted.agent {
+                Agent::Codex => self.codex_turn_ended(),
+                Agent::Agy => self.agy_turn_ended(),
+                Agent::Claude => {}
+            }
         }
         self.broadcast(&hosted.id);
     }

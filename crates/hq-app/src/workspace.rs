@@ -20,7 +20,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{Icon, IconName, Sizable};
+use gpui_component::{Disableable, Icon, IconName, Sizable};
 use hq_client::{Change, FeedControl, HostPaths, SessionFeed};
 use hq_config::{AgentMarks, Appearance, SettingsWatcher};
 use hq_protocol::{AgentUsage, GroupInfo, SessionInfo, usage};
@@ -243,6 +243,8 @@ pub struct Workspace {
     usage_open: Option<Agent>,
     /// The details list every agent: opened from the "+N" chip.
     usage_all: bool,
+    /// A refresh asked of the host has not been answered yet.
+    usage_refreshing: bool,
     /// The panel the backdrop just closed, so the click that closed it does not reopen
     /// it on the ring or chip underneath (`None` for the all-agents panel).
     usage_dismissed: Option<(Option<Agent>, Instant)>,
@@ -375,6 +377,7 @@ impl Workspace {
             usage: Vec::new(),
             usage_open: None,
             usage_all: false,
+            usage_refreshing: false,
             usage_dismissed: None,
             rows_scroll: ScrollHandle::new(),
             ring_focus: Agent::ALL
@@ -804,7 +807,7 @@ impl Workspace {
         let Some(id) = self.pending_shown.take() else {
             return;
         };
-        let Some(info) = self.session(&id).cloned() else {
+        let Some(info) = model::kept_session(&self.sessions, &id).cloned() else {
             return;
         };
         if info.live {
@@ -2077,8 +2080,25 @@ impl Workspace {
             .is_some_and(|(closed, at)| closed == panel && at.elapsed() < DISMISS_CLICK)
     }
 
+    /// The host answers once the new readings are in; they reach the details through
+    /// the usage feed.
     fn refresh_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.host_call(window, cx, hq_client::refresh_usage, |_, (), _, _| {});
+        if self.usage_refreshing {
+            return;
+        }
+        self.usage_refreshing = true;
+        cx.notify();
+        self.host_call(
+            window,
+            cx,
+            |paths| Ok(hq_client::refresh_usage(paths)),
+            |this, refreshed, _, _| {
+                this.usage_refreshing = false;
+                if let Err(error) = refreshed {
+                    this.message = Some(format!("{error:#}"));
+                }
+            },
+        );
     }
 
     /// Centred rings, nearest the limit first, as many as fit on one line; the rest
@@ -2170,41 +2190,55 @@ impl Workspace {
     fn usage_ring(&self, usage: &AgentUsage, now: u64, cx: &mut Context<Self>) -> AnyElement {
         let chrome = self.theme.chrome;
         let agent = usage.agent;
-        let fill = usage::fill(usage, now);
+        let rings = usage::rings(usage, now);
         let note = usage::update_note(usage, &chrono::Local::now());
-        let color = if note.is_some() {
-            chrome.muted
-        } else if fill.is_some_and(|percent| percent >= usage::HIGH_PERCENT) {
-            chrome.amber
-        } else {
-            chrome.text
+        let color = |percent: Option<f64>| {
+            if note.is_some() {
+                chrome.muted
+            } else if percent.is_some_and(|percent| percent >= usage::NEAR_LIMIT_PERCENT) {
+                self.theme.near_limit()
+            } else {
+                chrome.text
+            }
         };
         let who = usage.account.as_ref().map_or_else(
             || agent.to_string(),
             |account| format!("{agent} ({})", usage::account_text(account)),
         );
-        let description = match (usage.read_at, fill) {
-            (Some(_), Some(percent)) => match &note {
-                Some(note) => format!("{who}: {} used. {note}", usage::percent_text(percent)),
-                None => format!("{who}: {} used", usage::percent_text(percent)),
+        let used: Vec<String> = usage::ring_windows(usage, now)
+            .into_iter()
+            .map(|window| {
+                format!(
+                    "{} {}",
+                    usage::window_name(window),
+                    usage::percent_text(window.used_percent)
+                )
+            })
+            .collect();
+        let description = match (usage.read_at, used.is_empty()) {
+            (Some(_), false) => match &note {
+                Some(note) => format!("{who}: {} used. {note}", used.join(", ")),
+                None => format!("{who}: {} used", used.join(", ")),
             },
             _ => format!(
                 "{who}: {}",
                 usage.problem.as_deref().unwrap_or("usage not available")
             ),
         };
+        let mark_size = if rings.inner.is_some() { 11. } else { 16. };
         let mut ring = div()
             .id(SharedString::from(format!("usage-{agent}")))
             .rounded(px(8.))
             .cursor_pointer()
             .child(glyph::usage_ring(
                 agent,
-                fill,
-                color,
+                rings,
+                color(rings.outer),
+                color(rings.inner),
                 chrome,
                 self.marks
                     .has(agent)
-                    .then(|| self.marks.element(agent, 16., chrome.muted)),
+                    .then(|| self.marks.element(agent, mark_size, chrome.muted)),
             ))
             .tooltip(move |window, cx| Tooltip::new(description.clone()).build(window, cx))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_usage(agent, cx)))
@@ -2270,7 +2304,9 @@ impl Workspace {
                 .w(px((self.sidebar_width() - 20.).max(USAGE_PANEL_WIDTH)))
         }
         .max_h(px(560.))
-        .overflow_y_scroll();
+        .overflow_y_scroll()
+        // Presses inside the details stay with them, not the backdrop that closes them.
+        .occlude();
         for (index, usage) in shown.into_iter().enumerate() {
             if index > 0 {
                 panel = panel.child(div().h(px(1.)).bg(hsla(chrome.sidebar_line)));
@@ -2280,9 +2316,18 @@ impl Workspace {
         Some(
             panel.child(
                 div().child(
-                    Button::new("usage-refresh").label("Refresh").on_click(
-                        cx.listener(|this, _, window, cx| this.refresh_usage(window, cx)),
-                    ),
+                    Button::new("usage-refresh")
+                        .icon(IconName::RefreshCw)
+                        .label(if self.usage_refreshing {
+                            "Refreshing…"
+                        } else {
+                            "Refresh"
+                        })
+                        .loading(self.usage_refreshing && !settings::reduce_motion())
+                        .disabled(self.usage_refreshing)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.refresh_usage(window, cx)),
+                        ),
                 ),
             ),
         )
@@ -2338,8 +2383,8 @@ impl Workspace {
                 };
                 let name = usage::window_name(window);
                 let share = window.used_percent.clamp(0.0, 100.0);
-                let bar_color = if share >= usage::HIGH_PERCENT {
-                    chrome.amber
+                let bar_color = if share >= usage::NEAR_LIMIT_PERCENT {
+                    self.theme.near_limit()
                 } else {
                     chrome.text
                 };

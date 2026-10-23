@@ -38,6 +38,9 @@ const KEY_GAP: Duration = Duration::from_millis(15);
 const EXIT_WAIT: Duration = Duration::from_secs(2);
 /// Words of Claude Code's folder-trust question.
 const TRUST_QUESTION: &str = "trust this folder";
+/// The read's error when Claude Code asked to trust its folder; the owner can act on it.
+pub(super) const TRUST_ASKED: &str =
+    "Claude Code asked whether to trust the folder; Headquarter does not answer it";
 
 pub(super) fn read_usage_screen(claude: &Path, folder: &Path) -> Result<Vec<QuotaWindow>, String> {
     let pair = native_pty_system()
@@ -55,6 +58,7 @@ pub(super) fn read_usage_screen(claude: &Path, folder: &Path) -> Result<Vec<Quot
         command.env_remove(marker);
     }
     command.env("TERM", "xterm-256color");
+    command.env("PATH", hq_discovery::shell::agent_path(claude));
     let mut child = pair
         .slave
         .spawn_command(command)
@@ -131,10 +135,7 @@ fn drive(
         }
         send(&mut writer, &screen.feed(&chunk));
         if screen.text().to_lowercase().contains(TRUST_QUESTION) {
-            return Err(
-                "Claude Code asked whether to trust the folder; Headquarter does not answer it"
-                    .to_owned(),
-            );
+            return Err(TRUST_ASKED.to_owned());
         }
     }
 

@@ -9,19 +9,43 @@ use serde_json::Value;
 
 const PROBE: &str = env!("CARGO_BIN_EXE_hq-probe");
 
-fn scratch(name: &str) -> PathBuf {
+/// A path under the system's temporary folder, removed when the test ends.
+struct TempPath(std::path::PathBuf);
+
+impl std::ops::Deref for TempPath {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TempPath {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TempPath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn scratch(name: &str) -> TempPath {
     let dir = std::env::temp_dir().join(format!("hq-probe-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    TempPath(dir)
 }
 
 /// A data home under a short path: Unix socket paths are limited to ~104 bytes.
-fn short_data_home(name: &str) -> PathBuf {
+fn short_data_home(name: &str) -> TempPath {
     let dir = PathBuf::from("/tmp").join(format!("hqt-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    TempPath(dir)
 }
 
 #[test]
@@ -52,7 +76,7 @@ fn run_passes_output_through_and_records_status() {
         .arg(&log)
         .arg("--")
         .arg(&stub)
-        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_HOME", data_home.as_os_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -97,9 +121,6 @@ fn run_passes_output_through_and_records_status() {
     assert!(signals.contains(&"bell"));
     assert!(signals.contains(&"program-status:blocked:permission"));
     assert!(records.iter().any(|record| record["type"] == "exit"));
-
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_dir_all(&data_home);
 }
 
 #[test]
@@ -128,7 +149,6 @@ fn forward_without_listener_is_silent_and_fast() {
     // Includes starting the process; macOS adds about 0.6 s to a binary's first run
     // after it is built.
     assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -136,7 +156,7 @@ fn status_line_prints_the_owner_output_and_records_limits() {
     let data_home = short_data_home("statusline");
     let mut child = Command::new(PROBE)
         .args(["hook-statusline", "--chain", "printf 'owner:'; cat"])
-        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_HOME", data_home.as_os_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -162,5 +182,4 @@ fn status_line_prints_the_owner_output_and_records_limits() {
     let saved: Value = serde_json::from_slice(&std::fs::read(snapshot).unwrap()).unwrap();
     assert_eq!(saved["windows"][0]["used_percent"], 12.0);
     assert!(!saved.to_string().contains("session_id"));
-    let _ = std::fs::remove_dir_all(&data_home);
 }

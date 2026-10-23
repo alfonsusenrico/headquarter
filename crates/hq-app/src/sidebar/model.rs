@@ -353,6 +353,14 @@ pub fn interrupted(sessions: &[SessionInfo]) -> Vec<&SessionInfo> {
         .collect()
 }
 
+/// The session kept from the last launch, while it is still in the sidebar: one closed
+/// or removed since is no longer the owner's to show.
+pub fn kept_session<'a>(sessions: &'a [SessionInfo], id: &str) -> Option<&'a SessionInfo> {
+    sessions
+        .iter()
+        .find(|session| session.id == id && session.in_sidebar)
+}
+
 /// The first line of the restart note; with nothing left to offer, only failures remain.
 pub fn interrupted_headline(count: usize) -> String {
     match count {
@@ -450,6 +458,19 @@ mod tests {
             interrupted: false,
             offered: true,
         }
+    }
+
+    #[test]
+    fn a_kept_session_is_shown_only_while_in_the_sidebar() {
+        let mut closed = session("closed", "/w", Status::Inactive, 0);
+        closed.in_sidebar = false;
+        let sessions = vec![session("kept", "/w", Status::Done, 0), closed];
+        assert_eq!(
+            kept_session(&sessions, "kept").map(|session| session.id.as_str()),
+            Some("kept")
+        );
+        assert!(kept_session(&sessions, "closed").is_none());
+        assert!(kept_session(&sessions, "gone").is_none());
     }
 
     fn group(id: i64, name: &str, collapsed: bool) -> GroupInfo {
