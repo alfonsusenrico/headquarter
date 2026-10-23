@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 pub use hq_daemon::paths::HostPaths;
 use hq_protocol::{
-    AgentUsage, ErrorCode, Frame, GroupInfo, PROTOCOL_VERSION, RemoveWay, Request, Response,
-    SessionInfo, host_protocol_in_refusal, read_frame, write_frame,
+    AgentUsage, ErrorCode, Frame, GroupColor, GroupInfo, PROTOCOL_VERSION, RemoveWay, Request,
+    Response, SessionInfo, host_protocol_in_refusal, read_frame, write_frame,
 };
 use hq_signals::details::SessionDetails;
 use hq_signals::event::Agent;
@@ -340,6 +340,17 @@ pub fn move_group(paths: &HostPaths, group: i64, before: Option<i64>) -> Result<
 
 pub fn collapse_group(paths: &HostPaths, group: i64, collapsed: bool) -> Result<()> {
     request_done(paths, &Request::CollapseGroup { group, collapsed })
+}
+
+/// Picks a group's colour by palette name, or `None` for automatic.
+pub fn set_group_color(paths: &HostPaths, group: i64, color: Option<GroupColor>) -> Result<()> {
+    request_done(
+        paths,
+        &Request::SetGroupColor {
+            group,
+            color: color.map(|color| color.name().to_owned()),
+        },
+    )
 }
 
 /// Puts a sidebar session in a group, or in none.

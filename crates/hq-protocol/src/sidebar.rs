@@ -216,6 +216,7 @@ mod tests {
             id,
             name: name.to_owned(),
             collapsed: false,
+            color: None,
         }
     }
 

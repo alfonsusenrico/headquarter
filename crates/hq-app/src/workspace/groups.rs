@@ -12,8 +12,9 @@ use gpui::{
 use gpui_component::Sizable;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::popover::Popover;
 use gpui_component::tooltip::Tooltip;
-use hq_protocol::GroupInfo;
+use hq_protocol::{GroupColor, GroupInfo};
 use hq_signals::event::Agent;
 
 use super::Workspace;
@@ -227,6 +228,129 @@ impl Workspace {
                 );
             }
         }
+    }
+
+    /// Picks a group's colour, or `None` for automatic (add-group-colors D3).
+    pub(super) fn set_group_color(
+        &mut self,
+        id: i64,
+        color: Option<GroupColor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Shown at once; the host's answer confirms it.
+        if let Some(group) = self.groups.iter_mut().find(|group| group.id == id) {
+            group.color = color.map(|color| color.name().to_owned());
+        }
+        self.color_picker = None;
+        cx.notify();
+        self.host_call(
+            window,
+            cx,
+            move |paths| hq_client::set_group_color(paths, id, color),
+            |_, (), _, _| {},
+        );
+    }
+
+    /// The colour dot that starts a group's header and opens its colour picker: the
+    /// eight swatches, each named, and "Automatic"; the current choice is ticked.
+    fn render_color_dot(
+        &self,
+        id: i64,
+        (color, picked): (GroupColor, Option<GroupColor>),
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let chrome = self.theme.chrome;
+        let open = self.color_picker == Some(id);
+        let swatch = |color: GroupColor, size: f32| {
+            div()
+                .size(px(size))
+                .flex_none()
+                .rounded(px(3.))
+                .bg(hsla(self.theme.group_color(color)))
+        };
+        let mut swatches = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(6.))
+            .w(px(4. * 22. + 3. * 6.));
+        for choice in GroupColor::ALL {
+            let chosen = picked == Some(choice);
+            swatches = swatches.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "group-color-{id}-{}",
+                        choice.name()
+                    )))
+                    .size(px(22.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(6.))
+                    .border_2()
+                    .border_color(if chosen {
+                        hsla(chrome.text)
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .cursor_pointer()
+                    .child(swatch(choice, 14.))
+                    .tooltip(move |window, cx| Tooltip::new(choice.label()).build(window, cx))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.set_group_color(id, Some(choice), window, cx);
+                    })),
+            );
+        }
+        let automatic = div()
+            .id(SharedString::from(format!("group-color-{id}-automatic")))
+            .mt(px(8.))
+            .px(px(6.))
+            .py(px(4.))
+            .rounded(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .cursor_pointer()
+            .text_size(px(12.5))
+            .text_color(hsla(chrome.text))
+            .hover(move |style| style.bg(hsla(chrome.selected)))
+            .child(
+                div()
+                    .w(px(12.))
+                    .child(if picked.is_none() { "✓" } else { "" }),
+            )
+            .child("Automatic")
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.set_group_color(id, None, window, cx);
+            }));
+        let trigger = Button::new(SharedString::from(format!("group-dot-{id}")))
+            .ghost()
+            .xsmall()
+            .child(swatch(color, 9.))
+            .tooltip("Colour");
+        let this = cx.entity().downgrade();
+        div()
+            .id(SharedString::from(format!("group-dot-slot-{id}")))
+            .flex_none()
+            // The dot picks a colour; it neither collapses nor drags the group.
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(
+                Popover::new(SharedString::from(format!("group-colors-{id}")))
+                    .open(open)
+                    .on_open_change(move |open, _, cx| {
+                        let open = *open;
+                        let _ = this.update(cx, |this, cx| {
+                            this.color_picker = open.then_some(id);
+                            cx.notify();
+                        });
+                    })
+                    .trigger(trigger)
+                    .child(div().p(px(4.)).child(swatches).child(automatic)),
+            )
+            .into_any_element()
     }
 
     pub(super) fn set_group_collapsed(
@@ -468,6 +592,7 @@ impl Workspace {
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_group_header(
         &self,
         id: i64,
@@ -475,6 +600,7 @@ impl Workspace {
         total: usize,
         needing: usize,
         collapsed: bool,
+        colors: (GroupColor, Option<GroupColor>),
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let chrome = self.theme.chrome;
@@ -502,8 +628,9 @@ impl Workspace {
                         .min_w_0()
                         .truncate()
                         .cursor_text()
+                        .text_size(px(13.5))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(hsla(chrome.group))
+                        .text_color(hsla(chrome.text))
                         .child(name.to_owned())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
@@ -537,6 +664,7 @@ impl Workspace {
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
             .text_size(px(12.5))
+            .child(self.render_color_dot(id, colors, cx))
             .child(
                 div()
                     .id(SharedString::from(format!("chevron-{id}")))

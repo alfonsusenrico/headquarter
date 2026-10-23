@@ -3,6 +3,7 @@
 
 use alacritty_terminal::vte::ansi::Rgb;
 use hq_config::ColorSettings;
+use hq_protocol::GroupColor;
 
 pub const fn rgb(hex: u32) -> Rgb {
     Rgb {
@@ -136,6 +137,31 @@ impl Theme {
     /// every theme and stays apart from the amber of "needs you".
     pub fn near_limit(&self) -> Paint {
         Paint::solid(self.palette.ansi[1])
+    }
+
+    /// A group's colour, from a soft palette per mode whatever the theme
+    /// (add-group-colors D1): Catppuccin Mocha in dark mode; in light mode Latte, with
+    /// the lighter hues deepened so a dot keeps 3:1 against the sidebar.
+    pub fn group_color(&self, color: GroupColor) -> Paint {
+        let hex = match (self.mode, color) {
+            (Mode::Dark, GroupColor::Mauve) => 0xCBA6F7,
+            (Mode::Dark, GroupColor::Green) => 0xA6E3A1,
+            (Mode::Dark, GroupColor::Teal) => 0x94E2D5,
+            (Mode::Dark, GroupColor::Peach) => 0xFAB387,
+            (Mode::Dark, GroupColor::Blue) => 0x89B4FA,
+            (Mode::Dark, GroupColor::Pink) => 0xF5C2E7,
+            (Mode::Dark, GroupColor::Yellow) => 0xF9E2AF,
+            (Mode::Dark, GroupColor::Red) => 0xF38BA8,
+            (Mode::Light, GroupColor::Mauve) => 0x8839EF,
+            (Mode::Light, GroupColor::Green) => 0x2E8B2B,
+            (Mode::Light, GroupColor::Teal) => 0x13868A,
+            (Mode::Light, GroupColor::Peach) => 0xC8580F,
+            (Mode::Light, GroupColor::Blue) => 0x1E66F5,
+            (Mode::Light, GroupColor::Pink) => 0xB8458F,
+            (Mode::Light, GroupColor::Yellow) => 0x9A6A0C,
+            (Mode::Light, GroupColor::Red) => 0xD20F39,
+        };
+        paint(hex)
     }
 
     pub fn light() -> Theme {
@@ -336,6 +362,20 @@ pub fn contrast(a: impl Into<Paint>, b: impl Into<Paint>) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_colours_stand_out_on_the_sidebar() {
+        for theme in [Theme::light(), Theme::dark()] {
+            for color in GroupColor::ALL {
+                let ratio = contrast(theme.group_color(color), theme.chrome.sidebar);
+                assert!(
+                    ratio >= 3.0,
+                    "{color:?} in {:?} is {ratio:.2}:1 against the sidebar",
+                    theme.mode
+                );
+            }
+        }
+    }
 
     const AA: f64 = 4.5;
 

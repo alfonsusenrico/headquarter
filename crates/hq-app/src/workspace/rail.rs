@@ -200,7 +200,8 @@ impl Workspace {
                     initials,
                     total,
                     waiting,
-                } => self.render_rail_chip(id, name, initials, total, waiting, cx),
+                    color,
+                } => self.render_rail_chip(id, name, initials, total, waiting, color, cx),
                 RailItem::Line => div()
                     .my(px(6.))
                     .mx(px(8.))
@@ -264,6 +265,7 @@ impl Workspace {
         cell.into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_rail_chip(
         &self,
         id: i64,
@@ -271,6 +273,7 @@ impl Workspace {
         initials: String,
         total: usize,
         waiting: bool,
+        color: hq_protocol::GroupColor,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let chrome = self.theme.chrome;
@@ -299,7 +302,8 @@ impl Workspace {
             .gap(px(4.))
             .rounded(px(8.))
             .border_1()
-            .border_color(hsla(chrome.track))
+            // Outlined in the group's colour (add-group-colors D5).
+            .border_color(hsla(self.theme.group_color(color)))
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
             .text_size(px(11.))
