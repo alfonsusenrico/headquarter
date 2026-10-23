@@ -160,6 +160,14 @@ mod tests {
     use super::*;
     use crate::{External, Origin};
 
+    #[test]
+    fn a_host_that_predates_offering_counts_as_offering_everything() {
+        let mut sent = serde_json::to_value(session("a", "/w", Status::Done, 1)).unwrap();
+        sent.as_object_mut().unwrap().remove("offered");
+        let read: SessionInfo = serde_json::from_value(sent).unwrap();
+        assert!(read.offered);
+    }
+
     fn session(id: &str, cwd: &str, status: Status, at: u64) -> SessionInfo {
         SessionInfo {
             id: id.to_owned(),
@@ -180,6 +188,7 @@ mod tests {
             group: None,
             owner_named: false,
             interrupted: false,
+            offered: true,
         }
     }
 

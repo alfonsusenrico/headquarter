@@ -3,7 +3,7 @@
 //! Titles go to an in-memory map for display and are never written to the index or
 //! the log (owner decision 2026-10-20).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -100,15 +100,33 @@ impl Host {
             *known = titles;
             changed
         };
-        let retitled: Vec<String> = {
-            let store = lock(&self.store);
-            retitled_conversations
-                .iter()
-                .filter_map(|(agent, id)| store.find_by_conversation(*agent, id).ok().flatten())
-                .map(|row| row.id)
-                .filter(|id| !moved.contains(id))
-                .collect()
+        let offered: HashSet<(Agent, String)> = report
+            .conversations
+            .iter()
+            .filter(|conversation| conversation.offered)
+            .map(|conversation| (conversation.agent, conversation.id.clone()))
+            .collect();
+        let reoffered_conversations: Vec<(Agent, String)> = {
+            let mut known = lock(&self.offered);
+            let changed = offered.symmetric_difference(&known).cloned().collect();
+            *known = offered;
+            changed
         };
+        let mut redescribed: Vec<String> = Vec::new();
+        {
+            let store = lock(&self.store);
+            for (agent, id) in retitled_conversations
+                .iter()
+                .chain(&reoffered_conversations)
+            {
+                if let Ok(Some(row)) = store.find_by_conversation(*agent, id)
+                    && !moved.contains(&row.id)
+                    && !redescribed.contains(&row.id)
+                {
+                    redescribed.push(row.id);
+                }
+            }
+        }
         *lock(&self.agy_conversations) = agy_conversations;
         self.log.line(&format!(
             "history import conversations={} added={added} updated={} parsed={} skipped={} failed={failed} took_ms={}",
@@ -118,9 +136,9 @@ impl Host {
             report.skipped,
             started.elapsed().as_millis()
         ));
-        // A title can change while the conversation's activity does not, and clients
-        // that listed before this pass have none yet.
-        for id in moved.iter().chain(&retitled) {
+        // A title, or whether Add sessions offers the conversation, can change while its
+        // activity does not, and clients that listed before this pass have neither yet.
+        for id in moved.iter().chain(&redescribed) {
             self.broadcast(id);
         }
     }

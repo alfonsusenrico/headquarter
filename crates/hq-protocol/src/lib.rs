@@ -415,6 +415,15 @@ pub struct SessionInfo {
     /// crash, a reboot), until it is restarted or dismissed.
     #[serde(default)]
     pub interrupted: bool,
+    /// Whether Add sessions offers it: false for a past conversation its agent no longer
+    /// keeps, a run a program started, or one never used (offer-continuable-sessions).
+    /// Hosts that predate it send nothing, which counts as offered.
+    #[serde(default = "offered_by_default")]
+    pub offered: bool,
+}
+
+fn offered_by_default() -> bool {
+    true
 }
 
 /// A group the owner made in the sidebar. Lists of groups are in the owner's order.
