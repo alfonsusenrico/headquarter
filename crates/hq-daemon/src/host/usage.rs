@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -25,6 +26,14 @@ const CLAUDE_INTERVAL: Duration = Duration::from_secs(10);
 const CODEX_TIMEOUT: Duration = Duration::from_secs(15);
 /// How soon after a hosted Codex turn ends Codex is read; turns ending together share it.
 const CODEX_AFTER_TURN: Duration = Duration::from_secs(10);
+/// How soon a failed Codex read is tried again.
+const CODEX_RETRY: Duration = Duration::from_secs(60);
+/// What the owner sees when a provider does not report its usage: the provider's side,
+/// and what to try. The technical reason goes to the host log.
+const CODEX_UNREPORTED: &str =
+    "Codex didn't report its usage. Open Codex once to check it is signed in, then refresh.";
+const CLAUDE_UNREPORTED: &str = "Claude Code didn't report its usage. Open Claude Code once to check it is signed in, then refresh.";
+const CLAUDE_TRUST: &str = "Claude Code asked whether to trust a folder before showing its usage. Open Claude Code once in one of your folders and answer, then refresh.";
 /// How often the hidden `/usage` read runs while a client shows usage.
 const CLAUDE_SCREEN_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// A Claude turn in another terminal starts a hidden read at most this often.
@@ -81,7 +90,8 @@ impl Host {
     pub(super) fn usage_loop(self: Arc<Self>) {
         loop {
             thread::sleep(LOOP);
-            if !self.has_usage_subscribers() {
+            // Agents started before the login-shell PATH is known may not find `node`.
+            if !self.has_usage_subscribers() || !self.login_path_settled.load(Ordering::SeqCst) {
                 continue;
             }
             let (codex_due, claude_due, screen_due) = {
@@ -92,11 +102,16 @@ impl Host {
                 if after_turn {
                     book.codex_after_turn = None;
                 }
+                let wait = if book.codex_problem.is_some() {
+                    CODEX_RETRY.min(self.usage_interval)
+                } else {
+                    self.usage_interval
+                };
                 let codex_due = !book.codex_reading
                     && (after_turn
                         || book
                             .codex_started
-                            .is_none_or(|started| started.elapsed() >= self.usage_interval));
+                            .is_none_or(|started| started.elapsed() >= wait));
                 let screen_due = !book.claude_screen_reading
                     && book
                         .claude_screen_started
@@ -235,7 +250,18 @@ impl Host {
                 });
                 book.claude_problem = None;
             }
-            Err(reason) => book.claude_problem = Some(reason),
+            Err(reason) => {
+                self.log
+                    .line(&format!("usage read agent=claude failed reason={reason}"));
+                // A trust question the owner can answer says so; anything else is
+                // Claude Code not reporting.
+                let shown = if reason == super::claude_usage::TRUST_ASKED {
+                    CLAUDE_TRUST
+                } else {
+                    CLAUDE_UNREPORTED
+                };
+                book.claude_problem = Some(shown.to_owned());
+            }
         }
         self.log.line(&format!(
             "usage read agent=claude source=usage-screen ok={}",
@@ -281,7 +307,15 @@ impl Host {
     fn read_codex_now(&self) {
         lock(&self.usage).codex_started = Some(Instant::now());
         let (report, account) = match self.resolve_agent(Agent::Codex) {
-            Ok(path) => quota::read_codex(&path, CODEX_TIMEOUT, now_ms() / 1000),
+            Ok(path) => match quota::read_codex(&path, CODEX_TIMEOUT, now_ms() / 1000) {
+                (QuotaReport::Unavailable { provider, reason }, account) => {
+                    self.log
+                        .line(&format!("usage read agent=codex failed reason={reason}"));
+                    let reason = CODEX_UNREPORTED.to_owned();
+                    (QuotaReport::Unavailable { provider, reason }, account)
+                }
+                answered => answered,
+            },
             Err(error) => (
                 QuotaReport::Unavailable {
                     provider: Agent::Codex,

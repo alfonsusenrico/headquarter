@@ -186,6 +186,7 @@ pub fn scan(
 fn claude_sessions(claude: &Path, timeout: Duration) -> Result<Vec<ExternalSession>, String> {
     let mut child = Command::new(claude)
         .args(["agents", "--json"])
+        .env("PATH", hq_discovery::shell::agent_path(claude))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

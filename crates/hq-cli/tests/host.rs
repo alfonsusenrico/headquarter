@@ -1943,6 +1943,9 @@ fn watch_claude_usage(
     env: &mut TestEnv,
     done: impl Fn(&hq_protocol::AgentUsage) -> bool,
 ) -> hq_protocol::AgentUsage {
+    // Codex usage is read too: without a stub the host would find and start the
+    // machine's own Codex, with this test's home.
+    env.stub("codex", "exit 1");
     let mut daemon = env.command();
     daemon.env("HQ_USAGE_INTERVAL_SECS", "1");
     env.daemons.push(
