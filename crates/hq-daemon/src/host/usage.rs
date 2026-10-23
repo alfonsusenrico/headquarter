@@ -1,8 +1,8 @@
 //! Agents' usage readings, owned by the host so the app and `hq usage` show the same
 //! numbers (`add-quota-footer` design D1). Readings follow activity
 //! (`refresh-usage-on-activity` D1): Codex is read soon after a Codex turn ends and every
-//! few minutes, Claude from its sessions' reports and from a hidden `/usage` read. Nothing
-//! is read while no one looks.
+//! few minutes, Claude from its sessions' reports and from a hidden `/usage` read, agy from
+//! its own headless `/usage` (add-agy-usage). Nothing is read while no one looks.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,6 +42,14 @@ const CLAUDE_SCREEN_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// A Claude turn in another terminal starts a hidden read at most this often.
 const CLAUDE_ELSEWHERE_FLOOR: Duration = Duration::from_secs(2 * 60);
 const CLAUDE_ACCOUNT_TIMEOUT: Duration = Duration::from_secs(10);
+/// agy's `/usage` answered in about 8 s on 2026-10-23.
+const AGY_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often agy is read while a client shows usage, as for Claude's hidden read.
+const AGY_INTERVAL: Duration = Duration::from_secs(10 * 60);
+/// How soon after a hosted agy turn ends agy is read; turns ending together share it.
+const AGY_AFTER_TURN: Duration = Duration::from_secs(10);
+const AGY_UNREPORTED: &str =
+    "agy didn't report its usage. Open agy once to check it is signed in, then refresh.";
 const LOOP: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
@@ -66,11 +74,28 @@ pub(super) struct UsageBook {
     claude_problem: Option<String>,
     claude_screen_started: Option<Instant>,
     claude_screen_reading: bool,
+    /// The last good agy reading, and why the last read failed, if it did.
+    agy: Option<QuotaReading>,
+    agy_problem: Option<String>,
+    agy_started: Option<Instant>,
+    agy_reading: bool,
+    /// When an agy read is due because a hosted agy turn ended.
+    agy_after_turn: Option<Instant>,
 }
 
 impl Host {
     fn codex_file(&self) -> PathBuf {
         self.paths.dir.join("quota").join("codex.json")
+    }
+
+    fn agy_file(&self) -> PathBuf {
+        self.paths.dir.join("quota").join("agy.json")
+    }
+
+    /// An empty folder of the host's own for agy's `/usage`, so the read touches no
+    /// project of the owner's.
+    fn agy_folder(&self) -> PathBuf {
+        self.paths.dir.join("quota").join("agy-workspace")
     }
 
     /// Loads the last saved readings and moves the Claude snapshot from its Phase 0
@@ -88,6 +113,10 @@ impl Host {
         {
             lock(&self.usage).codex = Some(reading);
         }
+        if let QuotaReport::Available(reading) = quota::read_snapshot(&self.agy_file(), Agent::Agy)
+        {
+            lock(&self.usage).agy = Some(reading);
+        }
     }
 
     pub(super) fn usage_loop(self: Arc<Self>) {
@@ -97,7 +126,7 @@ impl Host {
             if !self.has_usage_subscribers() || !self.login_path_settled.load(Ordering::SeqCst) {
                 continue;
             }
-            let (codex_due, claude_due, screen_due) = {
+            let (codex_due, claude_due, screen_due, agy_due) = {
                 let mut book = lock(&self.usage);
                 let after_turn = book
                     .codex_after_turn
@@ -122,13 +151,25 @@ impl Host {
                 let claude_due = book
                     .claude_checked
                     .is_none_or(|checked| checked.elapsed() >= CLAUDE_INTERVAL);
-                (codex_due, claude_due, screen_due)
+                let agy_after_turn = book.agy_after_turn.is_some_and(|due| Instant::now() >= due);
+                if agy_after_turn {
+                    book.agy_after_turn = None;
+                }
+                let agy_due = !book.agy_reading
+                    && (agy_after_turn
+                        || book
+                            .agy_started
+                            .is_none_or(|started| started.elapsed() >= AGY_INTERVAL));
+                (codex_due, claude_due, screen_due, agy_due)
             };
             if codex_due {
                 self.start_codex_read();
             }
             if screen_due {
                 self.start_claude_screen_read();
+            }
+            if agy_due {
+                self.start_agy_read();
             }
             let account_changed = self.read_claude_account_when_due();
             if (claude_due && self.claude_snapshot_changed()) || account_changed {
@@ -184,6 +225,16 @@ impl Host {
         if !screen_recent {
             self.start_claude_screen_read();
         }
+        let agy_recent = {
+            let book = lock(&self.usage);
+            book.agy_reading
+                || book
+                    .agy_started
+                    .is_some_and(|started| started.elapsed() < REFRESH_FLOOR)
+        };
+        if !agy_recent {
+            self.start_agy_read();
+        }
         if recent {
             self.broadcast_usage();
         } else {
@@ -193,7 +244,7 @@ impl Host {
         let _ = self
             .usage_settled
             .wait_timeout_while(book, REFRESH_WAIT, |book| {
-                book.codex_reading || book.claude_screen_reading
+                book.codex_reading || book.claude_screen_reading || book.agy_reading
             });
     }
 
@@ -203,6 +254,82 @@ impl Host {
         if book.codex_after_turn.is_none() {
             book.codex_after_turn = Some(Instant::now() + CODEX_AFTER_TURN);
         }
+    }
+
+    /// A hosted agy session finished a turn: read agy again shortly.
+    pub(super) fn agy_turn_ended(&self) {
+        let mut book = lock(&self.usage);
+        if book.agy_after_turn.is_none() {
+            book.agy_after_turn = Some(Instant::now() + AGY_AFTER_TURN);
+        }
+    }
+
+    fn start_agy_read(self: &Arc<Self>) {
+        if !self.agent_wanted(Agent::Agy) {
+            return;
+        }
+        {
+            let mut book = lock(&self.usage);
+            if book.agy_reading {
+                return;
+            }
+            book.agy_reading = true;
+            book.agy_started = Some(Instant::now());
+        }
+        let host = Arc::clone(self);
+        thread::spawn(move || {
+            host.read_agy_now();
+            host.broadcast_usage();
+            host.usage_settled.notify_all();
+        });
+    }
+
+    /// Runs agy's `/usage`. A failure keeps the last good reading and records why. The
+    /// caller has set `agy_reading`.
+    fn read_agy_now(&self) {
+        let folder = self.agy_folder();
+        let report = match self.resolve_agent(Agent::Agy) {
+            Ok(agy) => match std::fs::create_dir_all(&folder) {
+                Ok(()) => quota::read_agy(&agy, &folder, AGY_TIMEOUT, now_ms() / 1000),
+                Err(error) => QuotaReport::Unavailable {
+                    provider: Agent::Agy,
+                    reason: format!("cannot make {}: {error}", folder.display()),
+                },
+            },
+            Err(error) => {
+                self.log.line(&format!(
+                    "usage read agent=agy failed reason={}",
+                    problem_text(*error)
+                ));
+                // Nothing to open or sign in to: the plain line for usage that cannot
+                // be read at all.
+                let mut book = lock(&self.usage);
+                book.agy_reading = false;
+                book.agy_problem = Some(quota::not_available_text(Agent::Agy));
+                return;
+            }
+        };
+        let mut book = lock(&self.usage);
+        book.agy_reading = false;
+        match report {
+            QuotaReport::Available(reading) => {
+                if let Err(error) = quota::save_snapshot(&self.agy_file(), &reading) {
+                    self.log
+                        .line(&format!("usage snapshot not saved agent=agy error={error}"));
+                }
+                book.agy = Some(reading);
+                book.agy_problem = None;
+            }
+            QuotaReport::Unavailable { reason, .. } => {
+                self.log
+                    .line(&format!("usage read agent=agy failed reason={reason}"));
+                book.agy_problem = Some(AGY_UNREPORTED.to_owned());
+            }
+        }
+        self.log.line(&format!(
+            "usage read agent=agy ok={}",
+            book.agy_problem.is_none()
+        ));
     }
 
     /// A Claude session in another terminal finished a turn: its usage changed, so read
@@ -431,7 +558,15 @@ impl Host {
                     usage.account.clone_from(&book.claude_account);
                     usage
                 }
-                Agent::Agy => from_report(agent, quota::read_agy()),
+                Agent::Agy => {
+                    let book = lock(&self.usage);
+                    let mut usage = from_reading(agent, book.agy.as_ref());
+                    usage.problem.clone_from(&book.agy_problem);
+                    if usage.read_at.is_none() && usage.problem.is_none() {
+                        usage.problem = Some("not read yet".to_owned());
+                    }
+                    usage
+                }
             };
             agents.push(usage);
         }

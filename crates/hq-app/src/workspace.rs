@@ -2205,9 +2205,8 @@ impl Workspace {
             || agent.to_string(),
             |account| format!("{agent} ({})", usage::account_text(account)),
         );
-        let used: Vec<String> = usage::current_windows(usage, now)
+        let used: Vec<String> = usage::ring_windows(usage, now)
             .into_iter()
-            .filter(|window| window.model.is_none())
             .map(|window| {
                 format!(
                     "{} {}",

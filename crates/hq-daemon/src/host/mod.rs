@@ -1351,11 +1351,14 @@ impl Host {
         if status == Status::DoneUnread {
             self.resolve_conversation(hosted);
         }
-        if hosted.agent == Agent::Codex
-            && change.previous == Some(Status::Working)
+        if change.previous == Some(Status::Working)
             && matches!(status, Status::DoneUnread | Status::Done)
         {
-            self.codex_turn_ended();
+            match hosted.agent {
+                Agent::Codex => self.codex_turn_ended(),
+                Agent::Agy => self.agy_turn_ended(),
+                Agent::Claude => {}
+            }
         }
         self.broadcast(&hosted.id);
     }

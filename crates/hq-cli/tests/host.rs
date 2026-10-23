@@ -2038,9 +2038,10 @@ fn watch_claude_usage(
     env: &mut TestEnv,
     done: impl Fn(&hq_protocol::AgentUsage) -> bool,
 ) -> hq_protocol::AgentUsage {
-    // Codex usage is read too: without a stub the host would find and start the
-    // machine's own Codex, with this test's home.
+    // Codex and agy usage are read too: without stubs the host would find and start
+    // the machine's own, with this test's home.
     env.stub("codex", "exit 1");
+    env.stub("agy", "exit 1");
     let mut daemon = env.command();
     daemon.env("HQ_USAGE_INTERVAL_SECS", "1");
     env.daemons.push(
@@ -2121,6 +2122,7 @@ fn a_folder_trust_question_stops_the_usage_read_unanswered() {
 #[test]
 fn a_codex_turn_ending_reads_codex_usage_again() {
     let mut env = TestEnv::new("codexturn");
+    env.stub("agy", "exit 1");
     env.stub(
         "codex",
         &CODEX_USAGE_STUB.replace(
@@ -2184,11 +2186,78 @@ fi"#,
     }
 }
 
+/// agy's own headless `/usage`, read on refresh in a folder of Headquarter's, gives a
+/// window per pool of models.
+#[test]
+fn agy_usage_comes_from_its_own_usage_command() {
+    let mut env = TestEnv::new("agyusage");
+    env.stub(
+        "agy",
+        r#"[ "$1 $2 $3 $4" = "-p /usage --output-format json" ] || { sleep 30; exit 0; }
+pwd >> "$STUB_ARGS"
+echo '{"conversation_id":"","status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-5h","window":"5h","remaining_fraction":0.58,"reset_time":"2100-01-01T00:00:00Z"},{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.9,"reset_time":"2100-01-02T00:00:00Z"}]}]}}}'
+"#,
+    );
+    env.stub("codex", "exit 1");
+    env.stub("claude", "exit 1");
+    let mut daemon = env.command();
+    daemon.env("HQ_USAGE_INTERVAL_SECS", "1");
+    env.daemons.push(
+        daemon
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+
+    let mut conn = env.connect();
+    assert!(matches!(
+        conn.request(&Request::RefreshUsage {}),
+        Response::Done
+    ));
+    let agy = match conn.request(&Request::Usage {}) {
+        Response::Usage { agents } => agents
+            .into_iter()
+            .find(|usage| usage.agent == Agent::Agy)
+            .expect("agy is listed"),
+        other => panic!("unexpected answer {other:?}"),
+    };
+    let windows: Vec<(Option<u64>, i64, Option<&str>)> = agy
+        .windows
+        .iter()
+        .map(|window| {
+            (
+                window.minutes,
+                window.used_percent.round() as i64,
+                window.model.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        windows,
+        vec![
+            (Some(300), 42, Some("Gemini")),
+            (Some(10_080), 10, Some("Gemini"))
+        ]
+    );
+    assert_eq!(agy.problem, None);
+    let ran_in = std::fs::read_to_string(env.root.join("stub-args.txt")).unwrap();
+    assert!(
+        ran_in.trim_end().ends_with("quota/agy-workspace"),
+        "agy runs in Headquarter's own folder: {ran_in}"
+    );
+}
+
 /// Refresh answers once the readings are taken, so the details can show "Refreshing"
 /// until then and the new numbers right after.
 #[test]
 fn refresh_answers_after_the_new_reading() {
     let mut env = TestEnv::new("refresh");
+    env.stub("agy", "exit 1");
     // Codex takes a second to answer, with the percentage the test sets.
     env.stub(
         "codex",
@@ -2236,6 +2305,7 @@ fn refresh_answers_after_the_new_reading() {
 fn usage_is_read_only_when_someone_looks() {
     let mut env = TestEnv::new("usage");
     env.stub("codex", CODEX_USAGE_STUB);
+    env.stub("agy", "exit 1");
     env.stub(
         "claude",
         r#"case "$1 $2" in
