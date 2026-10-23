@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use hq_signals::status::Status;
 
-use crate::{GroupInfo, SessionInfo, group_labels};
+use crate::{GroupInfo, Origin, SessionInfo, group_labels};
 
 pub struct Layout<'a> {
     /// Sessions needing the owner, longest waiting first; also listed in their group or
@@ -67,15 +67,34 @@ pub fn home_path(folder: &str, home: Option<&str>) -> String {
     }
 }
 
+/// What a past conversation with no title is called (owner, 2026-10-23).
+pub const UNTITLED: &str = "Untitled conversation";
+
 /// What a session is called on screen: the owner's name when they gave one, else the
-/// agent's own title on one line, else the generated name.
+/// agent's own title on one line, else, for a past conversation, "Untitled
+/// conversation" and its short id, else the generated name.
 pub fn display_title(session: &SessionInfo) -> String {
-    match &session.title {
-        Some(title) if !session.owner_named => {
+    match (&session.title, untitled_id(session)) {
+        (Some(title), _) if !session.owner_named => {
             title.split_whitespace().collect::<Vec<_>>().join(" ")
         }
+        (_, Some(id)) => format!("{UNTITLED} · {id}"),
         _ => session.name.clone(),
     }
+}
+
+/// The short id of a past conversation its agent gave no title and the owner no name:
+/// the part of its generated name (`claude-e5a1fa64`) that `hq resume` takes after the
+/// agent's prefix.
+pub fn untitled_id(session: &SessionInfo) -> Option<&str> {
+    if session.origin != Origin::History || session.title.is_some() || session.owner_named {
+        return None;
+    }
+    session
+        .name
+        .strip_prefix(session.agent.id())
+        .and_then(|rest| rest.strip_prefix('-'))
+        .filter(|id| !id.is_empty())
 }
 
 /// Whether the session waits for the owner, here or in another terminal.
@@ -202,6 +221,31 @@ mod tests {
 
     fn ids(sessions: &[&SessionInfo]) -> Vec<String> {
         sessions.iter().map(|session| session.id.clone()).collect()
+    }
+
+    #[test]
+    fn a_past_conversation_without_a_title_is_untitled_with_its_id() {
+        let mut session = session("a", "/w", Status::Done, 0);
+        session.origin = Origin::History;
+        session.name = "claude-e5a1fa64".into();
+        assert_eq!(untitled_id(&session), Some("e5a1fa64"));
+        assert_eq!(display_title(&session), "Untitled conversation · e5a1fa64");
+        session.title = Some("Fix login".into());
+        assert_eq!(untitled_id(&session), None);
+        assert_eq!(display_title(&session), "Fix login");
+        session.title = None;
+        session.name = "Smoke test".into();
+        session.owner_named = true;
+        assert_eq!(display_title(&session), "Smoke test");
+        let mut hosted = session.clone();
+        hosted.owner_named = false;
+        hosted.origin = Origin::Hosted;
+        hosted.name = "claude-1".into();
+        assert_eq!(
+            display_title(&hosted),
+            "claude-1",
+            "only past conversations"
+        );
     }
 
     #[test]
