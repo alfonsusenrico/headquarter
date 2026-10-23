@@ -29,7 +29,7 @@ The system SHALL show in the sidebar only sessions the owner has added and sessi
 - **THEN** the sidebar holds the same sessions
 
 ### Requirement: Add sessions
-The system SHALL offer an Open sessions window (the sidebar's command field, Cmd-O or Ctrl-Shift-O) that lists, by provider, every session not in the sidebar, newest first by day, with a session running in another terminal greyed in its place, tagged "In another terminal", and not pickable, because that terminal owns it. It SHALL add the sessions the owner picks to the sidebar in no group and show the first.
+The system SHALL offer an Open sessions window (the sidebar's command field, Cmd-O or Ctrl-Shift-O) that lists, by provider, every session not in the sidebar, newest first by day, with a session running in another terminal in its place and tagged "In another terminal". Such a session SHALL be pickable when its conversation is known, and greyed and not pickable otherwise. It SHALL add the sessions the owner picks to the sidebar in no group and show the first.
 
 #### Scenario: Several sessions added
 - **WHEN** the owner opens the window, picks three conversations and presses "Open 3"
@@ -45,7 +45,15 @@ The system SHALL offer an Open sessions window (the sidebar's command field, Cmd
 
 #### Scenario: Running elsewhere
 - **WHEN** a Claude session runs in another terminal with a known conversation
-- **THEN** it is listed in date order, greyed, tagged "In another terminal", and cannot be picked
+- **THEN** it is listed in date order, tagged "In another terminal", and can be picked
+
+#### Scenario: Added while running elsewhere
+- **WHEN** the owner picks a session running in another terminal and presses "Open 1"
+- **THEN** it appears in the sidebar marked "ext" with its status, the pane says it is running in another terminal, and the other process is unaffected
+
+#### Scenario: Rows line up
+- **WHEN** rows that can and cannot be picked are listed together
+- **THEN** their tags and ages line up in the same columns
 
 #### Scenario: Picking keeps the place
 - **WHEN** the owner scrolls halfway down and picks a session
@@ -91,7 +99,7 @@ The system SHALL mark needs you, idle not read yet, and idle with glyphs that di
 - **THEN** its row shows "working" fading in and out where the age is, and no glyph
 
 ### Requirement: Opening sessions
-The system SHALL show a sidebar session in the terminal pane when chosen, starting its agent again on the same conversation when it is not running, SHALL mark that row as the open one distinctly from the keyboard's place and from rows under the pointer, and SHALL state that a session running in another terminal is observed only.
+The system SHALL show a sidebar session in the terminal pane when chosen, starting its agent again on the same conversation when it is not running, SHALL mark that row as the open one distinctly from the keyboard's place and from rows under the pointer, SHALL state that a session running in another terminal is observed only, and SHALL say so when such a session is closed in the other terminal while shown, starting nothing until the owner chooses it.
 
 #### Scenario: Ended session
 - **WHEN** the owner chooses a session whose agent is not running
@@ -104,6 +112,14 @@ The system SHALL show a sidebar session in the terminal pane when chosen, starti
 #### Scenario: Running elsewhere
 - **WHEN** the owner chooses a session marked "ext"
 - **THEN** the pane says it is running in another terminal, and Headquarter does not attach to or signal that process
+
+#### Scenario: Closed in the other terminal
+- **WHEN** a session marked "ext" is shown and the owner closes its agent in the other terminal
+- **THEN** within one outside scan the pane says "Closed in the other terminal." with an "Open here" button, and no agent is started
+
+#### Scenario: Continued here
+- **WHEN** the owner presses "Open here" on a session closed in the other terminal
+- **THEN** the pane says "Opening…" and then shows the agent continuing that conversation
 
 #### Scenario: Which one is open
 - **WHEN** the owner opens a session and then moves the keyboard selection to another row
