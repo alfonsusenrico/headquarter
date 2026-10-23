@@ -26,3 +26,8 @@ fix-agent-start-path merged in), working tree with this change, 2026-10-23.
 - Whether Finder offers "Put Back" for items trashed through the file manager call;
   dragging out of the Trash always works.
 - On screen (task 2.2): waits for the owner.
+
+## On screen and final check (2026-10-23)
+
+- The owner confirmed it on the test build (`test/combined-build`).
+- `./scripts/check` on the branch as pushed: passed, 386 tests, 24 OpenSpec items (at d630eda).

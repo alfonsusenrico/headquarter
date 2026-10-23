@@ -7,7 +7,7 @@
 ## 2. Add sessions
 
 - [x] 2.1 The ⋯ menu (slot kept), Undo toast with delayed send, sending on close, Delete confirmation. Verify with `rows_offer_the_removals_their_agent_allows_unless_running` (`hq-app`) and clippy. Done (2026-10-23).
-- [ ] 2.2 On screen: Move to Trash with Undo and without; Codex Archive; Delete permanently asks; agy rows aligned with no menu. Evidence: the owner's check.
+- [x] 2.2 On screen: Move to Trash with Undo and without; Codex Archive; Delete permanently asks; agy rows aligned with no menu. Evidence: the owner's check. Done: the owner confirmed it on the test build (`test/combined-build`), 2026-10-23.
 
 Expected Result: the owner can clean out past conversations from Add sessions.
 
