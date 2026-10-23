@@ -3,7 +3,7 @@
 ## 1. Add sessions
 
 - [x] 1.1 Sessions running elsewhere in date order, tagged and not pickable. Verify with `by_day_with_sessions_elsewhere_in_place_without_sidebar_sessions`, `rows_show_title_folder_and_why_they_cannot_be_added`, and the app tests. Done: 125 app tests pass (2026-10-22).
-- [ ] 1.2 On screen: Add sessions with an agent running in another terminal.
+- [x] 1.2 On screen: Add sessions with an agent running in another terminal. Done: the owner confirmed it on the test build (`test/combined-build`), 2026-10-23.
 
 ## 2. Delivery
 
