@@ -60,14 +60,37 @@ pub fn path_from_shell(shell: &Path, timeout: Duration) -> Option<String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
 
     /// A fake shell: runs `body` and ignores the arguments a real shell would read.
-    fn fake_shell(name: &str, body: &str) -> PathBuf {
+    /// A path under the system's temporary folder, removed when the test ends.
+    struct TempPath(std::path::PathBuf);
+
+    impl std::ops::Deref for TempPath {
+        type Target = std::path::Path;
+
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for TempPath {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempPath {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn fake_shell(name: &str, body: &str) -> TempPath {
         let path = std::env::temp_dir().join(format!("hq-shell-{}-{name}", std::process::id()));
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        path
+        TempPath(path)
     }
 
     #[test]
@@ -80,7 +103,6 @@ mod tests {
             path_from_shell(&shell, LOGIN_SHELL_TIMEOUT).as_deref(),
             Some("/opt/x/bin:/usr/bin")
         );
-        let _ = std::fs::remove_file(shell);
     }
 
     #[test]
@@ -89,14 +111,12 @@ mod tests {
         let started = Instant::now();
         assert_eq!(path_from_shell(&shell, Duration::from_millis(500)), None);
         assert!(started.elapsed() < Duration::from_secs(3));
-        let _ = std::fs::remove_file(shell);
     }
 
     #[test]
     fn failing_or_missing_shell_gives_nothing() {
         let shell = fake_shell("failing", "exit 3");
         assert_eq!(path_from_shell(&shell, LOGIN_SHELL_TIMEOUT), None);
-        let _ = std::fs::remove_file(shell);
         assert_eq!(
             path_from_shell(Path::new("/no/such/shell"), LOGIN_SHELL_TIMEOUT),
             None

@@ -208,11 +208,59 @@ fn save_entry(path: &Path, key: &str, value: Value) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    fn file(name: &str) -> PathBuf {
+    /// A path under the system's temporary folder, removed when the test ends.
+    struct TempPath(std::path::PathBuf);
+
+    impl std::ops::Deref for TempPath {
+        type Target = std::path::Path;
+
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for TempPath {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempPath {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// The state file in a fresh folder; the folder goes when the test ends.
+    struct StateFile {
+        _dir: TempPath,
+        file: PathBuf,
+    }
+
+    impl std::ops::Deref for StateFile {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.file
+        }
+    }
+
+    impl AsRef<Path> for StateFile {
+        fn as_ref(&self) -> &Path {
+            &self.file
+        }
+    }
+
+    fn file(name: &str) -> StateFile {
         let dir = std::env::temp_dir().join(format!("hq-state-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir.join("app-state.json")
+        let file = dir.join("app-state.json");
+        StateFile {
+            _dir: TempPath(dir),
+            file,
+        }
     }
 
     #[test]
