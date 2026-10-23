@@ -48,6 +48,9 @@ fn main() {
                     traffic_light_position: Some(point(px(16.), px(18.))),
                 }),
                 window_background: settings::window_background(&appearance),
+                // Linux desktops match the window to `headquarter.desktop` by this id
+                // (Wayland app id, X11 WM_CLASS) to show its icon; macOS ignores it.
+                app_id: Some("headquarter".into()),
                 ..Default::default()
             };
             let show_setup = setup::should_show(

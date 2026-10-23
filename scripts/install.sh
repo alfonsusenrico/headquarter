@@ -207,6 +207,7 @@ Name=Headquarter
 Comment=A terminal for coding agents
 Exec=$BIN_DIR/headquarter-app
 Icon=headquarter
+StartupWMClass=headquarter
 Categories=Development;TerminalEmulator;
 Terminal=false
 EOF
