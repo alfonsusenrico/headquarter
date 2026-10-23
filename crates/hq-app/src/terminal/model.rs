@@ -8,7 +8,7 @@ use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
-use alacritty_terminal::term::{Config, Term, TermMode};
+use alacritty_terminal::term::{ClipboardType, Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle, Processor, Rgb, StdSyncHandler};
 
 use crate::theme::Palette;
@@ -37,11 +37,15 @@ impl Dimensions for GridSize {
     }
 }
 
-/// Receives the terminal's events. Only replies matter here: the host tracks status
-/// itself, so titles and bells are ignored.
+/// Text the agent asked the terminal to copy (OSC 52), for the clipboard.
+pub type AgentCopy = (ClipboardType, String);
+
+/// Receives the terminal's events. Replies and the agent's copies matter here: the host
+/// tracks status itself, so titles and bells are ignored.
 #[derive(Clone)]
 pub struct Listener {
     replies: Arc<Mutex<Vec<u8>>>,
+    copies: Arc<Mutex<Vec<AgentCopy>>>,
     palette: Arc<Mutex<Palette>>,
 }
 
@@ -49,6 +53,15 @@ impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         let reply = match event {
             Event::PtyWrite(text) => text,
+            // Only copying is accepted (alacritty_terminal's default `Osc52::OnlyCopy`):
+            // an agent can set the clipboard but never read it (fix-agent-clipboard-copy).
+            Event::ClipboardStore(target, text) => {
+                self.copies
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((target, text));
+                return;
+            }
             Event::ColorRequest(index, format) => {
                 let palette = self
                     .palette
@@ -114,6 +127,7 @@ pub struct TerminalModel {
     term: Term<Listener>,
     processor: Processor<StdSyncHandler>,
     replies: Arc<Mutex<Vec<u8>>>,
+    copies: Arc<Mutex<Vec<AgentCopy>>>,
     palette: Arc<Mutex<Palette>>,
     size: GridSize,
 }
@@ -121,15 +135,18 @@ pub struct TerminalModel {
 impl TerminalModel {
     pub fn new(size: GridSize, palette: Palette) -> TerminalModel {
         let replies = Arc::new(Mutex::new(Vec::new()));
+        let copies = Arc::new(Mutex::new(Vec::new()));
         let palette = Arc::new(Mutex::new(palette));
         let listener = Listener {
             replies: Arc::clone(&replies),
+            copies: Arc::clone(&copies),
             palette: Arc::clone(&palette),
         };
         TerminalModel {
             term: Term::new(config(None), &size, listener),
             processor: Processor::new(),
             replies,
+            copies,
             palette,
             size,
         }
@@ -141,6 +158,16 @@ impl TerminalModel {
         std::mem::take(
             &mut *self
                 .replies
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// What the agent asked to copy since the last call, oldest first.
+    pub fn take_copies(&mut self) -> Vec<AgentCopy> {
+        std::mem::take(
+            &mut *self
+                .copies
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         )
@@ -194,20 +221,32 @@ impl TerminalModel {
     }
 
     /// Starts a selection at a visible cell (row 0 is the top of the view).
-    pub fn start_selection(&mut self, row: usize, column: usize, kind: SelectionType) {
+    /// `side` is the half of the cell the pointer is over, so a selection made leftwards
+    /// or upwards still takes the first cell in, as in Alacritty.
+    pub fn start_selection(&mut self, row: usize, column: usize, side: Side, kind: SelectionType) {
         let point = self.view_point(row, column);
-        self.term.selection = Some(Selection::new(kind, point, Side::Left));
+        self.term.selection = Some(Selection::new(kind, point, side));
     }
 
-    pub fn extend_selection(&mut self, row: usize, column: usize) {
+    pub fn extend_selection(&mut self, row: usize, column: usize, side: Side) {
         let point = self.view_point(row, column);
         if let Some(selection) = self.term.selection.as_mut() {
-            selection.update(point, Side::Right);
+            selection.update(point, side);
         }
     }
 
     pub fn clear_selection(&mut self) {
         self.term.selection = None;
+    }
+
+    /// Whether the selection starts after the first column of its row, so its first
+    /// line lacks the row's margin.
+    pub fn selection_starts_mid_row(&self) -> bool {
+        self.term
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.to_range(&self.term))
+            .is_some_and(|range| range.start.column.0 > 0)
     }
 
     pub fn selected_text(&self) -> Option<String> {
@@ -229,6 +268,19 @@ impl TerminalModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_selection_made_leftwards_takes_the_first_cell() {
+        let mut model = model();
+        model.feed(b"  two lines\r\n  of text");
+        // From the end of the second line back to the very left of the first.
+        model.start_selection(1, 8, Side::Right, SelectionType::Simple);
+        model.extend_selection(0, 0, Side::Left);
+        assert_eq!(
+            model.selected_text().as_deref(),
+            Some("  two lines\n  of text")
+        );
+    }
     use crate::theme::Theme;
 
     fn model() -> TerminalModel {
@@ -257,6 +309,23 @@ mod tests {
         assert!(model.feed(b"hello\r\nworld").is_empty());
         assert_eq!(text_of_row(&model, 0), "hello");
         assert_eq!(text_of_row(&model, 1), "world");
+    }
+
+    #[test]
+    fn agent_copies_are_kept_and_reads_are_refused() {
+        let mut model = model();
+        // OSC 52 as Claude Code sends it: "hello" in base64, for the clipboard.
+        assert!(model.feed(b"\x1b]52;c;aGVsbG8=\x07").is_empty());
+        assert_eq!(
+            model.take_copies(),
+            [(ClipboardType::Clipboard, "hello".to_owned())]
+        );
+        assert!(model.take_copies().is_empty(), "each copy is taken once");
+        assert!(
+            model.feed(b"\x1b]52;c;?\x07").is_empty(),
+            "a request to read the clipboard gets no reply"
+        );
+        assert!(model.take_copies().is_empty());
     }
 
     #[test]
@@ -322,8 +391,8 @@ mod tests {
     fn selection_returns_text() {
         let mut model = model();
         model.feed(b"select this text");
-        model.start_selection(0, 7, SelectionType::Simple);
-        model.extend_selection(0, 10);
+        model.start_selection(0, 7, Side::Left, SelectionType::Simple);
+        model.extend_selection(0, 10, Side::Right);
         assert_eq!(model.selected_text().as_deref(), Some("this"));
         model.clear_selection();
         assert_eq!(model.selected_text(), None);

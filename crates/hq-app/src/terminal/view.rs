@@ -5,18 +5,20 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
+use alacritty_terminal::index::Side;
 use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::CursorShape;
 use gpui::{
-    App, Bounds, ClipboardItem, Context, ElementInputHandler, Entity, EntityInputHandler,
-    ExternalPaths, FocusHandle, Focusable, Font, FontStyle, FontWeight, Hsla, InteractiveElement,
-    IntoElement, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent,
-    SharedString, StrikethroughStyle, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle,
-    Window, canvas, div, fill, point, px, size,
+    App, Bounds, ClipboardItem, Context, DispatchPhase, ElementInputHandler, Entity,
+    EntityInputHandler, ExternalPaths, FocusHandle, Focusable, Font, FontStyle, FontWeight, Hsla,
+    InteractiveElement, IntoElement, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollDelta,
+    ScrollWheelEvent, SharedString, StrikethroughStyle, Styled, TextAlign, TextRun, UTF16Selection,
+    UnderlineStyle, Window, canvas, div, fill, point, px, size,
 };
 
+use super::copy;
 use super::frame::{self, Frame, TextStyle, Underline};
 use super::keys::{self, Binding, KeyModes, KeyPress};
 use super::model::GridSize;
@@ -86,6 +88,60 @@ struct Layout {
     rows: usize,
 }
 
+/// A left-button press, which becomes a drag once the pointer reaches another cell.
+#[derive(Debug, Clone, Copy)]
+struct Press {
+    row: usize,
+    column: usize,
+    side: Side,
+    shift: bool,
+}
+
+/// What releasing the left button does (fix-agent-clipboard-copy D1). Headquarter owns
+/// drags for every agent: a drag selects and its release copies. A click without a drag
+/// goes to an agent that uses the mouse (Shift keeps it here), else clears the selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Release {
+    Copy,
+    ClickToAgent,
+    ClearSelection,
+}
+
+/// How long the note after a copy stays.
+const COPIED_NOTE: std::time::Duration = std::time::Duration::from_millis(1500);
+/// How often a drag past an edge scrolls.
+const AUTOSCROLL_STEP: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Lines to scroll per step for a drag at `y`: positive (back in history) above `top`,
+/// negative below `bottom`, one plus one per line height further out, at most ten.
+fn autoscroll_lines(y: f32, top: f32, bottom: f32, line_height: f32) -> i32 {
+    let past = if y < top {
+        top - y
+    } else if y > bottom {
+        bottom - y
+    } else {
+        return 0;
+    };
+    let lines = (1.0 + (past.abs() / line_height.max(1.0)).floor()).min(10.0) as i32;
+    if past > 0.0 { lines } else { -lines }
+}
+
+/// A full-screen agent that reports the mouse keeps its history itself, so a drag is
+/// its to handle: it selects, scrolls and copies (D1).
+fn agent_owns_drags(mode: TermMode) -> bool {
+    mode.contains(TermMode::ALT_SCREEN) && mode.intersects(TermMode::MOUSE_MODE)
+}
+
+fn release(selecting: bool, agent_uses_mouse: bool, shift: bool) -> Release {
+    if selecting {
+        Release::Copy
+    } else if agent_uses_mouse && !shift {
+        Release::ClickToAgent
+    } else {
+        Release::ClearSelection
+    }
+}
+
 pub struct TerminalView {
     session: Entity<TerminalSession>,
     focus: FocusHandle,
@@ -93,7 +149,21 @@ pub struct TerminalView {
     layout: Rc<Cell<Option<Layout>>>,
     /// Text the input method is composing, shown at the cursor until committed.
     marked: Option<String>,
+    /// Where the left button went down, until it comes up.
+    press: Option<Press>,
     selecting: bool,
+    /// Where the pointer is during a drag, inside the pane or not.
+    pointer: Option<Point<Pixels>>,
+    /// Whether a drag past the top or bottom edge is scrolling the view.
+    autoscrolling: bool,
+    /// The note after a copy, and which copy it is, so an older timer leaves a newer
+    /// note alone.
+    copied: Option<(u64, String)>,
+    copies: u64,
+    /// The agent's copies already noted.
+    agent_copies_seen: u64,
+    /// While a drag is handed to a full-screen agent: the last cell reported to it.
+    forwarding: Option<(usize, usize)>,
     /// While set, the grid keeps its size, so the agent redraws once when the sidebar's
     /// divider is released rather than on every pixel of the drag.
     size_held: bool,
@@ -106,7 +176,15 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
+        cx.observe(&session, |this: &mut TerminalView, session, cx| {
+            let (count, note) = session.read(cx).agent_copies.clone();
+            if count != this.agent_copies_seen {
+                this.agent_copies_seen = count;
+                this.show_copied(note, cx);
+            }
+            cx.notify();
+        })
+        .detach();
         cx.observe_window_activation(window, |_, _, cx| cx.notify())
             .detach();
         let cursor = options.cursor;
@@ -119,7 +197,14 @@ impl TerminalView {
             options,
             layout: Rc::new(Cell::new(None)),
             marked: None,
+            press: None,
             selecting: false,
+            pointer: None,
+            autoscrolling: false,
+            copied: None,
+            copies: 0,
+            agent_copies_seen: 0,
+            forwarding: None,
             size_held: false,
         }
     }
@@ -220,9 +305,39 @@ impl TerminalView {
     }
 
     fn copy_selection(&mut self, cx: &mut Context<Self>) {
-        if let Some(text) = self.session.read(cx).model().selected_text() {
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        let model = self.session.read(cx).model();
+        let Some(text) = model.selected_text() else {
+            return;
+        };
+        let text = copy::tidy(&text, model.selection_starts_mid_row());
+        if text.is_empty() {
+            return;
         }
+        let note = copy::copied_note(&text);
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.show_copied(note, cx);
+    }
+
+    /// Says what was copied for a moment (fix-agent-clipboard-copy D4).
+    fn show_copied(&mut self, note: String, cx: &mut Context<Self>) {
+        self.copies += 1;
+        let copy = self.copies;
+        self.copied = Some((copy, note));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(COPIED_NOTE).await;
+            let _ = this.update(cx, |this, cx| {
+                if this
+                    .copied
+                    .as_ref()
+                    .is_some_and(|(shown, _)| *shown == copy)
+                {
+                    this.copied = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
@@ -248,6 +363,22 @@ impl TerminalView {
         self.paste(&text, cx);
     }
 
+    /// The half of the cell under the pointer; past the grid's left or right edge, the
+    /// outer half of the edge cell.
+    fn side_at(&self, position: Point<Pixels>) -> Side {
+        let Some(layout) = self.layout.get() else {
+            return Side::Left;
+        };
+        let x = (position.x - layout.origin.x) / layout.cell_width;
+        if x <= 0.0 {
+            Side::Left
+        } else if x >= layout.columns as f32 || x.fract() >= 0.5 {
+            Side::Right
+        } else {
+            Side::Left
+        }
+    }
+
     fn cell_at(&self, position: Point<Pixels>) -> Option<(usize, usize)> {
         let layout = self.layout.get()?;
         let x = (position.x - layout.origin.x) / layout.cell_width;
@@ -258,6 +389,10 @@ impl TerminalView {
             row.min(layout.rows.saturating_sub(1)),
             column.min(layout.columns.saturating_sub(1)),
         ))
+    }
+
+    fn agent_owns_drags(&self, cx: &App) -> bool {
+        agent_owns_drags(self.mode(cx))
     }
 
     fn mouse_reporting(&self, cx: &App) -> bool {
@@ -279,44 +414,172 @@ impl TerminalView {
         let Some((row, column)) = self.cell_at(event.position) else {
             return;
         };
-        if self.mouse_reporting(cx) && !event.modifiers.shift {
+        // A full-screen agent that uses the mouse keeps its own history, so it selects,
+        // scrolls and copies itself; Shift keeps the drag here (D1).
+        if self.agent_owns_drags(cx) && !event.modifiers.shift {
+            self.clear_selection(cx);
             self.report_mouse(0, row, column, true, cx);
+            self.forwarding = Some((row, column));
             return;
         }
+        let side = self.side_at(event.position);
+        self.press = Some(Press {
+            row,
+            column,
+            side,
+            shift: event.modifiers.shift,
+        });
+        // A double or triple click selects a word or a line at once; a single press
+        // waits to see whether it becomes a drag.
         let kind = match event.click_count {
             2 => SelectionType::Semantic,
             3 => SelectionType::Lines,
-            _ => SelectionType::Simple,
+            _ => return,
         };
         self.session.update(cx, |session, cx| {
-            session.model_mut().start_selection(row, column, kind);
+            session.model_mut().start_selection(row, column, side, kind);
             cx.notify();
         });
         self.selecting = true;
     }
 
-    fn mouse_move(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
+    /// The pointer moved with the left button down, anywhere in the window: a press
+    /// that reaches another cell becomes a selection, which follows the pointer and
+    /// scrolls when it goes past the top or bottom (D3).
+    fn drag_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(last) = self.forwarding {
+            // Reported cell by cell; past an edge it stays on the edge row, where the
+            // agent scrolls.
+            if let Some(cell) = self.cell_at(position)
+                && cell != last
+                && self
+                    .mode(cx)
+                    .intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION)
+            {
+                self.report_mouse(32, cell.0, cell.1, true, cx);
+                self.forwarding = Some(cell);
+            }
             return;
         }
-        if let Some((row, column)) = self.cell_at(event.position) {
-            self.session.update(cx, |session, cx| {
-                session.model_mut().extend_selection(row, column);
-                cx.notify();
+        let Some(press) = self.press else {
+            return;
+        };
+        self.pointer = Some(position);
+        let Some((row, column)) = self.cell_at(position) else {
+            return;
+        };
+        if !self.selecting {
+            if (press.row, press.column) == (row, column) {
+                return;
+            }
+            self.session.update(cx, |session, _| {
+                session.model_mut().start_selection(
+                    press.row,
+                    press.column,
+                    press.side,
+                    SelectionType::Simple,
+                );
             });
+            self.selecting = true;
+        }
+        let side = self.side_at(position);
+        self.session.update(cx, |session, cx| {
+            session.model_mut().extend_selection(row, column, side);
+            cx.notify();
+        });
+        self.keep_scrolling(cx);
+    }
+
+    /// Lines to scroll now for a drag past an edge; 0 inside the pane.
+    fn autoscroll_now(&self) -> i32 {
+        let (Some(layout), Some(pointer)) = (self.layout.get(), self.pointer) else {
+            return 0;
+        };
+        let top = f32::from(layout.origin.y);
+        let bottom = top + f32::from(layout.line_height) * layout.rows as f32;
+        autoscroll_lines(
+            f32::from(pointer.y),
+            top,
+            bottom,
+            f32::from(layout.line_height),
+        )
+    }
+
+    fn keep_scrolling(&mut self, cx: &mut Context<Self>) {
+        if self.autoscrolling || !self.selecting || self.autoscroll_now() == 0 {
+            return;
+        }
+        self.autoscrolling = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(AUTOSCROLL_STEP).await;
+                let going = this
+                    .update(cx, |this, cx| this.autoscroll_step(cx))
+                    .unwrap_or(false);
+                if !going {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn autoscroll_step(&mut self, cx: &mut Context<Self>) -> bool {
+        let lines = if self.selecting {
+            self.autoscroll_now()
+        } else {
+            0
+        };
+        if lines == 0 {
+            self.autoscrolling = false;
+            return false;
+        }
+        let edge = self
+            .pointer
+            .and_then(|pointer| Some((self.cell_at(pointer)?, self.side_at(pointer))));
+        self.session.update(cx, |session, cx| {
+            let model = session.model_mut();
+            model.scroll(lines);
+            if let Some(((row, column), side)) = edge {
+                model.extend_selection(row, column, side);
+            }
+            cx.notify();
+        });
+        true
+    }
+
+    /// The left button came up, anywhere in the window, after a press in the pane.
+    fn finish_press(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(last) = self.forwarding.take() {
+            let (row, column) = self.cell_at(position).unwrap_or(last);
+            self.report_mouse(0, row, column, false, cx);
+            return;
+        }
+        let Some(press) = self.press.take() else {
+            return;
+        };
+        self.pointer = None;
+        match release(self.selecting, self.mouse_reporting(cx), press.shift) {
+            Release::Copy => {
+                self.selecting = false;
+                self.copy_selection(cx);
+            }
+            Release::ClickToAgent => {
+                self.clear_selection(cx);
+                // The press was held back to tell a click from a drag; both go now.
+                let (row, column) = self.cell_at(position).unwrap_or((press.row, press.column));
+                self.report_mouse(0, press.row, press.column, true, cx);
+                self.report_mouse(0, row, column, false, cx);
+            }
+            Release::ClearSelection => self.clear_selection(cx),
         }
     }
 
-    fn mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.selecting {
-            self.selecting = false;
-            return;
-        }
-        if self.mouse_reporting(cx)
-            && let Some((row, column)) = self.cell_at(event.position)
-        {
-            self.report_mouse(0, row, column, false, cx);
-        }
+    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.model_mut().clear_selection();
+            cx.notify();
+        });
     }
 
     fn scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -388,6 +651,7 @@ impl Render for TerminalView {
         let layout = Rc::clone(&self.layout);
         let options = self.options.clone();
         let marked = self.marked.clone();
+        let copied = self.copied.as_ref().map(|(_, note)| note.clone());
         let size_held = self.size_held;
         let fade = if focused { 0.0 } else { options.dim_unfocused };
         let background = hsla(frame.background);
@@ -405,8 +669,6 @@ impl Render for TerminalView {
             .on_action(cx.listener(|this, _: &crate::menus::Paste, _, cx| this.paste_clipboard(cx)))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
-            .on_mouse_move(cx.listener(Self::mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_scroll_wheel(cx.listener(Self::scroll))
             .on_drop(cx.listener(Self::drop_paths))
             .child(
@@ -454,11 +716,41 @@ impl Render for TerminalView {
                             veil.a = fade;
                             window.paint_quad(fill(bounds, veil));
                         }
+                        // A drag goes on outside the pane: the window reports the
+                        // pointer and the release, not only this element (D3).
+                        let mover = view.clone();
+                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Bubble
+                                && event.pressed_button == Some(MouseButton::Left)
+                            {
+                                mover.update(cx, |this, cx| this.drag_to(event.position, cx));
+                            }
+                        });
+                        let releaser = view.clone();
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                                releaser
+                                    .update(cx, |this, cx| this.finish_press(event.position, cx));
+                            }
+                        });
                         window.handle_input(&focus, ElementInputHandler::new(bounds, view), cx);
                     },
                 )
                 .size_full(),
             )
+            .children(copied.map(|note| {
+                div()
+                    .absolute()
+                    .bottom(px(12.))
+                    .right(px(12.))
+                    .px(px(10.))
+                    .py(px(6.))
+                    .rounded(px(8.))
+                    .bg(badge)
+                    .text_color(background)
+                    .text_size(px(13.))
+                    .child(note)
+            }))
             .children(ended.map(|message| {
                 div()
                     .absolute()
@@ -838,6 +1130,61 @@ impl EntityInputHandler for TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dragging_past_an_edge_scrolls_faster_further_out() {
+        assert_eq!(autoscroll_lines(50.0, 10.0, 400.0, 18.0), 0, "inside");
+        assert_eq!(
+            autoscroll_lines(5.0, 10.0, 400.0, 18.0),
+            1,
+            "just above: back one line"
+        );
+        assert_eq!(autoscroll_lines(-40.0, 10.0, 400.0, 18.0), 3);
+        assert_eq!(
+            autoscroll_lines(410.0, 10.0, 400.0, 18.0),
+            -1,
+            "just below: forward"
+        );
+        assert_eq!(
+            autoscroll_lines(-2000.0, 10.0, 400.0, 18.0),
+            10,
+            "at most ten"
+        );
+    }
+
+    #[test]
+    fn only_full_screen_mouse_agents_take_drags() {
+        let full_screen = TermMode::ALT_SCREEN | TermMode::MOUSE_DRAG;
+        assert!(
+            agent_owns_drags(full_screen),
+            "Claude Code's full-screen view"
+        );
+        assert!(
+            !agent_owns_drags(TermMode::MOUSE_DRAG),
+            "normal screen: history is ours"
+        );
+        assert!(
+            !agent_owns_drags(TermMode::ALT_SCREEN),
+            "no mouse: Headquarter selects"
+        );
+    }
+
+    #[test]
+    fn drags_select_and_copy_while_clicks_reach_the_agent() {
+        assert_eq!(
+            release(true, true, false),
+            Release::Copy,
+            "a drag copies, mouse or not"
+        );
+        assert_eq!(release(true, false, false), Release::Copy);
+        assert_eq!(release(false, true, false), Release::ClickToAgent);
+        assert_eq!(
+            release(false, true, true),
+            Release::ClearSelection,
+            "Shift keeps a click here"
+        );
+        assert_eq!(release(false, false, false), Release::ClearSelection);
+    }
 
     #[test]
     fn line_height_comes_from_the_font_like_alacritty() {

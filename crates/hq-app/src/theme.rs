@@ -82,6 +82,8 @@ pub struct Palette {
     pub background: Rgb,
     pub cursor: Rgb,
     pub selection: Rgb,
+    /// Selected text; `None` keeps each cell's colour.
+    pub selection_text: Option<Rgb>,
     /// ANSI 0–15: black, red, green, yellow, blue, magenta, cyan, white, then bright.
     pub ansi: [Rgb; 16],
     /// Faint versions of ANSI 0–7; `None` blends the normal colour toward the background.
@@ -184,6 +186,7 @@ impl Theme {
                 background: rgb(0xFFFFFF),
                 cursor: rgb(0x1D2433),
                 selection: rgb(0xCFDDF7),
+                selection_text: None,
                 // Every colour but white (7, 15), which agents draw as backgrounds,
                 // reads at 4.5:1 or better on the white background.
                 ansi: [
@@ -230,6 +233,7 @@ impl Theme {
                 background: rgb(0x0F1115),
                 cursor: rgb(0xE6E8EC),
                 selection: rgb(0x2B3A57),
+                selection_text: None,
                 // Every colour but black (0), which agents draw as backgrounds, reads at
                 // 4.5:1 or better on the dark background.
                 ansi: [
@@ -283,6 +287,9 @@ impl Theme {
         set(&mut palette.background, colors.background);
         set(&mut palette.cursor, colors.cursor);
         set(&mut palette.selection, colors.selection);
+        if let Some(text) = colors.selection_text {
+            palette.selection_text = Some(rgb(text));
+        }
         for index in 0..8 {
             set(&mut palette.ansi[index], colors.normal[index]);
             set(&mut palette.ansi[index + 8], colors.bright[index]);

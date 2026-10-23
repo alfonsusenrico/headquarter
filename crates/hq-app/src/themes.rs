@@ -217,6 +217,7 @@ pub fn to_file(look: &Look, name: &str) -> ThemeFile {
         background: Some(hex(palette.background)),
         cursor: Some(hex(palette.cursor)),
         selection: Some(hex(palette.selection)),
+        selection_text: palette.selection_text.map(hex),
         ..ColorSettings::default()
     };
     for index in 0..8 {

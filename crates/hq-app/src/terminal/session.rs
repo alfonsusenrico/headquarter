@@ -6,9 +6,10 @@ use std::io::BufReader;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
+use alacritty_terminal::term::ClipboardType;
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui::{Context, Task};
+use gpui::{App, ClipboardItem, Context, Task};
 use hq_client::HostPaths;
 use hq_protocol::{Frame, Request, Response, SessionInfo, read_frame, write_frame};
 
@@ -34,6 +35,9 @@ pub struct TerminalSession {
     writer: Option<Arc<Mutex<UnixStream>>>,
     /// Why the pane shows no live agent: it ended, or the connection failed.
     pub ended: Option<String>,
+    /// How many copies the agent has made (OSC 52), and the note for the latest, so
+    /// the pane can say "Copied" for them too.
+    pub agent_copies: (u64, String),
     _reader: Task<()>,
 }
 
@@ -57,6 +61,7 @@ impl TerminalSession {
             model: TerminalModel::new(INITIAL_SIZE, palette),
             writer: None,
             ended: None,
+            agent_copies: (0, String::new()),
             _reader: reader,
         }
     }
@@ -75,6 +80,10 @@ impl TerminalSession {
                 let replies = self.model.feed(&bytes);
                 if !replies.is_empty() {
                     self.send(&Frame::Input(replies));
+                }
+                for (target, text) in self.model.take_copies() {
+                    self.agent_copies = (self.agent_copies.0 + 1, super::copy::copied_note(&text));
+                    store_copy(target, text, cx);
                 }
             }
             Incoming::Ended(code) => {
@@ -192,6 +201,20 @@ fn run_connection(session_id: &str, tx: &UnboundedSender<Incoming>) {
         if tx.unbounded_send(incoming).is_err() || last {
             return;
         }
+    }
+}
+
+/// Puts text the agent copied (OSC 52), such as a mouse selection in Claude Code, where
+/// Alacritty would: the clipboard, or on Linux the primary selection for that target.
+fn store_copy(target: ClipboardType, text: String, cx: &mut App) {
+    let item = ClipboardItem::new_string(text);
+    match target {
+        ClipboardType::Clipboard => cx.write_to_clipboard(item),
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        ClipboardType::Selection => cx.write_to_primary(item),
+        // macOS has no primary selection; Alacritty ignores this target there too.
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        ClipboardType::Selection => drop(item),
     }
 }
 
