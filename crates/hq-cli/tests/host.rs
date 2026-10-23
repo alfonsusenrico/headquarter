@@ -247,6 +247,21 @@ impl Conn {
         self.next_response()
     }
 
+    /// Sends a request on a subscribed connection and returns its answer, past any
+    /// changes the host sends first.
+    fn answer(&mut self, request: &Request) -> Response {
+        self.send(request);
+        loop {
+            match self.next_response() {
+                Response::SessionChanged { .. }
+                | Response::GroupsChanged { .. }
+                | Response::DetailsChanged { .. }
+                | Response::UsageChanged { .. } => continue,
+                other => return other,
+            }
+        }
+    }
+
     /// Collects output until it contains `needle`; returns everything read.
     fn output_until(&mut self, needle: &str) -> String {
         let deadline = Instant::now() + WAIT;
@@ -448,7 +463,7 @@ fn the_outside_scan_slows_while_nobody_looks() {
     wait_until("the next scan 5 s later", || scans() >= 3);
 
     assert!(matches!(
-        app.request(&Request::Visible { visible: false }),
+        app.answer(&Request::Visible { visible: false }),
         Response::Done
     ));
     std::thread::sleep(Duration::from_secs(1));
