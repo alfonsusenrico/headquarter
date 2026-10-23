@@ -11,7 +11,7 @@ The system SHALL tell the owner, when a provider does not report its usage, whic
 
 #### Scenario: An agent that does not share its usage
 - **WHEN** the owner opens agy's usage details
-- **THEN** they read "agy doesn't share its usage yet." with no detail of how agy keeps it
+- **THEN** they read "Agy usage not available", the same line any agent without a usage source gets, with no detail of how the agent keeps it
 
 #### Scenario: Claude Code asks to trust a folder
 - **WHEN** Claude Code's hidden usage read stops at its folder-trust question
