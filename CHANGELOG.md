@@ -2,6 +2,18 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.2 (2026-10-23)
+
+- Add sessions: a session still running in another terminal can now be added. It
+  shows as "ext" with its live status; close it there and the pane says "Closed in the
+  other terminal." with an Open here button, so you continue it in Headquarter without
+  a round trip. Headquarter still never touches the other terminal's process.
+- Add sessions keeps up with agents in other terminals: no more greyed "claude pid N"
+  rows next to the same session, and a newly started one appears without reopening the
+  app. Tags and ages line up.
+- Linux: the running window shows the Headquarter icon in the dock, taskbar and window
+  switcher.
+
 ## 0.1.1 (2026-10-23)
 
 - First run: setup lists only the agents Headquarter hosts, with their versions and
