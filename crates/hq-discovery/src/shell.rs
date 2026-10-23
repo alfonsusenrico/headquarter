@@ -1,12 +1,49 @@
 //! The owner's login-shell `PATH`, which a process started from a desktop launcher
 //! does not inherit.
 
+use std::ffi::OsString;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 pub const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The login-shell `PATH`, once a process has learnt it (`remember_login_path`).
+static LOGIN_PATH: OnceLock<String> = OnceLock::new();
+
+/// Keeps the login-shell `PATH` for [`agent_path`]; only the first value counts.
+pub fn remember_login_path(path: &str) {
+    let _ = LOGIN_PATH.set(path.to_owned());
+}
+
+/// The `PATH` an agent runs with. A process started from a desktop launcher has only
+/// the system folders, so a CLI written for Node (`#!/usr/bin/env node`) cannot find
+/// `node`. First the agent's own folder (Homebrew and nvm put `node` beside it), then
+/// the login-shell `PATH` once known, then this process's own; repeats removed.
+pub fn agent_path(executable: &Path) -> OsString {
+    let login = LOGIN_PATH.get().map(OsString::from);
+    path_for(executable, login, std::env::var_os("PATH"))
+}
+
+fn path_for(executable: &Path, login: Option<OsString>, process: Option<OsString>) -> OsString {
+    let mut folders: Vec<PathBuf> = Vec::new();
+    let own = executable
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .map(Path::to_path_buf);
+    let rest = [login, process]
+        .into_iter()
+        .flatten()
+        .flat_map(|value| std::env::split_paths(&value).collect::<Vec<_>>());
+    for folder in own.into_iter().chain(rest) {
+        if !folder.as_os_str().is_empty() && !folders.contains(&folder) {
+            folders.push(folder);
+        }
+    }
+    std::env::join_paths(folders).unwrap_or_default()
+}
 
 const START: &str = "__HQ_PATH__";
 const END: &str = "__HQ_END__";
@@ -58,6 +95,28 @@ pub fn path_from_shell(shell: &Path, timeout: Duration) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_agent_runs_with_its_own_folder_first_then_the_login_path() {
+        let path = super::path_for(
+            std::path::Path::new("/opt/homebrew/bin/codex"),
+            Some("/Users/me/.nvm/bin:/opt/homebrew/bin".into()),
+            Some("/usr/bin:/bin".into()),
+        );
+        assert_eq!(
+            path,
+            std::ffi::OsString::from("/opt/homebrew/bin:/Users/me/.nvm/bin:/usr/bin:/bin")
+        );
+        let before_login = super::path_for(
+            std::path::Path::new("/opt/homebrew/bin/codex"),
+            None,
+            Some("/usr/bin:/bin".into()),
+        );
+        assert_eq!(
+            before_login,
+            std::ffi::OsString::from("/opt/homebrew/bin:/usr/bin:/bin")
+        );
+    }
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;

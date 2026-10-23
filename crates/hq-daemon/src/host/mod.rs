@@ -144,6 +144,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         )),
         platform: hq_discovery::platform::detect(),
         login_path: Mutex::new(None),
+        login_path_settled: AtomicBool::new(false),
         _lock: lock,
     });
     host.log.line(&format!(
@@ -250,6 +251,9 @@ struct Host {
     platform: Platform,
     /// The owner's login-shell `PATH`, captured once in the background at startup.
     login_path: Mutex<Option<String>>,
+    /// Set once the login-shell `PATH` is known, unavailable, or turned off; agents
+    /// started earlier may not find what they need (`hq_discovery::shell::agent_path`).
+    login_path_settled: AtomicBool,
     /// Held for the host's lifetime: the single-instance lock.
     _lock: std::fs::File,
 }
@@ -823,6 +827,7 @@ impl Host {
             .map_or(true, |settings| settings.login_shell);
         if !allowed {
             self.log.line("login shell PATH skipped by settings");
+            self.login_path_settled.store(true, Ordering::SeqCst);
             return;
         }
         let path = hq_discovery::shell::login_shell_path(hq_discovery::shell::LOGIN_SHELL_TIMEOUT);
@@ -834,7 +839,11 @@ impl Host {
                 "unavailable"
             }
         ));
+        if let Some(path) = &path {
+            hq_discovery::shell::remember_login_path(path);
+        }
         *lock(&self.login_path) = path;
+        self.login_path_settled.store(true, Ordering::SeqCst);
     }
 
     fn ensure_name_free(&self, name: &str) -> OpResult<()> {
@@ -1209,6 +1218,7 @@ impl Host {
         command.env(SESSION_ENV, plan.id);
         command.env("TERM", plan.term.as_deref().unwrap_or("xterm-256color"));
         command.env("COLORTERM", "truecolor");
+        command.env("PATH", hq_discovery::shell::agent_path(&plan.program));
         let child = pair
             .slave
             .spawn_command(command)

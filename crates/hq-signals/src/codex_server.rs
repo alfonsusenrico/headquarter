@@ -29,6 +29,7 @@ pub fn interrupt_turns(
     let mut command = Command::new(executable);
     command
         .args(["app-server", "proxy"])
+        .env("PATH", hq_discovery::shell::agent_path(executable))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

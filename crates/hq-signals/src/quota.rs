@@ -115,6 +115,7 @@ pub fn read_claude_account(executable: &Path, timeout: Duration) -> Option<Accou
     let mut command = Command::new(executable);
     command
         .args(["auth", "status", "--json"])
+        .env("PATH", hq_discovery::shell::agent_path(executable))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -223,6 +224,7 @@ fn query_codex(executable: &Path, timeout: Duration) -> Result<CodexAnswers, Str
     let mut command = Command::new(executable);
     command
         .arg("app-server")
+        .env("PATH", hq_discovery::shell::agent_path(executable))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -375,12 +377,20 @@ pub fn migrate_snapshot(old: &Path, current: &Path) -> std::io::Result<bool> {
     Ok(true)
 }
 
-pub fn read_agy() -> QuotaReport {
+/// An agent whose usage Headquarter cannot read: one plain line for every such agent,
+/// "Agy usage not available", without how the agent keeps it (owner, 2026-10-23).
+pub fn not_available(agent: Agent) -> QuotaReport {
+    let id = agent.id();
+    let mut name = id[..1].to_uppercase();
+    name.push_str(&id[1..]);
     QuotaReport::Unavailable {
-        provider: Agent::Agy,
-        reason: "agy exposes usage only through the status line in its own settings files"
-            .to_owned(),
+        provider: agent,
+        reason: format!("{name} usage not available"),
     }
+}
+
+pub fn read_agy() -> QuotaReport {
+    not_available(Agent::Agy)
 }
 
 #[cfg(test)]
@@ -528,7 +538,7 @@ mod tests {
         match read_agy() {
             QuotaReport::Unavailable { provider, reason } => {
                 assert_eq!(provider, Agent::Agy);
-                assert!(reason.contains("settings files"));
+                assert_eq!(reason, "Agy usage not available");
             }
             QuotaReport::Available(_) => panic!("agy quota should be unavailable"),
         }
