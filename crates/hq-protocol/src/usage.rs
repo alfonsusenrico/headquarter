@@ -118,13 +118,53 @@ impl Rings {
     }
 }
 
+/// The windows the footer's rings show, shortest first: the all-models ones, or, for
+/// an agent that reports only pools of models (agy), the pool nearest its limit, by the
+/// same rule as the label (owner, 2026-10-23).
+pub fn ring_windows(usage: &AgentUsage, now_secs: u64) -> Vec<&UsageWindow> {
+    let current = current_windows(usage, now_secs);
+    let mut windows: Vec<&UsageWindow> =
+        if usage.windows.iter().any(|window| window.model.is_none()) {
+            current
+                .into_iter()
+                .filter(|window| window.model.is_none())
+                .collect()
+        } else {
+            let mut pools: Vec<&str> = Vec::new();
+            for window in &current {
+                if let Some(pool) = window.model.as_deref()
+                    && !pools.contains(&pool)
+                {
+                    pools.push(pool);
+                }
+            }
+            let nearest = |pool: &str| {
+                current
+                    .iter()
+                    .filter(|window| window.model.as_deref() == Some(pool))
+                    .map(|window| window.used_percent.round())
+                    .fold(f64::MIN, f64::max)
+            };
+            // The first pool reported wins a tie.
+            let chosen = pools.into_iter().reduce(|best, pool| {
+                if nearest(pool) > nearest(best) {
+                    pool
+                } else {
+                    best
+                }
+            });
+            current
+                .into_iter()
+                .filter(|window| chosen.is_some() && window.model.as_deref() == chosen)
+                .collect()
+        };
+    windows.sort_by_key(|window| window.minutes.unwrap_or(u64::MAX));
+    windows
+}
+
 /// The fills of the footer's rings, 0 to 100.
 pub fn rings(usage: &AgentUsage, now_secs: u64) -> Rings {
-    let mut windows: Vec<&UsageWindow> = current_windows(usage, now_secs)
-        .into_iter()
-        .filter(|window| window.model.is_none())
-        .collect();
-    windows.sort_by_key(|window| window.minutes.unwrap_or(u64::MAX));
+    let windows = ring_windows(usage, now_secs);
     let percent = |window: &UsageWindow| window.used_percent.clamp(0.0, 100.0);
     match windows.as_slice() {
         [] => Rings {
@@ -286,6 +326,49 @@ mod tests {
                 provider: "vertex".into()
             }),
             "Google Vertex AI"
+        );
+    }
+
+    #[test]
+    fn agy_rings_follow_the_pool_nearest_its_limit() {
+        let pool = |minutes, used, name: &str| UsageWindow {
+            model: Some(name.into()),
+            ..window(minutes, used, NOW + 5_000)
+        };
+        let agy = usage(
+            Agent::Agy,
+            vec![
+                pool(10_080, 11.0, "Gemini"),
+                pool(300, 0.0, "Gemini"),
+                pool(300, 85.0, "Claude and GPT"),
+                pool(10_080, 40.0, "Claude and GPT"),
+                pool(10_080, 0.0, "Gemini 4 Argon"),
+            ],
+            Some(NOW),
+        );
+        assert_eq!(
+            rings(&agy, NOW),
+            Rings {
+                inner: Some(85.0),
+                outer: Some(40.0)
+            }
+        );
+        assert_eq!(
+            label(&[agy], NOW).as_deref(),
+            Some("agy 85% · 5h · Claude and GPT")
+        );
+        let calm = usage(
+            Agent::Agy,
+            vec![
+                pool(10_080, 11.0, "Gemini"),
+                pool(10_080, 11.0, "Claude and GPT"),
+            ],
+            Some(NOW),
+        );
+        assert_eq!(
+            ring_windows(&calm, NOW)[0].model.as_deref(),
+            Some("Gemini"),
+            "the first pool reported wins a tie"
         );
     }
 
