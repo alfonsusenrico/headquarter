@@ -312,6 +312,16 @@ fn read_claude(path: &Path) -> Option<Conversation> {
     })
 }
 
+/// The transcript of Claude Code conversation `id`: `<projects>/<folder>/<id>.jsonl`.
+pub fn claude_transcript(projects: &Path, id: &str) -> Option<PathBuf> {
+    let name = format!("{id}.jsonl");
+    std::fs::read_dir(projects)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path().join(&name))
+        .find(|path| path.is_file())
+}
+
 fn collect_rollouts(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;

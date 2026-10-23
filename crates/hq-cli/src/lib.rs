@@ -300,6 +300,8 @@ fn daemon() -> Result<ExitCode> {
         idle_exit: seconds("HQ_IDLE_EXIT_SECS", DEFAULT_IDLE_EXIT),
         usage_interval: seconds("HQ_USAGE_INTERVAL_SECS", DEFAULT_USAGE_INTERVAL),
         history_interval: seconds("HQ_HISTORY_INTERVAL_SECS", DEFAULT_HISTORY_INTERVAL),
+        // Tests keep removed transcripts out of the machine's Trash.
+        trash_dir: std::env::var_os("HQ_TRASH_DIR").map(std::path::PathBuf::from),
     };
     match hq_daemon::run(options) {
         Ok(()) => Ok(ExitCode::SUCCESS),

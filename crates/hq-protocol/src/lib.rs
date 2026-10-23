@@ -170,6 +170,12 @@ pub enum Request {
     Remove {
         sessions: Vec<String>,
     },
+    /// Remove a past conversation from its agent, the way that agent allows
+    /// ([`removal_ways`]); never one that is running.
+    RemoveConversation {
+        session: String,
+        way: RemoveWay,
+    },
     /// Add a group after the others, named `name` or "New Group #n"; with `session`,
     /// that session moves into it.
     NewGroup {
@@ -261,6 +267,31 @@ pub enum ErrorCode {
     AgentDisabled,
     /// The session cannot join the sidebar: it runs elsewhere with no known conversation.
     NotAddable,
+    /// The agent could not remove the conversation; the message says which agent.
+    RemoveFailed,
+}
+
+/// How a past conversation leaves its agent (remove-conversations, owner 2026-10-23).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RemoveWay {
+    /// Its files move to the Trash: for an agent with no delete command of its own.
+    Trash,
+    /// The agent's own archive, which it can undo.
+    Archive,
+    /// The agent's own permanent delete.
+    Delete,
+}
+
+/// The ways each agent's conversations can be removed: Claude Code has no delete
+/// command, so its transcript goes to the Trash; Codex has `archive` and `delete`; agy
+/// deletes only inside its own picker, so Headquarter offers nothing.
+pub fn removal_ways(agent: Agent) -> &'static [RemoveWay] {
+    match agent {
+        Agent::Claude => &[RemoveWay::Trash],
+        Agent::Codex => &[RemoveWay::Archive, RemoveWay::Delete],
+        Agent::Agy => &[],
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -654,6 +685,10 @@ mod tests {
             },
             Request::Remove {
                 sessions: vec!["claude-1".into()],
+            },
+            Request::RemoveConversation {
+                session: "codex-1".into(),
+                way: RemoveWay::Archive,
             },
             Request::NewGroup {
                 name: None,

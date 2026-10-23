@@ -7,17 +7,19 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone};
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, ScrollStrategy,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, UniformListScrollHandle,
-    Window, div, px, uniform_list,
+    Anchor, AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
+    ScrollStrategy, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
+    UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use gpui_component::Disableable;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::popover::Popover;
 use gpui_component::scroll::Scrollbar;
-use hq_protocol::SessionInfo;
+use hq_client::HostPaths;
 use hq_protocol::sidebar::{UNTITLED, age, display_title, untitled_id};
+use hq_protocol::{RemoveWay, SessionInfo, removal_ways};
 use hq_signals::event::Agent;
 
 use super::folders::{self, FolderRow};
@@ -29,6 +31,10 @@ use crate::theme::Chrome;
 const LINE: f32 = 52.0;
 /// Folder suggestions shown under the search field.
 const SUGGESTIONS: usize = 6;
+/// How long Move to Trash and Archive can be undone; they reach the agent after it.
+const UNDO_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+/// The ⋯ slot, kept on every row so the ages line up.
+const MORE_SLOT: f32 = 28.0;
 const ELSEWHERE_INFO: &str = "Open in another terminal. Headquarter shows their status; close one there to continue it here.";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -53,6 +59,9 @@ pub struct PickRow {
     pub external: bool,
     /// Why the session cannot be added, when it cannot; shown as a tag on the row.
     pub blocked: Option<&'static str>,
+    /// How it can be removed from its agent: none while it runs, or for an agent
+    /// Headquarter cannot remove from (remove-conversations).
+    pub ways: Vec<RemoveWay>,
 }
 
 /// The tag on a session running in another terminal: that terminal owns it, so it
@@ -178,6 +187,11 @@ pub fn pick_items<Tz: TimeZone>(
             age: age(now_ms.saturating_sub(session.last_activity_at)),
             external: session.external.is_some(),
             blocked: session.external.is_some().then_some(IN_ANOTHER_TERMINAL),
+            ways: if session.live || session.external.is_some() {
+                Vec::new()
+            } else {
+                removal_ways(session.agent).to_vec()
+            },
         }));
     }
     items
@@ -226,7 +240,23 @@ pub struct OpenSessions {
     /// Whether the host's first list has arrived; until then the agents check in
     /// where the sessions will be.
     loaded: bool,
+    /// The row whose ⋯ menu is open.
+    menu: Option<String>,
+    /// A Move to Trash or Archive that can still be undone, and the session to put back.
+    pending: Option<PendingRemoval>,
+    /// Removals sent to the host and not yet reported back as gone.
+    sent: HashSet<String>,
+    /// A Delete permanently waiting for the owner to confirm.
+    confirm_delete: Option<SessionInfo>,
+    /// The line under the list after a removal, and whether it offers Undo.
+    toast: Option<(String, bool)>,
     _search_changes: Subscription,
+}
+
+struct PendingRemoval {
+    session: SessionInfo,
+    way: RemoveWay,
+    _timer: Task<()>,
 }
 
 impl EventEmitter<OpenEvent> for OpenSessions {}
@@ -277,6 +307,11 @@ impl OpenSessions {
             chrome,
             marks,
             loaded: true,
+            menu: None,
+            pending: None,
+            sent: HashSet::new(),
+            confirm_delete: None,
+            toast: None,
             _search_changes: search_changes,
         }
     }
@@ -298,8 +333,96 @@ impl OpenSessions {
     }
 
     pub fn update_sessions(&mut self, sessions: Vec<SessionInfo>, cx: &mut Context<Self>) {
-        self.sessions = offerable(sessions, Path::is_dir);
+        let pending = self
+            .pending
+            .as_ref()
+            .map(|pending| pending.session.id.clone());
+        self.sessions = offerable(sessions, Path::is_dir)
+            .into_iter()
+            .filter(|session| {
+                Some(&session.id) != pending.as_ref() && !self.sent.contains(&session.id)
+            })
+            .collect();
         cx.notify();
+    }
+
+    /// Removes the session from its agent: Move to Trash and Archive after the undo
+    /// window, Delete permanently at once (it was confirmed). The row leaves now.
+    fn remove(&mut self, id: &str, way: RemoveWay, cx: &mut Context<Self>) {
+        self.menu = None;
+        let Some(position) = self.sessions.iter().position(|session| session.id == id) else {
+            return;
+        };
+        let session = self.sessions.remove(position);
+        self.picked.remove(id);
+        self.cursor = None;
+        self.commit_pending(cx);
+        let title = display_title(&session);
+        if way == RemoveWay::Delete {
+            self.toast = Some((format!("Deleted \u{201c}{title}\u{201d}"), false));
+            self.send(session, way, cx);
+        } else {
+            let done = if way == RemoveWay::Trash {
+                format!("Moved \u{201c}{title}\u{201d} to the Trash")
+            } else {
+                format!("Archived \u{201c}{title}\u{201d}")
+            };
+            self.toast = Some((done, true));
+            let timer = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(UNDO_WINDOW).await;
+                let _ = this.update(cx, |this, cx| this.commit_pending(cx));
+            });
+            self.pending = Some(PendingRemoval {
+                session,
+                way,
+                _timer: timer,
+            });
+        }
+        cx.notify();
+    }
+
+    fn undo(&mut self, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending.take() {
+            self.sessions.push(pending.session);
+        }
+        self.toast = None;
+        cx.notify();
+    }
+
+    /// Sends the removal that can no longer be undone.
+    fn commit_pending(&mut self, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending.take() {
+            self.toast = None;
+            self.send(pending.session, pending.way, cx);
+            cx.notify();
+        }
+    }
+
+    fn send(&mut self, session: SessionInfo, way: RemoveWay, cx: &mut Context<Self>) {
+        self.sent.insert(session.id.clone());
+        let id = session.id.clone();
+        let task = cx
+            .background_executor()
+            .spawn(async move { send_removal(&id, way) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Err(error) = result {
+                    log::warn!("removing {} failed: {error:#}", session.id);
+                    this.sent.remove(&session.id);
+                    this.toast = Some((
+                        format!(
+                            "Couldn\u{2019}t remove \u{201c}{}\u{201d}",
+                            display_title(&session)
+                        ),
+                        false,
+                    ));
+                    this.sessions.push(session);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn items(&self) -> Vec<PickItem> {
@@ -437,6 +560,11 @@ impl OpenSessions {
     fn handle_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let list_focused = self.focus.is_focused(window);
         match key {
+            "escape" if self.confirm_delete.is_some() || self.menu.is_some() => {
+                self.confirm_delete = None;
+                self.menu = None;
+                cx.notify();
+            }
             "escape" if self.info_open => {
                 self.info_open = false;
                 cx.notify();
@@ -495,6 +623,7 @@ impl OpenSessions {
         let id = row.id.clone();
         let mut line = div()
             .id(SharedString::from(format!("pick-{}", row.id)))
+            .group(SharedString::from(format!("pick-{}", row.id)))
             .w_full()
             .h(px(LINE))
             .flex()
@@ -553,7 +682,8 @@ impl OpenSessions {
                     .text_size(px(12.5))
                     .text_color(hsla(chrome.muted))
                     .child(row.age.clone()),
-            );
+            )
+            .child(self.render_more(row, cx));
         if pickable {
             line = line.child(super::tick(picked, chrome));
         }
@@ -575,6 +705,204 @@ impl OpenSessions {
             line = line.opacity(0.55);
         }
         line.into_any_element()
+    }
+
+    /// The ⋯ menu of a row that can be removed, shown on hover or while open; an empty
+    /// slot of the same width otherwise.
+    fn render_more(&self, row: &PickRow, cx: &mut Context<Self>) -> AnyElement {
+        let chrome = self.chrome;
+        let slot = div().flex_none().w(px(MORE_SLOT)).flex().justify_center();
+        if row.ways.is_empty() {
+            return slot.into_any_element();
+        }
+        let open = self.menu.as_deref() == Some(row.id.as_str());
+        let id = row.id.clone();
+        let this = cx.entity().downgrade();
+        let mut menu = div().flex().flex_col().min_w(px(180.)).py(px(2.));
+        for way in &row.ways {
+            let label = match way {
+                RemoveWay::Trash => "Move to Trash",
+                RemoveWay::Archive => "Archive",
+                RemoveWay::Delete => "Delete permanently",
+            };
+            let way = *way;
+            let id = id.clone();
+            menu = menu.child(
+                div()
+                    .id(SharedString::from(format!("remove-{label}-{id}")))
+                    .px(px(10.))
+                    .py(px(6.))
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .text_size(px(13.5))
+                    .text_color(hsla(chrome.text))
+                    .hover(move |style| style.bg(super::tint(chrome, 0.1)))
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        if way == RemoveWay::Delete {
+                            this.menu = None;
+                            this.confirm_delete = this
+                                .sessions
+                                .iter()
+                                .find(|session| session.id == id)
+                                .cloned();
+                            cx.notify();
+                        } else {
+                            this.remove(&id, way, cx);
+                        }
+                    })),
+            );
+        }
+        let group = SharedString::from(format!("pick-{}", row.id));
+        let trigger = Button::new(SharedString::from(format!("more-{}", row.id)))
+            .ghost()
+            .label("⋯");
+        let popover = Popover::new(SharedString::from(format!("more-menu-{}", row.id)))
+            .anchor(Anchor::TopRight)
+            .open(open)
+            .on_open_change(move |open, _, cx| {
+                let id = id.clone();
+                let open = *open;
+                let _ = this.update(cx, |this, cx| {
+                    this.menu = open.then_some(id);
+                    cx.notify();
+                });
+            })
+            .trigger(trigger)
+            .child(menu);
+        let shown = if open {
+            slot.visible()
+        } else {
+            slot.invisible().group_hover(group, |style| style.visible())
+        };
+        shown
+            .id(SharedString::from(format!("more-slot-{}", row.id)))
+            // A press on ⋯ opens the menu; it does not pick the row.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(popover)
+            .into_any_element()
+    }
+
+    fn render_confirm_delete(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let session = self.confirm_delete.as_ref()?;
+        let chrome = self.chrome;
+        let id = session.id.clone();
+        let title = display_title(session);
+        Some(
+            div()
+                .id("confirm-delete-backdrop")
+                .occlude()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(super::tint(chrome, 0.0).opacity(0.55))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.confirm_delete = None;
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    div()
+                        .id("confirm-delete")
+                        .w(px(360.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.))
+                        .p(px(18.))
+                        .rounded(px(14.))
+                        .border_1()
+                        .border_color(hsla(chrome.sidebar_line))
+                        .bg(hsla(chrome.sidebar))
+                        .shadow_lg()
+                        .text_size(px(14.))
+                        .text_color(hsla(chrome.text))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(
+                            div()
+                                .text_size(px(16.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child("Delete permanently?"),
+                        )
+                        .child(div().child(title))
+                        .child(
+                            div()
+                                .text_color(hsla(chrome.muted))
+                                .child("This cannot be undone."),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .justify_end()
+                                .gap(px(8.))
+                                .child(Button::new("delete-cancel").label("Cancel").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.confirm_delete = None;
+                                        cx.notify();
+                                    }),
+                                ))
+                                .child(
+                                    Button::new("delete-confirm")
+                                        .danger()
+                                        .label("Delete")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.confirm_delete = None;
+                                            this.remove(&id, RemoveWay::Delete, cx);
+                                        })),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn render_toast(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (text, undo) = self.toast.clone()?;
+        let chrome = self.chrome;
+        Some(
+            div()
+                .absolute()
+                .bottom(px(70.))
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .id("removal-toast")
+                        .occlude()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .px(px(14.))
+                        .py(px(8.))
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(hsla(chrome.sidebar_line))
+                        .bg(hsla(chrome.selected))
+                        .shadow_lg()
+                        .text_size(px(13.))
+                        .text_color(hsla(chrome.text))
+                        .child(div().max_w(px(380.)).truncate().child(text))
+                        .children(undo.then(|| {
+                            div()
+                                .id("removal-undo")
+                                .cursor_pointer()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(hsla(chrome.accent))
+                                .child("Undo")
+                                .on_click(cx.listener(|this, _, _, cx| this.undo(cx)))
+                        })),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_nav(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -742,6 +1070,26 @@ impl OpenSessions {
     }
 }
 
+fn send_removal(id: &str, way: RemoveWay) -> anyhow::Result<()> {
+    let paths =
+        HostPaths::standard().ok_or_else(|| anyhow::anyhow!("cannot find the home folder"))?;
+    hq_client::remove_conversation(&paths, id, way)
+}
+
+/// A removal still in its undo window when the window closes is sent then: closing is
+/// not an undo.
+impl Drop for OpenSessions {
+    fn drop(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            std::thread::spawn(move || {
+                if let Err(error) = send_removal(&pending.session.id, pending.way) {
+                    log::warn!("removing {} failed: {error:#}", pending.session.id);
+                }
+            });
+        }
+    }
+}
+
 impl Focusable for OpenSessions {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus.clone()
@@ -831,7 +1179,9 @@ impl Render for OpenSessions {
                     .children(info),
             )
             .child(self.render_footer(cx))
-            .children(self.render_suggestions(cx));
+            .children(self.render_suggestions(cx))
+            .children(self.render_toast(cx))
+            .children(self.render_confirm_delete(cx));
         let frame = super::frame("open-sessions", chrome, window, self.render_nav(cx), body)
             .key_context("OpenSessions")
             .track_focus(&self.focus)
@@ -885,6 +1235,39 @@ mod tests {
             interrupted: false,
             offered: true,
         }
+    }
+
+    #[test]
+    fn rows_offer_the_removals_their_agent_allows_unless_running() {
+        let mut running = session("running", Agent::Claude, "/u/api", 1);
+        running.external = Some(External {
+            pid: Some(7),
+            status: None,
+        });
+        let sessions = vec![
+            session("claude", Agent::Claude, "/u/api", 2),
+            session("codex", Agent::Codex, "/u/api", 3),
+            session("agy", Agent::Agy, "/u/api", 4),
+            running,
+        ];
+        let items = pick_items(
+            &sessions,
+            &Filters::default(),
+            &HashMap::new(),
+            Path::new("/u"),
+            &now(),
+        );
+        let ways = |id: &str| match items
+            .iter()
+            .find(|item| matches!(item, PickItem::Session(row) if row.id == id))
+        {
+            Some(PickItem::Session(row)) => row.ways.clone(),
+            _ => panic!("no row {id}"),
+        };
+        assert_eq!(ways("claude"), [RemoveWay::Trash]);
+        assert_eq!(ways("codex"), [RemoveWay::Archive, RemoveWay::Delete]);
+        assert_eq!(ways("agy"), []);
+        assert_eq!(ways("running"), [], "never while it runs elsewhere");
     }
 
     #[test]
