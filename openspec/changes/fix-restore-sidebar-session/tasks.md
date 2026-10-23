@@ -3,7 +3,7 @@
 ## 1. Restore
 
 - [x] 1.1 Restore the kept session only while it is in the sidebar. Verify with `a_kept_session_is_shown_only_while_in_the_sidebar` (`hq-app`). Done (2026-10-22).
-- [ ] 1.2 On screen: show a session, close it, quit, reopen; the pane shows nothing in particular. Evidence: the owner's check.
+- [x] 1.2 On screen: show a session, close it, quit, reopen; the pane shows nothing in particular. Evidence: the owner's check. Done: the owner confirmed it on the test build (`test/combined-build`), 2026-10-23.
 
 Expected Result: a closed session never comes back in the pane after a relaunch.
 
