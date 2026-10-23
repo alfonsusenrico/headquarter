@@ -52,12 +52,12 @@ pub fn read(
 ) -> (Appearance, Option<String>) {
     match watcher.current() {
         Ok(settings) => {
-            // The font note first: only the app can tell it, so it must not be one of
-            // the "more" that `hq agents` lists.
-            let mut notes: Vec<String> = font_note(&settings.appearance, &has_face)
-                .into_iter()
-                .collect();
-            notes.extend(settings.warnings.iter().map(ToString::to_string));
+            // A style the font lacks falls back quietly, as in Alacritty; only the log
+            // says so (owner, 2026-10-23).
+            if let Some(note) = font_note(&settings.appearance, &has_face) {
+                log::warn!("{note}");
+            }
+            let notes: Vec<String> = settings.warnings.iter().map(ToString::to_string).collect();
             (settings.appearance, settings_note(&notes))
         }
         Err(error) => (

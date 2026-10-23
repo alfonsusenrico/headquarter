@@ -18,10 +18,20 @@ difference), and matching names case-insensitively (Alacritty does not).
 function, so tests use a fake font list; one macOS test uses Menlo, which ships with
 macOS.
 
-### D3. Said, not silent
+### D3. Quiet, like Alacritty
 
-One settings note names every style that falls back, for example: `font.bold "Heavy"
-and font.bold_italic "Heavy Italic" not in JetBrainsMono Nerd Font; that text uses the
-normal face, as in Alacritty`. It comes before the settings file's own warnings: only
-the app can tell it, and the note's "and N more; see `hq agents`" must count only what
-`hq agents` lists (found on screen 2026-10-23).
+A fallback is written to the app's log only, naming every style that falls back, for
+example: `font.bold "Heavy" and font.bold_italic "Heavy Italic" not in JetBrainsMono
+Nerd Font; that text uses the normal face, as in Alacritty`. Alacritty, too, only logs
+it. Rejected: a settings note in the sidebar (shown on screen 2026-10-23; the owner
+chose silence).
+
+### D4. Line height from the font
+
+Alacritty takes the line height from the font: ascent, descent and leading, each
+rounded (18 pt for JetBrains Mono at 14). Headquarter used 1.2 times the size (17 pt),
+so its lines were tighter than Alacritty's on the owner's screen (2026-10-23). The pane
+now uses the font's ascent plus descent, each rounded, with 1.2 times the size only when
+the font reports no metrics. GPUI does not expose the line gap (leading); terminal fonts
+commonly set it to 0, as JetBrains Mono, Menlo and SF Mono do. Rejected: a line-spacing
+setting (Alacritty has `font.offset`, still reported as unsupported; not asked for).

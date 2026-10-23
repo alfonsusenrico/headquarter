@@ -13,7 +13,8 @@ turned "Heavy" into weight 900 and macOS took the nearest face, ExtraBold.
 
 - With a config copied from Alacritty, bold and italic text in Headquarter look as they
   do in Alacritty on macOS, including when a named style is missing from the font.
-- The settings note says when a named style is not in the font and which face is used.
+- A style missing from the font falls back quietly, as in Alacritty; the app log says so.
+- Lines are as far apart as in Alacritty: the line height comes from the font.
 
 ## What Changes
 
@@ -21,8 +22,11 @@ turned "Heavy" into weight 900 and macOS took the nearest face, ExtraBold.
   italic faces as written, besides their weights.
 - `hq-app` (`settings.rs`, `terminal/view.rs`): on macOS, a style name that names no face
   of the font's family makes that style use the normal face (normal weight, upright),
-  as Alacritty does, and adds a settings note. Faces are listed with Core Text
+  as Alacritty does, and writes that to the app log. Faces are listed with Core Text
   (`core-text`, MIT or Apache-2.0, already in the lockfile through GPUI).
+- `hq-app` (`terminal/view.rs`): the line height is the font's ascent plus descent,
+  each rounded, instead of 1.2 times the size (added with the owner's approval,
+  2026-10-23).
 
 ## Non-goals
 
