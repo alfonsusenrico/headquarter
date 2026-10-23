@@ -463,9 +463,10 @@ mod tests {
             },
             external(None),
         );
-        assert_eq!(unlinked_changes(&[], &[waiting.clone()]), [waiting.clone()]);
+        let only = std::slice::from_ref;
+        assert_eq!(unlinked_changes(&[], only(&waiting)), only(&waiting));
         assert!(
-            unlinked_changes(&[waiting.clone()], &[waiting.clone()]).is_empty(),
+            unlinked_changes(only(&waiting), only(&waiting)).is_empty(),
             "nothing to say when nothing changed"
         );
         let working = SessionInfo {
@@ -473,10 +474,10 @@ mod tests {
             ..waiting.clone()
         };
         assert_eq!(
-            unlinked_changes(&[waiting.clone()], &[working.clone()]),
-            [working.clone()]
+            unlinked_changes(only(&waiting), only(&working)),
+            only(&working)
         );
-        let gone = unlinked_changes(&[working.clone(), other.clone()], &[other]);
+        let gone = unlinked_changes(&[working.clone(), other.clone()], only(&other));
         assert_eq!(gone.len(), 1);
         assert_eq!(gone[0].id, working.id);
         assert!(!gone[0].offered, "linked or exited: no longer offered");
