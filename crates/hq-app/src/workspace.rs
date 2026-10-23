@@ -2164,8 +2164,8 @@ impl Workspace {
         let color = |percent: Option<f64>| {
             if note.is_some() {
                 chrome.muted
-            } else if percent.is_some_and(|percent| percent >= usage::HIGH_PERCENT) {
-                chrome.amber
+            } else if percent.is_some_and(|percent| percent >= usage::NEAR_LIMIT_PERCENT) {
+                self.theme.near_limit()
             } else {
                 chrome.text
             }
@@ -2342,8 +2342,8 @@ impl Workspace {
                 };
                 let name = usage::window_name(window);
                 let share = window.used_percent.clamp(0.0, 100.0);
-                let bar_color = if share >= usage::HIGH_PERCENT {
-                    chrome.amber
+                let bar_color = if share >= usage::NEAR_LIMIT_PERCENT {
+                    self.theme.near_limit()
                 } else {
                     chrome.text
                 };
