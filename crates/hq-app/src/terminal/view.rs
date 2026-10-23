@@ -33,6 +33,9 @@ pub struct PaneOptions {
     pub bold_weight: FontWeight,
     pub italic_weight: FontWeight,
     pub bold_italic_weight: FontWeight,
+    /// False when the italic or bold italic style falls back to the upright normal face.
+    pub italic_slanted: bool,
+    pub bold_italic_slanted: bool,
     pub padding: (f32, f32),
     pub alt_is_meta: bool,
     pub bindings: Vec<Binding>,
@@ -53,6 +56,8 @@ impl Default for PaneOptions {
             bold_weight: FontWeight::BOLD,
             italic_weight: FontWeight::NORMAL,
             bold_italic_weight: FontWeight::BOLD,
+            italic_slanted: true,
+            bold_italic_slanted: true,
             padding: (12.0, 10.0),
             alt_is_meta: false,
             bindings: Vec::new(),
@@ -514,10 +519,10 @@ fn styled_font(options: &PaneOptions, style: &TextStyle) -> Font {
             (false, true) => options.italic_weight,
             (true, true) => options.bold_italic_weight,
         },
-        style: if style.italic {
-            FontStyle::Italic
-        } else {
-            FontStyle::Normal
+        style: match (style.bold, style.italic) {
+            (false, true) if options.italic_slanted => FontStyle::Italic,
+            (true, true) if options.bold_italic_slanted => FontStyle::Italic,
+            _ => FontStyle::Normal,
         },
         ..regular_font(options)
     }

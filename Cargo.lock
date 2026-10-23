@@ -2825,6 +2825,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "chrono",
+ "core-text",
  "flate2",
  "futures",
  "gpui-component",
