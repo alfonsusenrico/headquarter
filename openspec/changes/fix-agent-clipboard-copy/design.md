@@ -2,9 +2,13 @@
 
 ## Decisions
 
-### D1. Headquarter owns drags
+### D1. Headquarter owns drags, except in full-screen agents
 
-A left-button press waits: reaching another cell makes it a drag, which Headquarter
+A full-screen agent that reports the mouse (alternate screen, as Claude Code's
+full-screen view; confirmed on screen 2026-10-23) keeps its history itself, so a drag
+goes to it, movement included: it selects, scrolls past the edge and copies, and its
+copy reaches the clipboard (D5) with Headquarter's note (D4). Shift-drag keeps the drag
+in Headquarter. Everywhere else a left-button press waits: reaching another cell makes it a drag, which Headquarter
 selects for every agent; coming up first makes it a click, sent (press and release
 together) to an agent that enabled mouse reporting, unless Shift is held, and otherwise
 it clears the selection. A double or triple click selects a word or a line at once.
@@ -25,12 +29,13 @@ wrapped itself (the terminal cannot tell them from real line breaks).
 While a press from the pane is held, the window reports the pointer and the release,
 so a drag keeps going outside the pane. Past the top or bottom edge, the view scrolls
 through the scrollback every 50 ms, one line plus one per line height further out, at
-most ten. A full-screen agent has no scrollback; its selection covers what is on
-screen, as in Alacritty.
+most ten. A full-screen agent has no scrollback; with Shift, its selection covers what
+is on screen, as in Alacritty.
 
 ### D4. Said, and readable
 
-Each copy shows "Copied" or "Copied N lines" at the bottom right of the pane for 1.5 s.
+Each copy, Headquarter's or the agent's (OSC 52), shows "Copied" or "Copied N lines"
+at the bottom right of the pane for 1.5 s.
 Selected text takes the theme's selection text colour when it has one
 (`colors.selection.text`, now read from settings and theme files; Alacritty's
 `CellForeground` keeps cell colours), as Catppuccin sets for a light selection block.

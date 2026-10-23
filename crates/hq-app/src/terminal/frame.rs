@@ -427,8 +427,13 @@ mod tests {
             palette.clone(),
         );
         model.feed(b"select me");
-        model.start_selection(0, 0, alacritty_terminal::selection::SelectionType::Simple);
-        model.extend_selection(0, 5);
+        model.start_selection(
+            0,
+            0,
+            alacritty_terminal::index::Side::Left,
+            alacritty_terminal::selection::SelectionType::Simple,
+        );
+        model.extend_selection(0, 5, alacritty_terminal::index::Side::Right);
         let frame = build(&model);
         assert_eq!(frame.rows[0][2].background.rgb, palette.selection);
         assert_eq!(

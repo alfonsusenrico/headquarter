@@ -35,6 +35,9 @@ pub struct TerminalSession {
     writer: Option<Arc<Mutex<UnixStream>>>,
     /// Why the pane shows no live agent: it ended, or the connection failed.
     pub ended: Option<String>,
+    /// How many copies the agent has made (OSC 52), and the note for the latest, so
+    /// the pane can say "Copied" for them too.
+    pub agent_copies: (u64, String),
     _reader: Task<()>,
 }
 
@@ -58,6 +61,7 @@ impl TerminalSession {
             model: TerminalModel::new(INITIAL_SIZE, palette),
             writer: None,
             ended: None,
+            agent_copies: (0, String::new()),
             _reader: reader,
         }
     }
@@ -78,6 +82,7 @@ impl TerminalSession {
                     self.send(&Frame::Input(replies));
                 }
                 for (target, text) in self.model.take_copies() {
+                    self.agent_copies = (self.agent_copies.0 + 1, super::copy::copied_note(&text));
                     store_copy(target, text, cx);
                 }
             }

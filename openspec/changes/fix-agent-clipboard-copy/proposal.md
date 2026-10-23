@@ -61,9 +61,11 @@ selection) are no longer used.
 Checked with Claude Code 2.1.309. Attaching replays no output (the host asks the agent
 to redraw), so an old copy cannot overwrite the clipboard when switching sessions.
 
-Decision (owner, 2026-10-23): Headquarter owns drags for every agent (rejected: passing
-drags to agents as Alacritty does, with Shift-drag for Headquarter; and a setting for
-both).
+Decisions (owner, 2026-10-23): Headquarter owns drags (rejected: passing every drag to
+agents as Alacritty does; and a setting for both); then, once the log showed Claude
+Code's full-screen view keeps its history itself, drags in full-screen agents that use
+the mouse go to the agent (rejected: Headquarter selecting only the visible screen
+there).
 
 ## Approval
 

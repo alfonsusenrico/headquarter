@@ -221,15 +221,17 @@ impl TerminalModel {
     }
 
     /// Starts a selection at a visible cell (row 0 is the top of the view).
-    pub fn start_selection(&mut self, row: usize, column: usize, kind: SelectionType) {
+    /// `side` is the half of the cell the pointer is over, so a selection made leftwards
+    /// or upwards still takes the first cell in, as in Alacritty.
+    pub fn start_selection(&mut self, row: usize, column: usize, side: Side, kind: SelectionType) {
         let point = self.view_point(row, column);
-        self.term.selection = Some(Selection::new(kind, point, Side::Left));
+        self.term.selection = Some(Selection::new(kind, point, side));
     }
 
-    pub fn extend_selection(&mut self, row: usize, column: usize) {
+    pub fn extend_selection(&mut self, row: usize, column: usize, side: Side) {
         let point = self.view_point(row, column);
         if let Some(selection) = self.term.selection.as_mut() {
-            selection.update(point, Side::Right);
+            selection.update(point, side);
         }
     }
 
@@ -266,6 +268,19 @@ impl TerminalModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_selection_made_leftwards_takes_the_first_cell() {
+        let mut model = model();
+        model.feed(b"  two lines\r\n  of text");
+        // From the end of the second line back to the very left of the first.
+        model.start_selection(1, 8, Side::Right, SelectionType::Simple);
+        model.extend_selection(0, 0, Side::Left);
+        assert_eq!(
+            model.selected_text().as_deref(),
+            Some("  two lines\n  of text")
+        );
+    }
     use crate::theme::Theme;
 
     fn model() -> TerminalModel {
@@ -376,8 +391,8 @@ mod tests {
     fn selection_returns_text() {
         let mut model = model();
         model.feed(b"select this text");
-        model.start_selection(0, 7, SelectionType::Simple);
-        model.extend_selection(0, 10);
+        model.start_selection(0, 7, Side::Left, SelectionType::Simple);
+        model.extend_selection(0, 10, Side::Right);
         assert_eq!(model.selected_text().as_deref(), Some("this"));
         model.clear_selection();
         assert_eq!(model.selected_text(), None);

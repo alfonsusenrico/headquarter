@@ -8,6 +8,8 @@
 
 - [x] 1.3 Copied note, tidy copies, selection text colour, drag tracking outside the pane and edge scrolling. Verify with `margins_trailing_spaces_and_blank_edges_go`, `a_selection_started_mid_row_keeps_the_others_margin_right`, `the_note_counts_lines`, `dragging_past_an_edge_scrolls_faster_further_out`, `selection_paints_its_background` (theme text colour) and `selection_text_colour_from_a_theme`. Done: pass; hq-app 146 tests, clippy clean (2026-10-23).
 
+- [x] 1.4 Selection edges by the half of the cell under the pointer; drags in full-screen mouse agents go to the agent (movement included), with the note on its copies. Verify with `a_selection_made_leftwards_takes_the_first_cell` and `only_full_screen_mouse_agents_take_drags`. Done: pass; hq-app 148 tests, clippy clean (2026-10-23).
+
 Expected Result: `cargo test -p hq-app` passes.
 
 ## 2. On screen and delivery

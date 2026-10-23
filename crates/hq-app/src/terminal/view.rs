@@ -5,6 +5,7 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
+use alacritty_terminal::index::Side;
 use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::CursorShape;
@@ -92,6 +93,7 @@ struct Layout {
 struct Press {
     row: usize,
     column: usize,
+    side: Side,
     shift: bool,
 }
 
@@ -124,6 +126,12 @@ fn autoscroll_lines(y: f32, top: f32, bottom: f32, line_height: f32) -> i32 {
     if past > 0.0 { lines } else { -lines }
 }
 
+/// A full-screen agent that reports the mouse keeps its history itself, so a drag is
+/// its to handle: it selects, scrolls and copies (D1).
+fn agent_owns_drags(mode: TermMode) -> bool {
+    mode.contains(TermMode::ALT_SCREEN) && mode.intersects(TermMode::MOUSE_MODE)
+}
+
 fn release(selecting: bool, agent_uses_mouse: bool, shift: bool) -> Release {
     if selecting {
         Release::Copy
@@ -152,6 +160,10 @@ pub struct TerminalView {
     /// note alone.
     copied: Option<(u64, String)>,
     copies: u64,
+    /// The agent's copies already noted.
+    agent_copies_seen: u64,
+    /// While a drag is handed to a full-screen agent: the last cell reported to it.
+    forwarding: Option<(usize, usize)>,
     /// While set, the grid keeps its size, so the agent redraws once when the sidebar's
     /// divider is released rather than on every pixel of the drag.
     size_held: bool,
@@ -164,7 +176,15 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
+        cx.observe(&session, |this: &mut TerminalView, session, cx| {
+            let (count, note) = session.read(cx).agent_copies.clone();
+            if count != this.agent_copies_seen {
+                this.agent_copies_seen = count;
+                this.show_copied(note, cx);
+            }
+            cx.notify();
+        })
+        .detach();
         cx.observe_window_activation(window, |_, _, cx| cx.notify())
             .detach();
         let cursor = options.cursor;
@@ -183,6 +203,8 @@ impl TerminalView {
             autoscrolling: false,
             copied: None,
             copies: 0,
+            agent_copies_seen: 0,
+            forwarding: None,
             size_held: false,
         }
     }
@@ -341,6 +363,22 @@ impl TerminalView {
         self.paste(&text, cx);
     }
 
+    /// The half of the cell under the pointer; past the grid's left or right edge, the
+    /// outer half of the edge cell.
+    fn side_at(&self, position: Point<Pixels>) -> Side {
+        let Some(layout) = self.layout.get() else {
+            return Side::Left;
+        };
+        let x = (position.x - layout.origin.x) / layout.cell_width;
+        if x <= 0.0 {
+            Side::Left
+        } else if x >= layout.columns as f32 || x.fract() >= 0.5 {
+            Side::Right
+        } else {
+            Side::Left
+        }
+    }
+
     fn cell_at(&self, position: Point<Pixels>) -> Option<(usize, usize)> {
         let layout = self.layout.get()?;
         let x = (position.x - layout.origin.x) / layout.cell_width;
@@ -351,6 +389,10 @@ impl TerminalView {
             row.min(layout.rows.saturating_sub(1)),
             column.min(layout.columns.saturating_sub(1)),
         ))
+    }
+
+    fn agent_owns_drags(&self, cx: &App) -> bool {
+        agent_owns_drags(self.mode(cx))
     }
 
     fn mouse_reporting(&self, cx: &App) -> bool {
@@ -372,9 +414,19 @@ impl TerminalView {
         let Some((row, column)) = self.cell_at(event.position) else {
             return;
         };
+        // A full-screen agent that uses the mouse keeps its own history, so it selects,
+        // scrolls and copies itself; Shift keeps the drag here (D1).
+        if self.agent_owns_drags(cx) && !event.modifiers.shift {
+            self.clear_selection(cx);
+            self.report_mouse(0, row, column, true, cx);
+            self.forwarding = Some((row, column));
+            return;
+        }
+        let side = self.side_at(event.position);
         self.press = Some(Press {
             row,
             column,
+            side,
             shift: event.modifiers.shift,
         });
         // A double or triple click selects a word or a line at once; a single press
@@ -385,7 +437,7 @@ impl TerminalView {
             _ => return,
         };
         self.session.update(cx, |session, cx| {
-            session.model_mut().start_selection(row, column, kind);
+            session.model_mut().start_selection(row, column, side, kind);
             cx.notify();
         });
         self.selecting = true;
@@ -395,6 +447,20 @@ impl TerminalView {
     /// that reaches another cell becomes a selection, which follows the pointer and
     /// scrolls when it goes past the top or bottom (D3).
     fn drag_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(last) = self.forwarding {
+            // Reported cell by cell; past an edge it stays on the edge row, where the
+            // agent scrolls.
+            if let Some(cell) = self.cell_at(position)
+                && cell != last
+                && self
+                    .mode(cx)
+                    .intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION)
+            {
+                self.report_mouse(32, cell.0, cell.1, true, cx);
+                self.forwarding = Some(cell);
+            }
+            return;
+        }
         let Some(press) = self.press else {
             return;
         };
@@ -407,14 +473,18 @@ impl TerminalView {
                 return;
             }
             self.session.update(cx, |session, _| {
-                session
-                    .model_mut()
-                    .start_selection(press.row, press.column, SelectionType::Simple);
+                session.model_mut().start_selection(
+                    press.row,
+                    press.column,
+                    press.side,
+                    SelectionType::Simple,
+                );
             });
             self.selecting = true;
         }
+        let side = self.side_at(position);
         self.session.update(cx, |session, cx| {
-            session.model_mut().extend_selection(row, column);
+            session.model_mut().extend_selection(row, column, side);
             cx.notify();
         });
         self.keep_scrolling(cx);
@@ -464,12 +534,14 @@ impl TerminalView {
             self.autoscrolling = false;
             return false;
         }
-        let edge = self.pointer.and_then(|pointer| self.cell_at(pointer));
+        let edge = self
+            .pointer
+            .and_then(|pointer| Some((self.cell_at(pointer)?, self.side_at(pointer))));
         self.session.update(cx, |session, cx| {
             let model = session.model_mut();
             model.scroll(lines);
-            if let Some((row, column)) = edge {
-                model.extend_selection(row, column);
+            if let Some(((row, column), side)) = edge {
+                model.extend_selection(row, column, side);
             }
             cx.notify();
         });
@@ -478,6 +550,11 @@ impl TerminalView {
 
     /// The left button came up, anywhere in the window, after a press in the pane.
     fn finish_press(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(last) = self.forwarding.take() {
+            let (row, column) = self.cell_at(position).unwrap_or(last);
+            self.report_mouse(0, row, column, false, cx);
+            return;
+        }
         let Some(press) = self.press.take() else {
             return;
         };
@@ -1072,6 +1149,23 @@ mod tests {
             autoscroll_lines(-2000.0, 10.0, 400.0, 18.0),
             10,
             "at most ten"
+        );
+    }
+
+    #[test]
+    fn only_full_screen_mouse_agents_take_drags() {
+        let full_screen = TermMode::ALT_SCREEN | TermMode::MOUSE_DRAG;
+        assert!(
+            agent_owns_drags(full_screen),
+            "Claude Code's full-screen view"
+        );
+        assert!(
+            !agent_owns_drags(TermMode::MOUSE_DRAG),
+            "normal screen: history is ours"
+        );
+        assert!(
+            !agent_owns_drags(TermMode::ALT_SCREEN),
+            "no mouse: Headquarter selects"
         );
     }
 
