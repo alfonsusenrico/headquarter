@@ -20,7 +20,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{Icon, IconName, Sizable};
+use gpui_component::{Disableable, Icon, IconName, Sizable};
 use hq_client::{Change, FeedControl, HostPaths, SessionFeed};
 use hq_config::{AgentMarks, Appearance, SettingsWatcher};
 use hq_protocol::{AgentUsage, GroupInfo, SessionInfo, usage};
@@ -238,6 +238,8 @@ pub struct Workspace {
     usage_open: Option<Agent>,
     /// The details list every agent: opened from the "+N" chip.
     usage_all: bool,
+    /// A refresh asked of the host has not been answered yet.
+    usage_refreshing: bool,
     /// The panel the backdrop just closed, so the click that closed it does not reopen
     /// it on the ring or chip underneath (`None` for the all-agents panel).
     usage_dismissed: Option<(Option<Agent>, Instant)>,
@@ -369,6 +371,7 @@ impl Workspace {
             usage: Vec::new(),
             usage_open: None,
             usage_all: false,
+            usage_refreshing: false,
             usage_dismissed: None,
             rows_scroll: ScrollHandle::new(),
             ring_focus: Agent::ALL
@@ -2066,8 +2069,25 @@ impl Workspace {
             .is_some_and(|(closed, at)| closed == panel && at.elapsed() < DISMISS_CLICK)
     }
 
+    /// The host answers once the new readings are in; they reach the details through
+    /// the usage feed.
     fn refresh_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.host_call(window, cx, hq_client::refresh_usage, |_, (), _, _| {});
+        if self.usage_refreshing {
+            return;
+        }
+        self.usage_refreshing = true;
+        cx.notify();
+        self.host_call(
+            window,
+            cx,
+            |paths| Ok(hq_client::refresh_usage(paths)),
+            |this, refreshed, _, _| {
+                this.usage_refreshing = false;
+                if let Err(error) = refreshed {
+                    this.message = Some(format!("{error:#}"));
+                }
+            },
+        );
     }
 
     /// Centred rings, nearest the limit first, as many as fit on one line; the rest
@@ -2259,7 +2279,9 @@ impl Workspace {
                 .w(px((self.sidebar_width() - 20.).max(USAGE_PANEL_WIDTH)))
         }
         .max_h(px(560.))
-        .overflow_y_scroll();
+        .overflow_y_scroll()
+        // Presses inside the details stay with them, not the backdrop that closes them.
+        .occlude();
         for (index, usage) in shown.into_iter().enumerate() {
             if index > 0 {
                 panel = panel.child(div().h(px(1.)).bg(hsla(chrome.sidebar_line)));
@@ -2269,9 +2291,18 @@ impl Workspace {
         Some(
             panel.child(
                 div().child(
-                    Button::new("usage-refresh").label("Refresh").on_click(
-                        cx.listener(|this, _, window, cx| this.refresh_usage(window, cx)),
-                    ),
+                    Button::new("usage-refresh")
+                        .icon(IconName::RefreshCw)
+                        .label(if self.usage_refreshing {
+                            "Refreshing…"
+                        } else {
+                            "Refresh"
+                        })
+                        .loading(self.usage_refreshing && !settings::reduce_motion())
+                        .disabled(self.usage_refreshing)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.refresh_usage(window, cx)),
+                        ),
                 ),
             ),
         )

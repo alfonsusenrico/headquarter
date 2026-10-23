@@ -20,6 +20,9 @@ use crate::session::Outgoing;
 /// Refresh requests closer together than this reuse the reading in progress or just
 /// taken.
 const REFRESH_FLOOR: Duration = Duration::from_secs(30);
+/// The longest a refresh waits for its reads: the hidden `/usage` read's own limits
+/// (start, screen, exit) with room to spare. Codex's limit is shorter.
+const REFRESH_WAIT: Duration = Duration::from_secs(40);
 /// How often the Claude snapshot file is checked while a client shows usage.
 const CLAUDE_INTERVAL: Duration = Duration::from_secs(10);
 const CODEX_TIMEOUT: Duration = Duration::from_secs(15);
@@ -138,13 +141,15 @@ impl Host {
         if due && self.agent_wanted(Agent::Codex) {
             lock(&self.usage).codex_reading = true;
             self.read_codex_now();
+            self.usage_settled.notify_all();
         }
         self.read_claude_account_when_due();
         self.usage_report()
     }
 
-    /// `RefreshUsage`: reads again in the background unless a read is under way or
-    /// was just taken; subscribers get the result.
+    /// `RefreshUsage`: reads again unless a read is under way or was just taken, and
+    /// returns once no read is under way, so the answer means the readings are in;
+    /// subscribers get the result.
     pub(super) fn refresh_usage(self: &Arc<Self>) {
         let recent = {
             let book = lock(&self.usage);
@@ -169,6 +174,12 @@ impl Host {
         } else {
             self.start_codex_read();
         }
+        let book = lock(&self.usage);
+        let _ = self
+            .usage_settled
+            .wait_timeout_while(book, REFRESH_WAIT, |book| {
+                book.codex_reading || book.claude_screen_reading
+            });
     }
 
     /// A hosted Codex session finished a turn: read Codex again shortly.
@@ -209,6 +220,7 @@ impl Host {
         thread::spawn(move || {
             host.read_claude_screen_now();
             host.broadcast_usage();
+            host.usage_settled.notify_all();
         });
     }
 
@@ -273,6 +285,7 @@ impl Host {
         thread::spawn(move || {
             host.read_codex_now();
             host.broadcast_usage();
+            host.usage_settled.notify_all();
         });
     }
 
