@@ -75,6 +75,19 @@ pub fn day_heading(day: NaiveDate, today: NaiveDate) -> String {
     }
 }
 
+/// The sessions the window keeps: a conversation whose folder no longer exists cannot
+/// be continued, so it is left out; such folders are mostly temporary ones of
+/// automated runs (owner, 2026-10-23). One with no known folder stays.
+fn offerable(
+    sessions: Vec<SessionInfo>,
+    folder_exists: impl Fn(&Path) -> bool,
+) -> Vec<SessionInfo> {
+    sessions
+        .into_iter()
+        .filter(|session| session.cwd.is_empty() || folder_exists(Path::new(&session.cwd)))
+        .collect()
+}
+
 /// Sessions the window can list: everything not in the sidebar.
 fn listable(session: &SessionInfo) -> bool {
     !session.in_sidebar
@@ -234,6 +247,7 @@ impl OpenSessions {
             },
         );
         window.focus(&search.focus_handle(cx), cx);
+        let sessions = offerable(sessions, Path::is_dir);
         let order = sessions
             .iter()
             .map(|session| (session.id.clone(), session.last_activity_at))
@@ -276,7 +290,7 @@ impl OpenSessions {
     }
 
     pub fn update_sessions(&mut self, sessions: Vec<SessionInfo>, cx: &mut Context<Self>) {
-        self.sessions = sessions;
+        self.sessions = offerable(sessions, Path::is_dir);
         cx.notify();
     }
 
@@ -851,6 +865,22 @@ mod tests {
             owner_named: false,
             interrupted: false,
         }
+    }
+
+    #[test]
+    fn conversations_whose_folder_is_gone_are_not_offered() {
+        let mut unknown = session("unknown", Agent::Agy, "", 1);
+        unknown.cwd.clear();
+        let sessions = vec![
+            session("here", Agent::Claude, "/u/api", 1),
+            session("gone", Agent::Agy, "/tmp/eval-run/repo", 2),
+            unknown,
+        ];
+        let kept: Vec<String> = offerable(sessions, |folder| folder == Path::new("/u/api"))
+            .into_iter()
+            .map(|session| session.id)
+            .collect();
+        assert_eq!(kept, ["here", "unknown"]);
     }
 
     fn fixture() -> Vec<SessionInfo> {
