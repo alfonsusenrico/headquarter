@@ -6,10 +6,9 @@ use hq_signals::quota::{standing_windows, window_label};
 
 use crate::{Account, AgentUsage, UsageWindow};
 
-/// The strip names the agent nearest its limit from this share used.
-pub const LABEL_FROM_PERCENT: f64 = 50.0;
-/// From this share used the ring turns amber.
-pub const HIGH_PERCENT: f64 = 90.0;
+/// From this share used a window is near its limit: its ring and bar turn red and the
+/// strip names it (owner, 2026-10-23).
+pub const NEAR_LIMIT_PERCENT: f64 = 80.0;
 /// Readings follow activity and run at least every ten minutes, so one older than this
 /// means updates are failing.
 pub const OVERDUE_AFTER_SECS: u64 = 15 * 60;
@@ -103,6 +102,46 @@ pub fn fill(usage: &AgentUsage, now_secs: u64) -> Option<f64> {
     tightest(usage, now_secs).map(|window| window.used_percent.clamp(0.0, 100.0))
 }
 
+/// The footer's two rings (owner, 2026-10-22): the inner one for the agent's shortest
+/// all-models window that still holds (Claude Code's and Codex's 5 hours), the outer one
+/// for its longest (the week). With one window, only the outer ring is filled; `None`
+/// leaves a ring empty.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rings {
+    pub inner: Option<f64>,
+    pub outer: Option<f64>,
+}
+
+impl Rings {
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_none() && self.outer.is_none()
+    }
+}
+
+/// The fills of the footer's rings, 0 to 100.
+pub fn rings(usage: &AgentUsage, now_secs: u64) -> Rings {
+    let mut windows: Vec<&UsageWindow> = current_windows(usage, now_secs)
+        .into_iter()
+        .filter(|window| window.model.is_none())
+        .collect();
+    windows.sort_by_key(|window| window.minutes.unwrap_or(u64::MAX));
+    let percent = |window: &UsageWindow| window.used_percent.clamp(0.0, 100.0);
+    match windows.as_slice() {
+        [] => Rings {
+            inner: None,
+            outer: None,
+        },
+        [only] => Rings {
+            inner: None,
+            outer: Some(percent(only)),
+        },
+        [shortest, .., longest] => Rings {
+            inner: Some(percent(shortest)),
+            outer: Some(percent(longest)),
+        },
+    }
+}
+
 pub fn percent_text(percent: f64) -> String {
     format!("{}%", percent.round() as i64)
 }
@@ -126,21 +165,36 @@ pub fn length_name(minutes: u64) -> String {
     window_label(Some(minutes))
 }
 
-/// "codex 82% · 5h" for the agent nearest its limit, once one has used half a window.
+/// The window nearest its limit as the owner reads it: the highest whole percentage,
+/// and on a tie the shorter window, which resets sooner (owner, 2026-10-23).
+pub fn nearest_limit(usage: &AgentUsage, now_secs: u64) -> Option<&UsageWindow> {
+    let length = |window: &UsageWindow| window.minutes.unwrap_or(u64::MAX);
+    current_windows(usage, now_secs).into_iter().max_by(|a, b| {
+        a.used_percent
+            .round()
+            .total_cmp(&b.used_percent.round())
+            .then_with(|| length(b).cmp(&length(a)))
+    })
+}
+
+/// The strip's line once agents near their limits (owner, 2026-10-23): "codex 82% · 5h"
+/// for a single agent, naming its nearest window, or "2 agents near their limit".
 pub fn label(agents: &[AgentUsage], now_secs: u64) -> Option<String> {
-    agents
+    let near: Vec<(&AgentUsage, &UsageWindow)> = agents
         .iter()
-        .filter_map(|usage| tightest(usage, now_secs).map(|window| (usage, window)))
-        .filter(|(_, window)| window.used_percent >= LABEL_FROM_PERCENT)
-        .max_by(|(_, a), (_, b)| a.used_percent.total_cmp(&b.used_percent))
-        .map(|(usage, window)| {
-            format!(
-                "{} {} · {}",
-                usage.agent,
-                percent_text(window.used_percent),
-                window_name(window)
-            )
-        })
+        .filter_map(|usage| nearest_limit(usage, now_secs).map(|window| (usage, window)))
+        .filter(|(_, window)| window.used_percent >= NEAR_LIMIT_PERCENT)
+        .collect();
+    match near.as_slice() {
+        [] => None,
+        [(usage, window)] => Some(format!(
+            "{} {} · {}",
+            usage.agent,
+            percent_text(window.used_percent),
+            window_name(window)
+        )),
+        several => Some(format!("{} agents near their limit", several.len())),
+    }
 }
 
 /// "Couldn't update since 3:12 PM" when the latest update failed or a reading is
@@ -236,6 +290,48 @@ mod tests {
     }
 
     #[test]
+    fn rings_show_the_short_window_inside_and_the_week_outside() {
+        let claude = usage(
+            Agent::Claude,
+            vec![
+                window(10_080, 67.0, NOW + 5_000),
+                window(300, 42.0, NOW + 100),
+                UsageWindow {
+                    model: Some("Fable".into()),
+                    ..window(10_080, 99.0, NOW + 5_000)
+                },
+            ],
+            Some(NOW),
+        );
+        assert_eq!(
+            rings(&claude, NOW),
+            Rings {
+                inner: Some(42.0),
+                outer: Some(67.0)
+            },
+            "per-model windows stay in the details"
+        );
+        let single = usage(Agent::Codex, vec![window(10_080, 12.0, NOW + 5)], Some(NOW));
+        assert_eq!(
+            rings(&single, NOW),
+            Rings {
+                inner: None,
+                outer: Some(12.0)
+            }
+        );
+        let reset = usage(
+            Agent::Codex,
+            vec![window(300, 80.0, NOW - 1)],
+            Some(NOW - 10),
+        );
+        assert!(
+            rings(&reset, NOW).is_empty(),
+            "a reset window no longer counts"
+        );
+        assert!(rings(&usage(Agent::Agy, Vec::new(), None), NOW).is_empty());
+    }
+
+    #[test]
     fn fill_uses_the_tightest_window_that_still_holds() {
         let codex = usage(
             Agent::Codex,
@@ -279,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn label_names_the_agent_nearest_its_limit_from_half() {
+    fn label_names_one_agent_near_its_limit_or_counts_several() {
         let agents = [
             usage(Agent::Claude, vec![window(300, 60.0, NOW + 10)], Some(NOW)),
             usage(Agent::Codex, vec![window(300, 82.4, NOW + 10)], Some(NOW)),
@@ -288,10 +384,45 @@ mod tests {
         assert_eq!(label(&agents, NOW).as_deref(), Some("codex 82% · 5h"));
         let calm = [usage(
             Agent::Codex,
-            vec![window(10_080, 49.0, NOW + 10)],
+            vec![window(10_080, 79.0, NOW + 10)],
             Some(NOW),
         )];
-        assert_eq!(label(&calm, NOW), None);
+        assert_eq!(label(&calm, NOW), None, "below 80% nothing is named");
+        let both = [
+            usage(
+                Agent::Claude,
+                vec![window(10_080, 91.0, NOW + 10)],
+                Some(NOW),
+            ),
+            usage(Agent::Codex, vec![window(300, 85.0, NOW + 10)], Some(NOW)),
+        ];
+        assert_eq!(
+            label(&both, NOW).as_deref(),
+            Some("2 agents near their limit")
+        );
+    }
+
+    #[test]
+    fn one_agent_is_named_by_its_nearest_window_the_shorter_on_a_tie() {
+        let week_ahead = [usage(
+            Agent::Claude,
+            vec![window(300, 85.0, NOW + 10), window(10_080, 92.0, NOW + 10)],
+            Some(NOW),
+        )];
+        assert_eq!(
+            label(&week_ahead, NOW).as_deref(),
+            Some("claude 92% · week")
+        );
+        let tied = [usage(
+            Agent::Claude,
+            vec![window(10_080, 88.2, NOW + 10), window(300, 87.6, NOW + 10)],
+            Some(NOW),
+        )];
+        assert_eq!(
+            label(&tied, NOW).as_deref(),
+            Some("claude 88% · 5h"),
+            "the same number shown: the 5-hour window"
+        );
     }
 
     #[test]
