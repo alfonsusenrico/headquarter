@@ -49,7 +49,7 @@ The system SHALL offer an Open sessions window (the sidebar's command field, Cmd
 
 #### Scenario: Added while running elsewhere
 - **WHEN** the owner picks a session running in another terminal and presses "Open 1"
-- **THEN** it appears in the sidebar marked "ext" with its status, the pane says it is running in another terminal, and the other process is unaffected
+- **THEN** it appears in the sidebar marked "ext" with its age, the pane says it is running in another terminal, and the other process is unaffected
 
 #### Scenario: Rows line up
 - **WHEN** rows that can and cannot be picked are listed together
@@ -268,7 +268,7 @@ The system SHALL show, from top to bottom, the "New group" line, a "Needs you" s
 
 #### Scenario: Row content
 - **WHEN** a sidebar session is listed
-- **THEN** its single row shows the agent's mark, its title, "ext" when it runs in another terminal, its age or status word, and its status glyph
+- **THEN** its single row shows the agent's mark, its title, its age or status word, and its status glyph; a session running in another terminal shows the mark, the title, "ext" and its age only
 
 #### Scenario: Folder on hover
 - **WHEN** the pointer rests on a sidebar row
@@ -507,6 +507,17 @@ The system SHALL offer, on each Add sessions row whose conversation is not runni
 #### Scenario: Agent refuses
 - **WHEN** Codex fails to archive or delete
 - **THEN** the row comes back with a note that it could not be removed, and the host log names the agent and the way only
+
+### Requirement: No status for sessions running elsewhere
+The system SHALL show a sidebar session running in another terminal with its mark, title, "ext" and age only, SHALL NOT list it in "Needs you" or count it as needing the owner, and SHALL show its status again once it runs in Headquarter.
+
+#### Scenario: Working in another terminal
+- **WHEN** a sidebar session's agent is working, or asks for permission, in another terminal
+- **THEN** its row shows "ext" and its age with no status word or glyph, and it is not listed in "Needs you"
+
+#### Scenario: Continued here
+- **WHEN** that session is closed in the other terminal and the owner opens it in Headquarter
+- **THEN** its row drops "ext" and shows its status again
 
 ### Requirement: Group colours
 The system SHALL give each group a colour from a soft eight-colour palette suited to the light or dark mode, shown as a dot before the group's name and as a thin line along its rows; SHALL choose it automatically from the group's identity until the owner picks one from the dot; and SHALL let the owner return a group to automatic. A group's name SHALL always be shown with its colour.

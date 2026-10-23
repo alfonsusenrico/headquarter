@@ -97,13 +97,10 @@ pub fn untitled_id(session: &SessionInfo) -> Option<&str> {
         .filter(|id| !id.is_empty())
 }
 
-/// Whether the session waits for the owner, here or in another terminal.
+/// Whether the session waits for the owner here. One running in another terminal is
+/// that terminal's to answer, so it never counts (ext-rows-without-status).
 pub fn needs_you(session: &SessionInfo) -> bool {
-    session.status == Status::NeedsYou
-        || session
-            .external
-            .as_ref()
-            .is_some_and(|external| external.status == Some(Status::NeedsYou))
+    session.external.is_none() && session.status == Status::NeedsYou
 }
 
 /// Arranges the sessions that are in the sidebar; others are left out. `home` is the
@@ -287,7 +284,11 @@ mod tests {
         ];
         let groups = [group(2, "Backend"), group(1, "Empty")];
         let layout = layout(&sessions, &groups, None);
-        assert_eq!(ids(&layout.needs_you), ["outside", "api-asking"]);
+        assert_eq!(
+            ids(&layout.needs_you),
+            ["api-asking"],
+            "one asking in another terminal is not listed"
+        );
         let names: Vec<&str> = layout
             .groups
             .iter()

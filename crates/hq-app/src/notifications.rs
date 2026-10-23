@@ -25,7 +25,12 @@ pub fn notice(
     settings: Notifications,
 ) -> Option<Notice> {
     let previous = previous?;
-    if !current.in_sidebar || watched || previous.status == current.status {
+    // One running in another terminal is that terminal's to report (ext-rows-without-status).
+    if !current.in_sidebar
+        || current.external.is_some()
+        || watched
+        || previous.status == current.status
+    {
         return None;
     }
     let agent = agent_name(current.agent);
@@ -130,6 +135,22 @@ mod tests {
     }
 
     #[test]
+    fn a_session_running_elsewhere_never_notifies() {
+        let mut asking = session(Status::NeedsYou);
+        asking.external = Some(External {
+            pid: Some(7),
+            status: Some(Status::NeedsYou),
+        });
+        let posted = notice(
+            Some(&session(Status::Working)),
+            &asking,
+            false,
+            Notifications::default(),
+        );
+        assert_eq!(posted, None);
+    }
+
+    #[test]
     fn a_finished_turn_notifies_as_replied_without_the_folder() {
         let posted = change(Status::Working, Status::DoneUnread).unwrap();
         assert_eq!(
@@ -173,20 +194,6 @@ mod tests {
         unlisted.in_sidebar = false;
         let posted = notice(Some(&working), &unlisted, false, Notifications::default());
         assert_eq!(posted, None);
-    }
-
-    #[test]
-    fn outside_sessions_notify_like_hosted_ones() {
-        let mut outside = session(Status::NeedsYou);
-        outside.origin = Origin::History;
-        outside.external = Some(External {
-            pid: Some(42),
-            status: Some(Status::NeedsYou),
-        });
-        let mut before = outside.clone();
-        before.status = Status::Working;
-        let posted = notice(Some(&before), &outside, false, Notifications::default());
-        assert_eq!(posted.unwrap().body, "Claude needs you");
     }
 
     #[test]

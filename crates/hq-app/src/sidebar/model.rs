@@ -16,14 +16,14 @@ pub enum Glyph {
     NeedsYou,
     IdleUnread,
     Idle,
-    /// Running in another terminal with no status reported.
-    Unknown,
+    /// Running in another terminal: no status is shown until it runs here.
+    Elsewhere,
 }
 
 impl Glyph {
     pub fn of(session: &SessionInfo) -> Glyph {
-        if let Some(external) = &session.external {
-            return external.status.map_or(Glyph::Unknown, Glyph::from_status);
+        if session.external.is_some() {
+            return Glyph::Elsewhere;
         }
         // A session whose agent is not running is idle: opening it resumes the agent.
         if !session.live {
@@ -543,7 +543,7 @@ mod tests {
         outside.live = false;
         outside.external = Some(External {
             pid: Some(4),
-            status: None,
+            status: Some(Status::Working),
         });
         let mut not_added = session("loose", "/u/api", Status::Done, 1);
         not_added.in_sidebar = false;
@@ -622,7 +622,12 @@ mod tests {
         assert!(done.bold());
         let outside = &rows(&items, "web-ext")[0];
         assert!(outside.external);
-        assert_eq!(outside.glyph, Glyph::Unknown);
+        assert_eq!(outside.glyph, Glyph::Elsewhere);
+        assert_eq!(
+            outside.status_word(),
+            None,
+            "working in another terminal shows only ext and the age"
+        );
         let ended = &rows(&items, "web-old")[0];
         assert_eq!(
             ended.glyph,

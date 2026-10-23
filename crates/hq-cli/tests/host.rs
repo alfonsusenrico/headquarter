@@ -1772,7 +1772,14 @@ fn outside_sessions_are_linked_and_block_resume() {
     }
     let everything = String::from_utf8_lossy(&env.hq(&["ls", "--all"]).stdout).into_owned();
     assert!(everything.contains("working · external 1"), "{everything}");
-    assert!(everything.contains("1 needs you"), "{everything}");
+    assert!(
+        everything.contains("needs you · external 1"),
+        "its own line keeps the outside status: {everything}"
+    );
+    assert!(
+        !everything.contains("1 needs you"),
+        "it is not counted as needing the owner here: {everything}"
+    );
 
     // Only an outside session with a known conversation can join the sidebar.
     let refused = env.hq(&["add", &unlinked.id]);
