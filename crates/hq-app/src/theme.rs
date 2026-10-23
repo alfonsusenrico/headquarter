@@ -132,6 +132,12 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// A usage window near its limit: the theme's terminal red, so it reads as red in
+    /// every theme and stays apart from the amber of "needs you".
+    pub fn near_limit(&self) -> Paint {
+        Paint::solid(self.palette.ansi[1])
+    }
+
     pub fn light() -> Theme {
         Theme {
             mode: Mode::Light,
@@ -457,7 +463,7 @@ mod tests {
             let chrome = theme.chrome;
             for (name, color) in [
                 ("fill", chrome.text),
-                ("high fill", chrome.amber),
+                ("near limit fill", theme.near_limit()),
                 ("old fill", chrome.muted),
             ] {
                 for (against, background) in [("sidebar", chrome.sidebar), ("track", chrome.track)]
