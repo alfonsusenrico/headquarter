@@ -23,7 +23,10 @@ and folded into the parent's row.
 ## What Changes
 
 - `hq-signals` (`history.rs`): each conversation says whether the owner started it:
-  Claude Code's `entrypoint` (`sdk-…` is a program), Codex's `source` (`exec` is a
+  Claude Code's `entrypoint` (`sdk-…` is a program) and whether its transcript holds a
+  prompt or reply at all (one without either was opened and left, or is the stub Claude
+  Code leaves with a `continued-in` record when a conversation goes on under a new id;
+  12 of the owner's 43 transcripts), Codex's `source` (`exec` is a
   program; a `{"subagent": …}` source is a sub-agent and is not a conversation of its
   own), agy's `step_count` (0 is never used).
 - `hq-daemon`: each history pass keeps, in memory, the past conversations to offer: those

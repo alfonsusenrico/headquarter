@@ -270,10 +270,12 @@ fn read_claude(path: &Path) -> Option<Conversation> {
     let mut ai_title = None;
     let mut agent_name = None;
     let mut entrypoint = None;
+    let mut has_message = false;
     for line in BufReader::new(File::open(path).ok()?)
         .lines()
         .map_while(Result::ok)
     {
+        has_message = has_message || claude_message(&line);
         // Check cheaply before parsing; most lines are messages we never need.
         let wants_cwd = cwd.is_none() && line.contains("\"cwd\"");
         let wants_title = line.contains("ai-title") || line.contains("agent-name");
@@ -303,8 +305,10 @@ fn read_claude(path: &Path) -> Option<Conversation> {
         started_at,
         last_activity_at,
         title: agent_name.or(ai_title),
-        // `sdk-cli`, `sdk-ts`, …: started through `claude -p` or the Agent SDK.
-        offered: !entrypoint.is_some_and(|entrypoint| entrypoint.starts_with("sdk")),
+        // `sdk-cli`, `sdk-ts`, …: started through `claude -p` or the Agent SDK. A
+        // transcript without a prompt or reply was opened and left, or is the stub Claude
+        // Code leaves when a conversation continues under a new id (`continued-in`).
+        offered: has_message && !entrypoint.is_some_and(|entrypoint| entrypoint.starts_with("sdk")),
     })
 }
 
@@ -698,6 +702,14 @@ mod tests {
             r#"{"type":"user","cwd":"/w","entrypoint":"cli"}"#,
         );
         fixture.write(
+            "claude/projects/-w/continued.jsonl",
+            &[
+                r#"{"type":"system","cwd":"/w","entrypoint":"cli"}"#,
+                r#"{"type":"continued-in","sessionId":"continued","continuedInSessionId":"typed"}"#,
+            ]
+            .join("\n"),
+        );
+        fixture.write(
             "claude/projects/-w/scripted.jsonl",
             r#"{"type":"user","cwd":"/w","entrypoint":"sdk-cli"}"#,
         );
@@ -724,6 +736,7 @@ mod tests {
             offered,
             [
                 ("cli", true),
+                ("continued", false),
                 ("exec", false),
                 ("scripted", false),
                 ("typed", true)

@@ -5,7 +5,8 @@ fix-feed-missed-changes merged in), working tree with this change, 2026-10-23.
 
 ## Diagnosis evidence (owner's machine, metadata only)
 
-- Claude Code: 41 top-level transcripts with entrypoint `cli`, 2 with `sdk-cli`; 152
+- Claude Code: 41 top-level transcripts with entrypoint `cli`, 2 with `sdk-cli`; 12
+  without a prompt or reply, 5 of them `continued-in` stubs; 152
   sub-agent transcripts stored under `<session>/subagents/` (never imported); 5 index rows
   whose transcript Claude Code had deleted.
 - Codex: 82 rollouts: 55 `{"subagent": {"other": "guardian"}}`, 6 `thread_spawn`
