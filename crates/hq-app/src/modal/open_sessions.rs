@@ -35,6 +35,9 @@ const SUGGESTIONS: usize = 6;
 const UNDO_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
 /// The ⋯ slot, kept on every row so the ages line up.
 const MORE_SLOT: f32 = 28.0;
+/// The age column, wide enough for "52w" or "999w", so ages of any width (and the
+/// tags before them) line up.
+const AGE_WIDTH: f32 = 36.0;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filters {
@@ -674,6 +677,8 @@ impl OpenSessions {
             .child(
                 div()
                     .flex_none()
+                    .w(px(AGE_WIDTH))
+                    .text_right()
                     .text_size(px(12.5))
                     .text_color(hsla(chrome.muted))
                     .child(row.age.clone()),

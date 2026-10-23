@@ -14,14 +14,14 @@ Expected Result: closing the outside agent leaves the pane waiting with "Open he
 
 ## 3. Found on screen
 
-- [ ] 3.1 Rows that cannot be picked keep the tick's space. Verify on screen (window capture).
+- [x] 3.1 Rows that cannot be picked keep the tick's space, and ages sit in a fixed right-aligned column so tags line up. Verify on screen. Done: the owner checked it in the dev build ("ok good"), 2026-10-23; capture `research/evidence/add-sessions-running-elsewhere/owner-add-sessions-1352.png` (before the age column).
 - [x] 3.2 The host reports unlinked outside agents as they appear and as no longer offered when they link or exit. Verify with a host unit test of the scan comparison and an integration test with a stub agent that starts unlinked and exits. Done: `clients_hear_unlinked_agents_appear_change_and_go` and `clients_hear_outside_agents_come_and_go` pass; the integration test fails without the host change (timed out waiting for the change), 2026-10-23.
 
 Expected Result: no stale "pid N" rows; `cargo test` passes.
 
 ## 4. On screen and delivery
 
-- [ ] 4.1 On screen with a real Claude Code session in another terminal: add it, see "ext", close it there, see "Closed in the other terminal.", press "Open here". Evidence: window captures in `research/evidence/add-sessions-running-elsewhere/`.
+- [x] 4.1 On screen with a real Claude Code session in another terminal: add it, see "ext", close it there, see "Closed in the other terminal.", press "Open here". Done 2026-10-23: the owner added a real Claude Code 2.1.309 session running in Alacritty (sidebar "ext", pid 98706), closed it there, and continued it in the dev build (host log `session started … resume=true known_conversation=true`); the owner accepted. The "Closed in the other terminal." text itself was not captured.
 - [ ] 4.2 `./scripts/check` passes; `verification.md` written.
 - [ ] 4.3 After the owner accepts: sync and archive the change, push the branch, open the one PR, and report its URL and the verification record.
 
