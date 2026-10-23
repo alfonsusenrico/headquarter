@@ -9,11 +9,21 @@ terminal model received the request and dropped it.
 
 ## Expected Outcome
 
-- Text copied by an agent through OSC 52, such as a mouse selection in Claude Code,
-  lands on the system clipboard.
-- Agents still cannot read the clipboard.
+- Dragging over text selects it and copies it on release, the same way for every agent,
+  whether or not the agent uses the mouse. A click without a drag, and the wheel, still
+  reach an agent that uses the mouse. Cmd-C copies the selection too.
+- Text copied by an agent through OSC 52 (for example Claude Code's own copy commands)
+  lands on the system clipboard; agents still cannot read it.
 
 ## What Changes
+
+- `hq-app` (`terminal/view.rs`): Headquarter owns left-button drags: a press waits until
+  the pointer reaches another cell (a drag: Headquarter selects) or comes up (a click:
+  sent to an agent that uses the mouse, press and release together; otherwise it clears
+  the selection). Releasing a drag, a double-click (word) or a triple-click (line)
+  copies the selection. Before, a drag in an agent that uses the mouse sent only the
+  press and the release, never the movement, so nothing could be selected or copied
+  (found on screen 2026-10-23).
 
 - `hq-app` (`terminal/model.rs`): the terminal's clipboard-store events are kept
   (alacritty_terminal's default `Osc52::OnlyCopy`: copy accepted, read refused).
@@ -29,16 +39,24 @@ terminal model received the request and dropped it.
 ## Capabilities
 
 ### Modified Capabilities
-- `terminal-pane`: agent copies reach the clipboard.
+- `terminal-pane`: drags select and copy for every agent; agent copies reach the
+  clipboard.
 
 No project capability is added.
 
 ## Impact
 
-`crates/hq-app/src/terminal/model.rs`, `crates/hq-app/src/terminal/session.rs`.
+`crates/hq-app/src/terminal/model.rs`, `crates/hq-app/src/terminal/session.rs`,
+`crates/hq-app/src/terminal/view.rs`. Agents' own drag features (such as Claude Code's
+selection) are no longer used.
 Checked with Claude Code 2.1.309. Attaching replays no output (the host asks the agent
 to redraw), so an old copy cannot overwrite the clipboard when switching sessions.
 
+Decision (owner, 2026-10-23): Headquarter owns drags for every agent (rejected: passing
+drags to agents as Alacritty does, with Shift-drag for Headquarter; and a setting for
+both).
+
 ## Approval
 
-Approved by the owner on 2026-10-23 ("Approve").
+Approved by the owner on 2026-10-23 ("Approve"; widened to drag selection with
+auto-copy for every agent, "Headquarter owns drags").

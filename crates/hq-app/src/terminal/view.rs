@@ -86,6 +86,34 @@ struct Layout {
     rows: usize,
 }
 
+/// A left-button press, which becomes a drag once the pointer reaches another cell.
+#[derive(Debug, Clone, Copy)]
+struct Press {
+    row: usize,
+    column: usize,
+    shift: bool,
+}
+
+/// What releasing the left button does (fix-agent-clipboard-copy D1). Headquarter owns
+/// drags for every agent: a drag selects and its release copies. A click without a drag
+/// goes to an agent that uses the mouse (Shift keeps it here), else clears the selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Release {
+    Copy,
+    ClickToAgent,
+    ClearSelection,
+}
+
+fn release(selecting: bool, agent_uses_mouse: bool, shift: bool) -> Release {
+    if selecting {
+        Release::Copy
+    } else if agent_uses_mouse && !shift {
+        Release::ClickToAgent
+    } else {
+        Release::ClearSelection
+    }
+}
+
 pub struct TerminalView {
     session: Entity<TerminalSession>,
     focus: FocusHandle,
@@ -93,6 +121,8 @@ pub struct TerminalView {
     layout: Rc<Cell<Option<Layout>>>,
     /// Text the input method is composing, shown at the cursor until committed.
     marked: Option<String>,
+    /// Where the left button went down, until it comes up.
+    press: Option<Press>,
     selecting: bool,
     /// While set, the grid keeps its size, so the agent redraws once when the sidebar's
     /// divider is released rather than on every pixel of the drag.
@@ -119,6 +149,7 @@ impl TerminalView {
             options,
             layout: Rc::new(Cell::new(None)),
             marked: None,
+            press: None,
             selecting: false,
             size_held: false,
         }
@@ -279,14 +310,17 @@ impl TerminalView {
         let Some((row, column)) = self.cell_at(event.position) else {
             return;
         };
-        if self.mouse_reporting(cx) && !event.modifiers.shift {
-            self.report_mouse(0, row, column, true, cx);
-            return;
-        }
+        self.press = Some(Press {
+            row,
+            column,
+            shift: event.modifiers.shift,
+        });
+        // A double or triple click selects a word or a line at once; a single press
+        // waits to see whether it becomes a drag.
         let kind = match event.click_count {
             2 => SelectionType::Semantic,
             3 => SelectionType::Lines,
-            _ => SelectionType::Simple,
+            _ => return,
         };
         self.session.update(cx, |session, cx| {
             session.model_mut().start_selection(row, column, kind);
@@ -296,27 +330,60 @@ impl TerminalView {
     }
 
     fn mouse_move(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
+        if event.pressed_button != Some(MouseButton::Left) {
             return;
         }
-        if let Some((row, column)) = self.cell_at(event.position) {
-            self.session.update(cx, |session, cx| {
-                session.model_mut().extend_selection(row, column);
-                cx.notify();
+        let Some((row, column)) = self.cell_at(event.position) else {
+            return;
+        };
+        if !self.selecting {
+            let Some(press) = self.press else {
+                return;
+            };
+            if (press.row, press.column) == (row, column) {
+                return;
+            }
+            self.session.update(cx, |session, _| {
+                session
+                    .model_mut()
+                    .start_selection(press.row, press.column, SelectionType::Simple);
             });
+            self.selecting = true;
         }
+        self.session.update(cx, |session, cx| {
+            session.model_mut().extend_selection(row, column);
+            cx.notify();
+        });
     }
 
     fn mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.selecting {
-            self.selecting = false;
-            return;
+        let press = self.press.take();
+        let shift = press.is_some_and(|press| press.shift);
+        match release(self.selecting, self.mouse_reporting(cx), shift) {
+            Release::Copy => {
+                self.selecting = false;
+                self.copy_selection(cx);
+            }
+            Release::ClickToAgent => {
+                self.clear_selection(cx);
+                // The press was held back to tell a click from a drag; both go now.
+                if let Some(press) = press {
+                    let (row, column) = self
+                        .cell_at(event.position)
+                        .unwrap_or((press.row, press.column));
+                    self.report_mouse(0, press.row, press.column, true, cx);
+                    self.report_mouse(0, row, column, false, cx);
+                }
+            }
+            Release::ClearSelection => self.clear_selection(cx),
         }
-        if self.mouse_reporting(cx)
-            && let Some((row, column)) = self.cell_at(event.position)
-        {
-            self.report_mouse(0, row, column, false, cx);
-        }
+    }
+
+    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.model_mut().clear_selection();
+            cx.notify();
+        });
     }
 
     fn scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -838,6 +905,23 @@ impl EntityInputHandler for TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drags_select_and_copy_while_clicks_reach_the_agent() {
+        assert_eq!(
+            release(true, true, false),
+            Release::Copy,
+            "a drag copies, mouse or not"
+        );
+        assert_eq!(release(true, false, false), Release::Copy);
+        assert_eq!(release(false, true, false), Release::ClickToAgent);
+        assert_eq!(
+            release(false, true, true),
+            Release::ClearSelection,
+            "Shift keeps a click here"
+        );
+        assert_eq!(release(false, false, false), Release::ClearSelection);
+    }
 
     #[test]
     fn line_height_comes_from_the_font_like_alacritty() {
