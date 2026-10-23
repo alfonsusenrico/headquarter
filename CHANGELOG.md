@@ -2,6 +2,20 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.3 (2026-10-23)
+
+- Drag a screenshot onto a session and the agent gets it: dropped files are typed as
+  their paths, escaped like Terminal.app does, so Claude Code attaches images just as it
+  does in Alacritty.
+- Groups have colours. Each header gets a dot and a stronger title, and its sessions sit
+  beside a thin line of the same colour. New groups pick a soft colour on their own;
+  click the dot to choose another.
+- A session still running in another terminal shows just "ext" and its age. Its status,
+  "Needs you" and notifications come back once it runs in Headquarter.
+- Settings copied from Alacritty now look like Alacritty: a font style the font doesn't
+  have (such as bold "Heavy" in JetBrains Mono) falls back to your normal face instead
+  of the nearest heavy one, and lines are spaced by the font itself.
+
 ## 0.1.2 (2026-10-23)
 
 - Add sessions: a session still running in another terminal can now be added. It
