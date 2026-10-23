@@ -29,3 +29,8 @@ only once fix-agent-start-path is archived; archive that change first.
 - On screen (task 2.2): waits for the owner's test build.
 - A hosted agy turn ending triggers a read 10 s later: covered by the same path as Codex
   (`codex_turn_ended`), not by its own test.
+
+## On screen and final check (2026-10-23)
+
+- The owner confirmed it on the test build (`test/combined-build`).
+- `./scripts/check` on the branch as pushed: passed, 380 tests, 18 OpenSpec items (at a1cf286).

@@ -11,7 +11,7 @@ Expected Result: agy's usage is read like Claude's and Codex's.
 ## 2. Showing it
 
 - [x] 2.1 `ring_windows`: the rings and their tooltip follow the pool nearest its limit. Verify with `agy_rings_follow_the_pool_nearest_its_limit`. Done (2026-10-23).
-- [ ] 2.2 On screen: agy's ring filled, its tooltip and details naming the pools, Refresh. Evidence: the owner's check.
+- [x] 2.2 On screen: agy's ring filled, its tooltip and details naming the pools, Refresh. Evidence: the owner's check. Done: the owner confirmed it on the test build (`test/combined-build`), 2026-10-23.
 
 Expected Result: agy's ring and details show its pools.
 
