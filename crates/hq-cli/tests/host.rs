@@ -1355,6 +1355,81 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
         .any(|window| window == needle.as_bytes())
 }
 
+/// Claude Code writes a conversation's title after its first message, so the title
+/// often arrives in a later import pass than the conversation, with no new activity.
+#[test]
+fn a_title_found_later_reaches_subscribers() {
+    let mut env = TestEnv::new("retitle");
+    let path = env.claude_transcript("conv-late", "placeholder");
+    std::fs::write(
+        &path,
+        format!(
+            "{{\"type\":\"user\",\"cwd\":\"{}\",\"message\":{{\"content\":\"PROMPT-TEXT\"}}}}\n",
+            env.work().display()
+        ),
+    )
+    .unwrap();
+    TestEnv::age_file(&path, 1);
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+    let mut daemon = env.command();
+    daemon.env("HQ_HISTORY_INTERVAL_SECS", "1");
+    env.daemons.push(
+        daemon
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    wait_until("the conversation imported", || {
+        env.sessions()
+            .iter()
+            .any(|session| session.agent_session_id.as_deref() == Some("conv-late"))
+    });
+
+    let paths = hq_client::HostPaths::in_dir(env.host_dir());
+    let (mut feed, _) = hq_client::SessionFeed::open(&paths, false).unwrap();
+    let (changes, changed) = mpsc::channel();
+    std::thread::spawn(move || {
+        while let Ok(Some(change)) = feed.next_change() {
+            if let hq_client::Change::Session(session) = change
+                && changes.send(session).is_err()
+            {
+                return;
+            }
+        }
+    });
+
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(
+        file,
+        "{{\"type\":\"ai-title\",\"aiTitle\":\"Late title\",\"sessionId\":\"conv-late\"}}"
+    )
+    .unwrap();
+    // Same activity as before: only the title changed.
+    file.set_modified(modified).unwrap();
+    drop(file);
+
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let session = changed
+            .recv_timeout(left)
+            .expect("the new title is reported");
+        if session.agent_session_id.as_deref() == Some("conv-late") {
+            assert_eq!(session.title.as_deref(), Some("Late title"));
+            break;
+        }
+    }
+}
+
 /// The first list after the host starts already holds past conversations, so Add
 /// sessions never opens empty while the import runs.
 #[test]

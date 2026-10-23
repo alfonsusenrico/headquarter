@@ -63,7 +63,7 @@ system folders (`absent_agent`).
   setup and edits only setup's keys on a rerun (`toml_edit`, layout and comments kept).
 - `crates/hq-daemon`: the host. It owns PTYs, the index, and `agentd.sock` and
   `hooks.sock` in `~/.local/share/headquarter/`. `host/history.rs` imports agent
-  history every 60 s, `host/outside.rs` links outside agents every 5 s,
+  history every 60 s (`HQ_HISTORY_INTERVAL_SECS` shortens it in tests), `host/outside.rs` links outside agents every 5 s,
   `host/close.rs` closes a session with the agent's own keys, and `host/usage.rs`
   reads usage only while a client shows it (`HQ_USAGE_INTERVAL_SECS` shortens the 5-minute Codex interval in tests).
 - `crates/hq-client`: the host connection shared by the CLI and the app; it starts the

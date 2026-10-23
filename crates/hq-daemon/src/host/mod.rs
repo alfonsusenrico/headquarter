@@ -58,6 +58,8 @@ pub struct HostOptions {
     pub idle_exit: Duration,
     /// How often Codex usage is read while a client shows usage.
     pub usage_interval: Duration,
+    /// How often the agents' history is read again.
+    pub history_interval: Duration,
 }
 
 #[derive(Debug)]
@@ -117,6 +119,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         helper_exe: options.helper_exe,
         idle_exit: options.idle_exit,
         usage_interval: options.usage_interval,
+        history_interval: options.history_interval,
         store: Mutex::new(store),
         live: Mutex::new(HashMap::new()),
         subscribers: Mutex::new(Vec::new()),
@@ -221,6 +224,7 @@ struct Host {
     helper_exe: PathBuf,
     idle_exit: Duration,
     usage_interval: Duration,
+    history_interval: Duration,
     store: Mutex<Store>,
     live: Mutex<HashMap<String, Arc<Hosted>>>,
     subscribers: Mutex<Vec<Subscriber>>,

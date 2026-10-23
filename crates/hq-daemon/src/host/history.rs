@@ -16,8 +16,6 @@ use hq_store::{Origin, SessionRow, Store, StoreError};
 use super::{Host, lock};
 use crate::session::Hosted;
 
-/// How often history is re-read; spec: outside activity shows within a minute.
-const HISTORY_INTERVAL: Duration = Duration::from_secs(60);
 /// The longest a list request waits for the first import after the host starts.
 pub(super) const FIRST_IMPORT_WAIT: Duration = Duration::from_secs(10);
 
@@ -39,7 +37,7 @@ impl Host {
                 self.first_import.signal.notify_all();
             }
             drop(done);
-            thread::sleep(HISTORY_INTERVAL);
+            thread::sleep(self.history_interval);
         }
     }
 
@@ -81,7 +79,31 @@ impl Host {
                 Err(_) => failed += 1,
             }
         }
-        *lock(&self.titles) = titles;
+        let retitled_conversations: Vec<(Agent, String)> = {
+            let mut known = lock(&self.titles);
+            let changed = titles
+                .iter()
+                .filter(|(conversation, title)| known.get(*conversation) != Some(*title))
+                .map(|(conversation, _)| conversation.clone())
+                .chain(
+                    known
+                        .keys()
+                        .filter(|conversation| !titles.contains_key(*conversation))
+                        .cloned(),
+                )
+                .collect();
+            *known = titles;
+            changed
+        };
+        let retitled: Vec<String> = {
+            let store = lock(&self.store);
+            retitled_conversations
+                .iter()
+                .filter_map(|(agent, id)| store.find_by_conversation(*agent, id).ok().flatten())
+                .map(|row| row.id)
+                .filter(|id| !moved.contains(id))
+                .collect()
+        };
         *lock(&self.busy_agy) = busy_agy;
         self.log.line(&format!(
             "history import conversations={} added={added} updated={} parsed={} skipped={} failed={failed} took_ms={}",
@@ -91,8 +113,10 @@ impl Host {
             report.skipped,
             started.elapsed().as_millis()
         ));
-        for id in moved {
-            self.broadcast(&id);
+        // A title can change while the conversation's activity does not, and clients
+        // that listed before this pass have none yet.
+        for id in moved.iter().chain(&retitled) {
+            self.broadcast(id);
         }
     }
 
