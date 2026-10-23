@@ -38,6 +38,11 @@ pub struct FontSettings {
     pub bold_weight: Option<u16>,
     pub italic_weight: Option<u16>,
     pub bold_italic_weight: Option<u16>,
+    /// The bold, italic and bold italic style names as written; the app looks them up
+    /// among the family's faces as Alacritty does on macOS (fix-font-styles-like-alacritty).
+    pub bold_style: Option<String>,
+    pub italic_style: Option<String>,
+    pub bold_italic_style: Option<String>,
 }
 
 /// Colours as `0xRRGGBB`. `None` keeps the built-in theme's colour.
@@ -339,22 +344,30 @@ pub(crate) fn build(
         appearance.font.family = normal.family.map(toml::Spanned::into_inner);
         appearance.font.normal_weight = normal.style.as_deref().map(weight_of);
     }
+    let normal_family = appearance.font.family.clone();
+    let font = &mut appearance.font;
     let faces = [
-        (raw.font.bold, &mut appearance.font.bold_weight),
-        (raw.font.italic, &mut appearance.font.italic_weight),
+        (raw.font.bold, &mut font.bold_weight, &mut font.bold_style),
+        (
+            raw.font.italic,
+            &mut font.italic_weight,
+            &mut font.italic_style,
+        ),
         (
             raw.font.bold_italic,
-            &mut appearance.font.bold_italic_weight,
+            &mut font.bold_italic_weight,
+            &mut font.bold_italic_style,
         ),
     ];
-    for (face, weight) in faces {
+    for (face, weight, style) in faces {
         let Some(face) = face else {
             continue;
         };
         *weight = face.style.as_deref().map(weight_of);
+        *style = face.style.clone();
         // One family is used for every style; a different one is reported, not used.
         if let Some(family) = face.family
-            && Some(family.get_ref()) != appearance.font.family.as_ref()
+            && Some(family.get_ref()) != normal_family.as_ref()
         {
             warnings.push(problem(
                 family.span().start,

@@ -6,7 +6,8 @@ use std::time::Duration;
 use alacritty_terminal::vte::ansi::CursorShape;
 use gpui::{App, FontWeight, SharedString, Window, WindowBackgroundAppearance};
 use hq_config::{
-    Appearance, Decorations, Notifications, OptionAsAlt, Settings, SettingsError, SettingsWatcher,
+    Appearance, Decorations, FontSettings, Notifications, OptionAsAlt, SettingsError,
+    SettingsWatcher,
 };
 
 use crate::terminal::keys::Binding;
@@ -51,8 +52,13 @@ pub fn read(
 ) -> (Appearance, Option<String>) {
     match watcher.current() {
         Ok(settings) => {
-            let note = warnings_note(&settings);
-            (settings.appearance, note)
+            // A style the font lacks falls back quietly, as in Alacritty; only the log
+            // says so (owner, 2026-10-23).
+            if let Some(note) = font_note(&settings.appearance, &has_face) {
+                log::warn!("{note}");
+            }
+            let notes: Vec<String> = settings.warnings.iter().map(ToString::to_string).collect();
+            (settings.appearance, settings_note(&notes))
         }
         Err(error) => (
             last_good.cloned().unwrap_or_default(),
@@ -65,9 +71,9 @@ fn error_note(error: &SettingsError) -> String {
     format!("Settings not applied: {error}")
 }
 
-fn warnings_note(settings: &Settings) -> Option<String> {
-    let first = settings.warnings.first()?;
-    let more = settings.warnings.len() - 1;
+fn settings_note(notes: &[String]) -> Option<String> {
+    let first = notes.first()?;
+    let more = notes.len() - 1;
     Some(if more == 0 {
         format!("Settings: {first}")
     } else {
@@ -75,22 +81,120 @@ fn warnings_note(settings: &Settings) -> Option<String> {
     })
 }
 
+/// Whether the font family has a face with exactly this style name; `None` when that
+/// cannot be told. Alacritty looks styles up this way on macOS (crossfont); on Linux it
+/// takes fontconfig's nearest match, which GPUI does too, so nothing is checked there.
+type FaceLookup = dyn Fn(&str, &str) -> Option<bool>;
+
+#[cfg(target_os = "macos")]
+fn has_face(family: &str, style: &str) -> Option<bool> {
+    let descriptors = core_text::font_collection::create_for_family(family)?.get_descriptors()?;
+    Some(
+        descriptors
+            .iter()
+            .any(|descriptor| descriptor.style_name() == style),
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn has_face(_family: &str, _style: &str) -> Option<bool> {
+    None
+}
+
+/// The bold, italic or bold italic style as the settings file names it.
+struct NamedStyle<'a> {
+    key: &'static str,
+    style: Option<&'a str>,
+    weight: Option<u16>,
+    default_weight: FontWeight,
+    slanted: bool,
+}
+
+fn named_styles(font: &FontSettings) -> [NamedStyle<'_>; 3] {
+    let defaults = PaneOptions::default();
+    [
+        NamedStyle {
+            key: "font.bold",
+            style: font.bold_style.as_deref(),
+            weight: font.bold_weight,
+            default_weight: defaults.bold_weight,
+            slanted: false,
+        },
+        NamedStyle {
+            key: "font.italic",
+            style: font.italic_style.as_deref(),
+            weight: font.italic_weight,
+            default_weight: defaults.italic_weight,
+            slanted: true,
+        },
+        NamedStyle {
+            key: "font.bold_italic",
+            style: font.bold_italic_style.as_deref(),
+            weight: font.bold_italic_weight,
+            default_weight: defaults.bold_italic_weight,
+            slanted: true,
+        },
+    ]
+}
+
+fn family_of(font: &FontSettings) -> String {
+    font.family
+        .clone()
+        .unwrap_or_else(|| default_font().to_owned())
+}
+
+/// Whether a style falls back to the normal face: its name names no face of the family
+/// (fix-font-styles-like-alacritty D1).
+fn falls_back(family: &str, style: Option<&str>, lookup: &FaceLookup) -> bool {
+    style.is_some_and(|style| lookup(family, style) == Some(false))
+}
+
+/// One note naming every style the font has no face for (D3).
+fn font_note(appearance: &Appearance, lookup: &FaceLookup) -> Option<String> {
+    let family = family_of(&appearance.font);
+    let missing: Vec<String> = named_styles(&appearance.font)
+        .into_iter()
+        .filter(|named| falls_back(&family, named.style, lookup))
+        .map(|named| format!("{} \"{}\"", named.key, named.style.unwrap_or_default()))
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{} not in {family}; that text uses the normal face, as in Alacritty",
+        missing.join(" and ")
+    ))
+}
+
 pub fn pane_options(appearance: &Appearance) -> PaneOptions {
+    pane_options_with(appearance, &has_face)
+}
+
+fn pane_options_with(appearance: &Appearance, lookup: &FaceLookup) -> PaneOptions {
     let defaults = PaneOptions::default();
     let weight = |weight: Option<u16>, default: FontWeight| {
         weight.map_or(default, |weight| FontWeight(f32::from(weight)))
     };
     let font = &appearance.font;
+    let family = family_of(font);
+    let normal_weight = weight(font.normal_weight, defaults.normal_weight);
+    // Each style as (weight, slanted).
+    let [bold, italic, bold_italic] = named_styles(font).map(|named| {
+        if falls_back(&family, named.style, lookup) {
+            (normal_weight, false)
+        } else {
+            (weight(named.weight, named.default_weight), named.slanted)
+        }
+    });
     PaneOptions {
-        font_family: font
-            .family
-            .clone()
-            .map_or_else(|| SharedString::from(default_font()), SharedString::from),
+        font_family: SharedString::from(family),
         font_size: font.size.unwrap_or(defaults.font_size),
-        normal_weight: weight(font.normal_weight, defaults.normal_weight),
-        bold_weight: weight(font.bold_weight, defaults.bold_weight),
-        italic_weight: weight(font.italic_weight, defaults.italic_weight),
-        bold_italic_weight: weight(font.bold_italic_weight, defaults.bold_italic_weight),
+        normal_weight,
+        bold_weight: bold.0,
+        italic_weight: italic.0,
+        bold_italic_weight: bold_italic.0,
+        italic_slanted: italic.1,
+        bold_italic_slanted: bold_italic.1,
         padding: (
             f32::from(appearance.padding.0),
             f32::from(appearance.padding.1),
@@ -242,9 +346,78 @@ mod tests {
         .appearance
     }
 
+    /// JetBrainsMono Nerd Font's faces as Core Text lists them on the owner's Mac.
+    fn jetbrains(family: &str, style: &str) -> Option<bool> {
+        let faces = [
+            "Regular",
+            "Italic",
+            "Medium",
+            "Medium Italic",
+            "Bold",
+            "ExtraBold",
+        ];
+        (family == "JetBrainsMono Nerd Font").then(|| faces.contains(&style))
+    }
+
+    fn unknown(_family: &str, _style: &str) -> Option<bool> {
+        None
+    }
+
+    #[test]
+    fn styles_the_font_lacks_use_the_normal_face_like_alacritty() {
+        // The owner's file: bold "Heavy", italic "Italic", bold italic "Heavy Italic".
+        let appearance = owner_settings();
+        let options = pane_options_with(&appearance, &jetbrains);
+        assert_eq!(options.bold_weight, FontWeight::MEDIUM, "no Heavy face");
+        assert_eq!(options.bold_italic_weight, FontWeight::MEDIUM);
+        assert!(!options.bold_italic_slanted, "Alacritty draws it upright");
+        assert_eq!(options.italic_weight, FontWeight::NORMAL, "Italic exists");
+        assert!(options.italic_slanted);
+        assert_eq!(
+            font_note(&appearance, &jetbrains).as_deref(),
+            Some(
+                "font.bold \"Heavy\" and font.bold_italic \"Heavy Italic\" not in JetBrainsMono Nerd Font; that text uses the normal face, as in Alacritty"
+            )
+        );
+    }
+
+    #[test]
+    fn styles_the_font_has_keep_their_face() {
+        let mut appearance = owner_settings();
+        appearance.font.bold_style = Some("ExtraBold".into());
+        appearance.font.bold_weight = Some(800);
+        let options = pane_options_with(&appearance, &jetbrains);
+        assert_eq!(options.bold_weight, FontWeight::EXTRA_BOLD);
+        let note = font_note(&appearance, &jetbrains).unwrap_or_default();
+        assert!(
+            !note.contains("font.bold \""),
+            "no mention of a face the font has: {note}"
+        );
+        let unchecked = pane_options_with(&owner_settings(), &unknown);
+        assert_eq!(
+            unchecked.bold_weight,
+            FontWeight::BLACK,
+            "nothing changes where faces cannot be listed (Linux, unknown family)"
+        );
+        assert_eq!(font_note(&owner_settings(), &unknown), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn core_text_lists_the_faces_of_a_family() {
+        // Menlo ships with macOS.
+        assert_eq!(has_face("Menlo", "Bold"), Some(true));
+        assert_eq!(has_face("Menlo", "Heavy"), Some(false));
+        assert_eq!(
+            has_face("Menlo", "bold"),
+            Some(false),
+            "exact names, as Alacritty"
+        );
+    }
+
     #[test]
     fn owner_settings_become_pane_options() {
-        let options = pane_options(&owner_settings());
+        let options = pane_options_with(&owner_settings(), &unknown);
         assert_eq!(options.font_family.as_ref(), "JetBrainsMono Nerd Font");
         assert_eq!(options.font_size, 14.0);
         assert_eq!(options.normal_weight, FontWeight::MEDIUM);

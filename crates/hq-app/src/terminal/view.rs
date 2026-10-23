@@ -33,6 +33,9 @@ pub struct PaneOptions {
     pub bold_weight: FontWeight,
     pub italic_weight: FontWeight,
     pub bold_italic_weight: FontWeight,
+    /// False when the italic or bold italic style falls back to the upright normal face.
+    pub italic_slanted: bool,
+    pub bold_italic_slanted: bool,
     pub padding: (f32, f32),
     pub alt_is_meta: bool,
     pub bindings: Vec<Binding>,
@@ -53,6 +56,8 @@ impl Default for PaneOptions {
             bold_weight: FontWeight::BOLD,
             italic_weight: FontWeight::NORMAL,
             bold_italic_weight: FontWeight::BOLD,
+            italic_slanted: true,
+            bold_italic_slanted: true,
             padding: (12.0, 10.0),
             alt_is_meta: false,
             bindings: Vec::new(),
@@ -501,12 +506,25 @@ impl Metrics {
             .advance(font_id, font_size, 'm')
             .map(|advance| advance.width)
             .unwrap_or(font_size * 0.6);
+        let ascent = f32::from(text_system.ascent(font_id, font_size));
+        let descent = f32::from(text_system.descent(font_id, font_size));
         Metrics {
             cell_width,
-            // Line spacing as common terminals use it: about 1.2 times the font size.
-            line_height: (font_size * 1.2).round(),
+            line_height: px(line_height(ascent, descent, options.font_size)),
             font_size,
         }
+    }
+}
+
+/// The line height from the font's own ascent and descent, each rounded, as Alacritty
+/// does (fix-font-styles-like-alacritty D4); 1.2 times the size when the font reports
+/// none. GPUI does not expose the line gap, which terminal fonts commonly set to 0.
+fn line_height(ascent: f32, descent: f32, font_size: f32) -> f32 {
+    let height = ascent.abs().round() + descent.abs().round();
+    if height > 0.0 {
+        height
+    } else {
+        (font_size * 1.2).round()
     }
 }
 
@@ -525,10 +543,10 @@ fn styled_font(options: &PaneOptions, style: &TextStyle) -> Font {
             (false, true) => options.italic_weight,
             (true, true) => options.bold_italic_weight,
         },
-        style: if style.italic {
-            FontStyle::Italic
-        } else {
-            FontStyle::Normal
+        style: match (style.bold, style.italic) {
+            (false, true) if options.italic_slanted => FontStyle::Italic,
+            (true, true) if options.bold_italic_slanted => FontStyle::Italic,
+            _ => FontStyle::Normal,
         },
         ..regular_font(options)
     }
@@ -820,6 +838,22 @@ impl EntityInputHandler for TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn line_height_comes_from_the_font_like_alacritty() {
+        // JetBrains Mono at 14: ascent 1020 and descent 300 per 1000 units.
+        assert_eq!(line_height(14.28, 4.2, 14.0), 18.0);
+        assert_eq!(
+            line_height(14.28, -4.2, 14.0),
+            18.0,
+            "either sign of descent"
+        );
+        assert_eq!(
+            line_height(0.0, 0.0, 14.0),
+            17.0,
+            "no metrics: 1.2 times the size"
+        );
+    }
 
     #[test]
     fn grid_size_counts_whole_cells() {
