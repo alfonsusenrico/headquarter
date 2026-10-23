@@ -12,6 +12,9 @@ pub struct KnownAgent {
     pub home_dirs: &'static [&'static str],
     /// Whether Headquarter can host this agent's sessions yet.
     pub hostable: bool,
+    /// The vendor's install instructions, for hosted agents not installed yet.
+    #[serde(skip)]
+    pub install_url: Option<&'static str>,
     /// The vendor's own published mark in its colours, fetched once onto the owner's
     /// machine and drawn unaltered; never bundled (redesign-session-modal D5).
     #[serde(skip)]
@@ -40,6 +43,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["claude"],
         home_dirs: &[".claude/local", ".local/bin"],
         hostable: true,
+        install_url: Some("https://code.claude.com/docs/en/setup"),
         mark_color: file("https://assets.claude.com/95a868946ac8a31e5ff832e2899f294aa368b836.png"),
         // Anthropic publishes the spark in its colour only.
         mark_mono: None,
@@ -50,6 +54,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["codex"],
         home_dirs: &[],
         hostable: true,
+        install_url: Some("https://developers.openai.com/codex/cli"),
         mark_color: file("https://developers.openai.com/favicon.png"),
         mark_mono: Some(MarkSource {
             url: "https://cdn.openai.com/brand/OpenAI-Logos-2025.zip",
@@ -62,6 +67,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["agy"],
         home_dirs: &[".local/bin"],
         hostable: true,
+        install_url: Some("https://antigravity.google/docs/cli"),
         mark_color: file(
             "https://antigravity.google/assets/image/brand/antigravity-icon__full-color.svg",
         ),
@@ -75,6 +81,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["gemini"],
         home_dirs: &[],
         hostable: false,
+        install_url: None,
         mark_color: None,
         mark_mono: None,
     },
@@ -84,6 +91,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["opencode"],
         home_dirs: &[".opencode/bin"],
         hostable: false,
+        install_url: None,
         mark_color: None,
         mark_mono: None,
     },
@@ -93,6 +101,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["muse"],
         home_dirs: &[".local/bin"],
         hostable: false,
+        install_url: None,
         mark_color: None,
         mark_mono: None,
     },
@@ -102,6 +111,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["amp"],
         home_dirs: &[".amp/bin"],
         hostable: false,
+        install_url: None,
         mark_color: None,
         mark_mono: None,
     },
@@ -111,6 +121,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["cursor-agent"],
         home_dirs: &[".local/bin"],
         hostable: false,
+        install_url: None,
         mark_color: None,
         mark_mono: None,
     },
@@ -120,6 +131,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["copilot"],
         home_dirs: &[],
         hostable: false,
+        install_url: None,
         mark_color: None,
         mark_mono: None,
     },
@@ -129,6 +141,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["goose"],
         home_dirs: &[".local/bin"],
         hostable: false,
+        install_url: None,
         mark_color: None,
         mark_mono: None,
     },
@@ -138,6 +151,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["crush"],
         home_dirs: &[],
         hostable: false,
+        install_url: None,
         mark_color: None,
         mark_mono: None,
     },
@@ -147,6 +161,7 @@ pub const KNOWN_AGENTS: &[KnownAgent] = &[
         executables: &["qwen"],
         home_dirs: &[],
         hostable: false,
+        install_url: None,
         mark_color: None,
         mark_mono: None,
     },

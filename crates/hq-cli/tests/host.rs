@@ -1355,6 +1355,26 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
         .any(|window| window == needle.as_bytes())
 }
 
+/// The first list after the host starts already holds past conversations, so Add
+/// sessions never opens empty while the import runs.
+#[test]
+fn the_first_list_waits_for_the_first_history_import() {
+    let mut env = TestEnv::new("firstlist");
+    // Enough history that the import is still running when the first list comes in.
+    for index in 0..1500 {
+        env.claude_transcript(&format!("conv-{index}"), "Earlier work");
+    }
+    env.claude_transcript("conv-first", "First work");
+    env.start_daemon();
+    let sessions = env.sessions();
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session.agent_session_id.as_deref() == Some("conv-first")),
+        "{sessions:?}"
+    );
+}
+
 #[test]
 fn history_is_imported_with_titles_never_stored() {
     let mut env = TestEnv::new("history");

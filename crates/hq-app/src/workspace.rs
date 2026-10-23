@@ -61,6 +61,8 @@ const ROW_GAP: f32 = 8.0;
 /// The ✕ that slides in on hover, and how long it takes.
 const CLOSE_SLOT: f32 = 22.0;
 const SLIDE: Duration = Duration::from_millis(150);
+/// The agents' marks in the pane while the host starts.
+const STARTING_MARK: f32 = 44.0;
 /// One breath of a working session's "working" word, out and back.
 const BREATH: Duration = Duration::from_secs(2);
 /// A usage ring and the gap between rings.
@@ -147,6 +149,9 @@ struct HoverSlide {
 
 pub struct Workspace {
     sessions: Vec<SessionInfo>,
+    /// Whether the host has answered with its first list; until then the sidebar shows
+    /// the agents checking in rather than an empty list.
+    listed: bool,
     /// The owner's groups, in the owner's order.
     groups: Vec<GroupInfo>,
     /// The owner's home folder, labelled `~` on rows.
@@ -315,6 +320,7 @@ impl Workspace {
         let mut workspace = Workspace {
             sidebar_view,
             sessions: Vec::new(),
+            listed: false,
             groups: Vec::new(),
             home: hq_signals::paths::home().map(|home| home.to_string_lossy().into_owned()),
             selected: None,
@@ -602,6 +608,7 @@ impl Workspace {
                 self.sessions = sessions;
                 self.groups = groups;
                 self.usage = usage;
+                self.listed = true;
                 self.show_kept_session(window, cx);
             }
             ListEvent::Usage(usage) => self.usage = usage,
@@ -619,11 +626,18 @@ impl Workspace {
             ListEvent::Details { session, details } => {
                 self.details.insert(session, details);
             }
-            ListEvent::Failed(message) => self.message = Some(message),
+            ListEvent::Failed(message) => {
+                self.listed = true;
+                self.message = Some(message);
+            }
         }
         if let Some(Modal::Open { view: window, .. }) = &self.modal {
             let sessions = self.sessions.clone();
-            window.update(cx, |window, cx| window.update_sessions(sessions, cx));
+            let loaded = self.listed;
+            window.update(cx, |window, cx| {
+                window.set_loaded(loaded, cx);
+                window.update_sessions(sessions, cx);
+            });
         }
         cx.notify();
     }
@@ -986,7 +1000,9 @@ impl Workspace {
             self.render_items(&items, window, cx)
         };
         let header = (!rail).then(|| self.render_header(cx));
-        let empty_state = (empty && !rail).then(|| self.render_empty_sidebar(cx));
+        // While the host starts, the pane shows it; the sidebar stays quiet.
+        let empty_state = (empty && !rail && self.listed)
+            .then(|| self.render_empty_sidebar(cx).into_any_element());
         let interrupted_note = (!rail).then(|| self.render_interrupted_note(cx)).flatten();
         let usage_strip = if rail {
             self.render_rail_usage(cx)
@@ -1242,6 +1258,8 @@ impl Workspace {
         let marks = self.marks.clone();
         let open =
             cx.new(|cx| OpenSessions::new(sessions, agents, home, chrome, live, marks, window, cx));
+        let loaded = self.listed;
+        open.update(cx, |open, cx| open.set_loaded(loaded, cx));
         let events =
             cx.subscribe_in(
                 &open,
@@ -2550,6 +2568,15 @@ impl Workspace {
             Pane::Terminal { view, .. } => div()
                 .size_full()
                 .child(view.clone().cached(StyleRefinement::default().size_full()))
+                .into_any_element(),
+            Pane::Empty if !self.listed => centred
+                .child(crate::loading::agents_checking_in(
+                    "workspace-starting",
+                    &self.marks,
+                    STARTING_MARK,
+                    chrome,
+                    "Starting Headquarter…",
+                ))
                 .into_any_element(),
             Pane::Empty => centred
                 .child(note(if self.items().is_empty() {
