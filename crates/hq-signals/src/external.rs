@@ -174,7 +174,7 @@ pub fn scan(
             agent: Agent::Agy,
             pid: Some(process.pid),
             cwd: process.cwd.clone(),
-            session_id: None,
+            session_id: process.conversation.clone(),
             started_at: Some(process.started_at),
             last_activity_at: agy_activity,
             status: None,
@@ -326,6 +326,8 @@ struct AgentProcess {
     pid: u32,
     cwd: Option<String>,
     started_at: u64,
+    /// The conversation named on the command line (`agy --conversation <id>`).
+    conversation: Option<String>,
 }
 
 /// Kills a process the host started that ignored being hung up. Only ever called with
@@ -410,11 +412,26 @@ fn agent_processes(system: &System, agents: &[Agent]) -> Vec<AgentProcess> {
                 pid,
                 cwd: process.cwd().map(|cwd| cwd.to_string_lossy().into_owned()),
                 started_at: process.start_time(),
+                conversation: (agent == Agent::Agy)
+                    .then(|| named_conversation(&args))
+                    .flatten(),
             })
         })
         .collect();
     found.sort_by_key(|process| process.pid);
     found
+}
+
+/// The value of `--conversation <id>` or `--conversation=<id>`, which agy resumes.
+fn named_conversation(args: &[String]) -> Option<String> {
+    args.iter().enumerate().find_map(|(index, arg)| {
+        match arg.strip_prefix("--conversation") {
+            Some("") => args.get(index + 1).cloned(),
+            Some(rest) => rest.strip_prefix('=').map(str::to_owned),
+            None => None,
+        }
+        .filter(|id| !id.is_empty() && !id.starts_with('-'))
+    })
 }
 
 /// Codex runs background services under the same executable name; they are not
@@ -436,6 +453,7 @@ pub fn codex_conversation(cwd: &str, started_at_secs: u64) -> Option<String> {
         pid: 0,
         cwd: Some(cwd.to_owned()),
         started_at: started_at_secs,
+        conversation: None,
     };
     codex_session(&process, &rollouts).session_id
 }
@@ -792,12 +810,32 @@ mod tests {
     }
 
     #[test]
+    fn agy_names_its_conversation_on_the_command_line() {
+        let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            named_conversation(&args(&["agy", "--conversation", "conv-1"])).as_deref(),
+            Some("conv-1")
+        );
+        assert_eq!(
+            named_conversation(&args(&["agy", "--conversation=conv-1"])).as_deref(),
+            Some("conv-1")
+        );
+        assert_eq!(named_conversation(&args(&["agy", "-c"])), None);
+        assert_eq!(named_conversation(&args(&["agy", "--conversation"])), None);
+        assert_eq!(
+            named_conversation(&args(&["agy", "--conversation", "--mode"])),
+            None
+        );
+    }
+
+    #[test]
     fn codex_session_matches_rollout_by_folder_and_time() {
         let process = AgentProcess {
             agent: Agent::Codex,
             pid: 5,
             cwd: Some("/w".into()),
             started_at: 1_000,
+            conversation: None,
         };
         let rollouts = vec![
             Rollout {

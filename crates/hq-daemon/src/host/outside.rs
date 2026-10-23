@@ -41,6 +41,15 @@ pub(super) struct OutsideView {
     claude_background: Vec<ExternalSession>,
 }
 
+/// An agy conversation as agy's own index lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AgyConversation {
+    pub folder: String,
+    pub id: String,
+    /// Unix milliseconds.
+    pub last_activity_at: u64,
+}
+
 /// Asks the scan loop for a scan at the fast pace now: a client started showing the
 /// sessions or listed them.
 #[derive(Default)]
@@ -142,17 +151,30 @@ impl Host {
         }
         self.refresh_background(&report.hosted_claude);
         self.notice_claude_turns_elsewhere(&report.sessions);
-        let busy_agy = lock(&self.busy_agy).clone();
+        let agy_conversations = lock(&self.agy_conversations).clone();
+        let agy_folders: Vec<&str> = report
+            .sessions
+            .iter()
+            .filter(|session| session.agent == Agent::Agy)
+            .filter_map(|session| session.cwd.as_deref())
+            .collect();
+        let shared_folders: HashSet<String> = agy_folders
+            .iter()
+            .filter(|folder| agy_folders.iter().filter(|other| other == folder).count() > 1)
+            .map(|folder| (*folder).to_owned())
+            .collect();
 
         let mut linked = HashMap::new();
         let mut unlinked = Vec::new();
         for session in report.sessions {
-            let row = conversation_of(&session, &busy_agy).and_then(|conversation| {
-                lock(&self.store)
-                    .find_by_conversation(session.agent, &conversation)
-                    .ok()
-                    .flatten()
-            });
+            let row = conversation_of(&session, &agy_conversations, &shared_folders).and_then(
+                |conversation| {
+                    lock(&self.store)
+                        .find_by_conversation(session.agent, &conversation)
+                        .ok()
+                        .flatten()
+                },
+            );
             let external = External {
                 pid: session.pid,
                 status: session.status,
@@ -259,20 +281,30 @@ impl Host {
     }
 }
 
-/// The conversation an outside process runs, when it can be known: Claude and Codex
-/// report it; for agy, the single not-idle conversation in the same folder.
-fn conversation_of(session: &ExternalSession, busy_agy: &[(String, String)]) -> Option<String> {
-    match session.agent {
-        Agent::Claude | Agent::Codex => session.session_id.clone(),
-        Agent::Agy => {
-            let cwd = session.cwd.as_ref()?;
-            let mut matches = busy_agy.iter().filter(|(folder, _)| folder == cwd);
-            match (matches.next(), matches.next()) {
-                (Some((_, conversation)), None) => Some(conversation.clone()),
-                _ => None,
-            }
-        }
+/// The conversation an outside process runs, when it can be known. Claude and Codex
+/// report it. agy names it only when started with `--conversation`; otherwise it is
+/// the conversation in its folder written most recently since the process started,
+/// unless other agy processes share that folder (fix-agy-link, 2026-10-23: agy's busy
+/// flag could read idle while it waited for the owner, which dropped the link).
+fn conversation_of(
+    session: &ExternalSession,
+    agy: &[AgyConversation],
+    shared_folders: &HashSet<String>,
+) -> Option<String> {
+    if session.session_id.is_some() || session.agent != Agent::Agy {
+        return session.session_id.clone();
     }
+    let cwd = session.cwd.as_ref()?;
+    if shared_folders.contains(cwd) {
+        return None;
+    }
+    let since = session.started_at?.saturating_mul(1000);
+    agy.iter()
+        .filter(|conversation| {
+            &conversation.folder == cwd && conversation.last_activity_at >= since
+        })
+        .max_by_key(|conversation| conversation.last_activity_at)
+        .map(|conversation| conversation.id.clone())
 }
 
 fn unlinked_entry(session: &ExternalSession, external: External) -> SessionInfo {
@@ -332,34 +364,59 @@ mod tests {
 
     #[test]
     fn claude_and_codex_link_by_their_reported_id() {
+        let none = HashSet::new();
         assert_eq!(
-            conversation_of(&session(Agent::Claude, "/w", Some("c1")), &[]),
+            conversation_of(&session(Agent::Claude, "/w", Some("c1")), &[], &none),
             Some("c1".into())
         );
         assert_eq!(
-            conversation_of(&session(Agent::Codex, "/w", None), &[]),
+            conversation_of(&session(Agent::Codex, "/w", None), &[], &none),
             None
         );
     }
 
+    fn agy_conversation(folder: &str, id: &str, last_activity_at: u64) -> AgyConversation {
+        AgyConversation {
+            folder: folder.to_owned(),
+            id: id.to_owned(),
+            last_activity_at,
+        }
+    }
+
     #[test]
-    fn agy_links_only_to_a_single_busy_conversation_in_its_folder() {
-        let busy = vec![
-            ("/w".to_owned(), "a1".to_owned()),
-            ("/x".to_owned(), "b1".to_owned()),
-            ("/x".to_owned(), "b2".to_owned()),
+    fn agy_links_to_the_conversation_its_folder_wrote_since_it_started() {
+        // The process started at 1 s; "old" was last written before, "new" since.
+        let conversations = vec![
+            agy_conversation("/w", "old", 500),
+            agy_conversation("/w", "new", 9_000),
+            agy_conversation("/w", "newer", 9_500),
+            agy_conversation("/x", "elsewhere", 9_000),
         ];
+        let none = HashSet::new();
         assert_eq!(
-            conversation_of(&session(Agent::Agy, "/w", None), &busy),
-            Some("a1".into())
+            conversation_of(&session(Agent::Agy, "/w", None), &conversations, &none),
+            Some("newer".into()),
+            "the one written most recently"
         );
         assert_eq!(
-            conversation_of(&session(Agent::Agy, "/x", None), &busy),
-            None
+            conversation_of(&session(Agent::Agy, "/y", None), &conversations, &none),
+            None,
+            "nothing written in its folder since it started"
+        );
+        let shared = HashSet::from(["/w".to_owned()]);
+        assert_eq!(
+            conversation_of(&session(Agent::Agy, "/w", None), &conversations, &shared),
+            None,
+            "two agy processes in one folder are not told apart by time"
         );
         assert_eq!(
-            conversation_of(&session(Agent::Agy, "/y", None), &busy),
-            None
+            conversation_of(
+                &session(Agent::Agy, "/w", Some("old")),
+                &conversations,
+                &shared
+            ),
+            Some("old".into()),
+            "a conversation named on its command line links anyway"
         );
     }
 
