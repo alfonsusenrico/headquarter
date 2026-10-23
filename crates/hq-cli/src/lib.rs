@@ -24,6 +24,8 @@ use hq_client::{Client, Greeting, expect_ok};
 const DEFAULT_IDLE_EXIT: Duration = Duration::from_secs(10 * 60);
 /// How often Codex usage is read while the app shows usage (design D1).
 const DEFAULT_USAGE_INTERVAL: Duration = Duration::from_secs(5 * 60);
+/// Spec: activity outside Headquarter shows within a minute.
+const DEFAULT_HISTORY_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Parser)]
 #[command(
@@ -297,6 +299,7 @@ fn daemon() -> Result<ExitCode> {
         helper_exe: std::env::current_exe().context("locate the hq executable")?,
         idle_exit: seconds("HQ_IDLE_EXIT_SECS", DEFAULT_IDLE_EXIT),
         usage_interval: seconds("HQ_USAGE_INTERVAL_SECS", DEFAULT_USAGE_INTERVAL),
+        history_interval: seconds("HQ_HISTORY_INTERVAL_SECS", DEFAULT_HISTORY_INTERVAL),
     };
     match hq_daemon::run(options) {
         Ok(()) => Ok(ExitCode::SUCCESS),
