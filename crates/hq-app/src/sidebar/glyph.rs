@@ -9,6 +9,8 @@ use gpui::{
 };
 use hq_signals::event::Agent;
 
+use hq_protocol::usage::Rings;
+
 use super::model::Glyph;
 use crate::terminal::view::hsla;
 use crate::theme::Chrome;
@@ -209,13 +211,46 @@ pub fn agent(agent: Agent, size: f32, color: Paint) -> AnyElement {
     .into_any_element()
 }
 
-/// A usage ring: the track, the share used from the top clockwise, and the agent's
-/// mark inside: `mark` when given, else the drawn one. `None` draws a dotted ring:
-/// nothing current to show.
+/// One ring of `r` grid units: the track, then `share` (0 to 1) from the top clockwise.
+fn paint_ring(
+    window: &mut Window,
+    grid: Grid,
+    r: f32,
+    share: Option<f32>,
+    color: Paint,
+    track: Paint,
+) {
+    let (cx, cy, width) = (12.0, 12.0, 2.3);
+    let mut ring = PathBuilder::stroke(grid.width(width));
+    circle(&mut ring, grid, cx, cy, r);
+    paint(window, ring, track);
+    let Some(share) = share.map(|share| share.clamp(0.0, 1.0)) else {
+        return;
+    };
+    if share >= 0.999 {
+        let mut full = PathBuilder::stroke(grid.width(width));
+        circle(&mut full, grid, cx, cy, r);
+        paint(window, full, color);
+    } else if share > 0.0 {
+        let start = -PI / 2.0;
+        let end = start + share * 2.0 * PI;
+        let on = |angle: f32| grid.at(cx + r * angle.cos(), cy + r * angle.sin());
+        let mut arc = PathBuilder::stroke(grid.width(width));
+        arc.move_to(on(start));
+        arc.arc_to(grid.radius(r), px(0.), share > 0.5, true, on(end));
+        paint(window, arc, color);
+    }
+}
+
+/// Usage rings (owner, 2026-10-22): the outer ring for the agent's longest window (the
+/// week), the inner one for its shortest (5 hours), each in its own colour, with the
+/// agent's mark inside: `mark` when given, else the drawn one. With nothing current to
+/// show, one dotted ring.
 pub fn usage_ring(
     agent: Agent,
-    fill: Option<f64>,
-    color: Paint,
+    rings: Rings,
+    outer_color: Paint,
+    inner_color: Paint,
     chrome: Chrome,
     mark: Option<AnyElement>,
 ) -> AnyElement {
@@ -224,36 +259,35 @@ pub fn usage_ring(
         |_, _, _| (),
         move |bounds, (), window, _| {
             let grid = Grid::new(bounds, 30.0);
-            let (cx, cy, r) = (12.0, 12.0, 10.0);
-            match fill {
-                None => {
-                    let mut ring = PathBuilder::stroke(grid.width(2.3))
-                        .dash_array(&[grid.width(2.0), grid.width(2.6)]);
-                    circle(&mut ring, grid, cx, cy, r);
-                    paint(window, ring, chrome.muted);
-                }
-                Some(percent) => {
-                    let mut track = PathBuilder::stroke(grid.width(2.3));
-                    circle(&mut track, grid, cx, cy, r);
-                    paint(window, track, chrome.track);
-                    let share = (percent / 100.0).clamp(0.0, 1.0) as f32;
-                    if share >= 0.999 {
-                        let mut full = PathBuilder::stroke(grid.width(2.3));
-                        circle(&mut full, grid, cx, cy, r);
-                        paint(window, full, color);
-                    } else if share > 0.0 {
-                        let start = -PI / 2.0;
-                        let end = start + share * 2.0 * PI;
-                        let on = |angle: f32| grid.at(cx + r * angle.cos(), cy + r * angle.sin());
-                        let mut arc = PathBuilder::stroke(grid.width(2.3));
-                        arc.move_to(on(start));
-                        arc.arc_to(grid.radius(r), px(0.), share > 0.5, true, on(end));
-                        paint(window, arc, color);
-                    }
+            if rings.is_empty() {
+                let mut ring = PathBuilder::stroke(grid.width(2.3))
+                    .dash_array(&[grid.width(2.0), grid.width(2.6)]);
+                circle(&mut ring, grid, 12.0, 12.0, 10.0);
+                paint(window, ring, chrome.muted);
+            } else {
+                let share = |percent: Option<f64>| percent.map(|percent| (percent / 100.0) as f32);
+                paint_ring(
+                    window,
+                    grid,
+                    10.0,
+                    share(rings.outer),
+                    outer_color,
+                    chrome.track,
+                );
+                if rings.inner.is_some() {
+                    paint_ring(
+                        window,
+                        grid,
+                        6.6,
+                        share(rings.inner),
+                        inner_color,
+                        chrome.track,
+                    );
                 }
             }
             if drawn {
-                paint_agent(agent, bounds, 12.0, chrome.muted, window);
+                let size = if rings.inner.is_some() { 8.0 } else { 12.0 };
+                paint_agent(agent, bounds, size, chrome.muted, window);
             }
         },
     )

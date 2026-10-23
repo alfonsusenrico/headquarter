@@ -8,6 +8,7 @@ use hq_signals::external;
 use hq_signals::quota::{self, QuotaReport};
 
 const CODEX_TIMEOUT: Duration = Duration::from_secs(15);
+const AGY_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn quota() {
     let now = hq_signals::now_ms() / 1000;
@@ -21,7 +22,12 @@ pub fn quota() {
     let reports = [
         claude,
         quota::read_codex(std::path::Path::new("codex"), CODEX_TIMEOUT, now).0,
-        quota::read_agy(),
+        quota::read_agy(
+            std::path::Path::new("agy"),
+            &std::env::temp_dir(),
+            AGY_TIMEOUT,
+            now,
+        ),
     ];
     for report in reports {
         match report {
