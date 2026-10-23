@@ -99,14 +99,8 @@ fn paint_status(glyph: Glyph, bounds: Bounds<Pixels>, chrome: Chrome, window: &m
             paint(window, dot, chrome.accent);
         }
         Glyph::Idle => paint_bubble(bounds, chrome.muted, false, window),
-        Glyph::Unknown => {
-            let grid = Grid::new(bounds, 18.0);
-            let mut ring = PathBuilder::stroke(grid.width(2.2))
-                .dash_array(&[grid.width(2.5), grid.width(3.0)]);
-            circle(&mut ring, grid, 12.0, 12.0, 8.5);
-            paint(window, ring, chrome.muted);
-        }
-        Glyph::Working => {}
+        // The slot stays empty, so ages line up with the other rows.
+        Glyph::Elsewhere | Glyph::Working => {}
     }
 }
 
