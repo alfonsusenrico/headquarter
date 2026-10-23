@@ -1422,6 +1422,12 @@ impl Host {
         let Ok(session) = self.info(id) else {
             return;
         };
+        self.send_change(session);
+    }
+
+    /// Sends a session's state to every subscriber; for entries the index does not
+    /// keep, such as outside agents with no known conversation.
+    fn send_change(&self, session: SessionInfo) {
         let frame = Frame::response(&Response::SessionChanged { session });
         lock(&self.subscribers)
             .retain(|subscriber| subscriber.tx.send(Outgoing::Frame(frame.clone())).is_ok());

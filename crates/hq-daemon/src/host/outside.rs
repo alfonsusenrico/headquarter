@@ -192,7 +192,7 @@ impl Host {
             .iter()
             .map(|failure| format!("{}: {}", failure.source, failure.error))
             .collect();
-        let changed_rows: Vec<String> = {
+        let (changed_rows, unlinked_news) = {
             let mut view = lock(&self.outside);
             for failure in failures.difference(&view.failures) {
                 self.log
@@ -208,14 +208,18 @@ impl Host {
                         .filter(|id| !linked.contains_key(*id))
                         .cloned(),
                 )
-                .collect();
+                .collect::<Vec<String>>();
+            let unlinked_news = unlinked_changes(&view.unlinked, &unlinked);
             view.linked = linked;
             view.unlinked = unlinked;
             view.failures = failures;
-            changed
+            (changed, unlinked_news)
         };
         for id in changed_rows {
             self.broadcast(&id);
+        }
+        for session in unlinked_news {
+            self.send_change(session);
         }
     }
 }
@@ -305,6 +309,27 @@ fn conversation_of(
         })
         .max_by_key(|conversation| conversation.last_activity_at)
         .map(|conversation| conversation.id.clone())
+}
+
+/// What clients must hear about agents with no known conversation since the last scan:
+/// new or changed entries, and gone ones (linked or exited) as no longer offered, so no
+/// client keeps an entry from its first list (add-sessions-running-elsewhere D4).
+fn unlinked_changes(before: &[SessionInfo], now: &[SessionInfo]) -> Vec<SessionInfo> {
+    let mut changes: Vec<SessionInfo> = now
+        .iter()
+        .filter(|entry| !before.contains(entry))
+        .cloned()
+        .collect();
+    changes.extend(
+        before
+            .iter()
+            .filter(|old| !now.iter().any(|entry| entry.id == old.id))
+            .map(|old| SessionInfo {
+                offered: false,
+                ..old.clone()
+            }),
+    );
+    changes
 }
 
 fn unlinked_entry(session: &ExternalSession, external: External) -> SessionInfo {
@@ -419,6 +444,43 @@ mod tests {
             Some("old".into()),
             "a conversation named on its command line links anyway"
         );
+    }
+
+    #[test]
+    fn clients_hear_unlinked_agents_appear_change_and_go() {
+        let external = |status| External {
+            pid: Some(7),
+            status,
+        };
+        let waiting = unlinked_entry(
+            &session(Agent::Claude, "/w", None),
+            external(Some(Status::NeedsYou)),
+        );
+        let other = unlinked_entry(
+            &ExternalSession {
+                pid: Some(8),
+                ..session(Agent::Claude, "/w", None)
+            },
+            external(None),
+        );
+        let only = std::slice::from_ref;
+        assert_eq!(unlinked_changes(&[], only(&waiting)), only(&waiting));
+        assert!(
+            unlinked_changes(only(&waiting), only(&waiting)).is_empty(),
+            "nothing to say when nothing changed"
+        );
+        let working = SessionInfo {
+            external: Some(external(Some(Status::Working))),
+            ..waiting.clone()
+        };
+        assert_eq!(
+            unlinked_changes(only(&waiting), only(&working)),
+            only(&working)
+        );
+        let gone = unlinked_changes(&[working.clone(), other.clone()], only(&other));
+        assert_eq!(gone.len(), 1);
+        assert_eq!(gone[0].id, working.id);
+        assert!(!gone[0].offered, "linked or exited: no longer offered");
     }
 
     #[test]

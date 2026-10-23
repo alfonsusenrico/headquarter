@@ -123,9 +123,13 @@ pub fn tint(chrome: Chrome, strength: f32) -> gpui::Hsla {
 }
 
 /// The round tick at the end of an Open sessions row; filled when picked.
+/// The tick's width, kept as an empty slot on rows that cannot be picked so the
+/// columns before it line up.
+pub const TICK_SIZE: f32 = 20.0;
+
 pub fn tick(picked: bool, chrome: Chrome) -> Div {
     let circle = div()
-        .size(px(20.))
+        .size(px(TICK_SIZE))
         .flex_none()
         .flex()
         .items_center()
