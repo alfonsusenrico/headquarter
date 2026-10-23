@@ -2,6 +2,20 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.4 (2026-10-23)
+
+- Select and copy like you mean it. Drag over any agent's output and it lands on your
+  clipboard when you let go, with a "Copied" note to say so. Double-click takes a word,
+  triple-click a line. Copies come out tidy: no trailing spaces, no shared left margin,
+  no blank lines at the ends.
+- Claude Code's full-screen view gets the drag itself, so it scrolls through its own
+  history and copies. Copies an agent makes now reach your clipboard. Hold Shift to
+  select in Headquarter instead.
+- Dragging keeps going outside the pane and scrolls back through the output past the
+  top or bottom. A drag back to the left edge now takes the first column too.
+- Selected text stays readable: themes that set a selection text colour, like
+  Catppuccin, now get it.
+
 ## 0.1.3 (2026-10-23)
 
 - Drag a screenshot onto a session and the agent gets it: dropped files are typed as
