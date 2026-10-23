@@ -131,7 +131,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         stopping: AtomicBool::new(false),
         history: Mutex::new(HistoryReader::new(HistoryRoots::standard())),
         titles: Mutex::new(HashMap::new()),
-        busy_agy: Mutex::new(Vec::new()),
+        agy_conversations: Mutex::new(Vec::new()),
         outside: Mutex::new(outside::OutsideView::default()),
         outside_wake: outside::OutsideWake::default(),
         first_import: history::FirstImport::default(),
@@ -240,8 +240,9 @@ struct Host {
     history: Mutex<HistoryReader>,
     /// Agent titles by (agent, conversation id), for display only; never stored.
     titles: Mutex<HashMap<(Agent, String), String>>,
-    /// agy conversations its own index marks as not idle: (folder, conversation id).
-    busy_agy: Mutex<Vec<(String, String)>>,
+    /// agy's top-level conversations as the last history pass read them, for linking
+    /// agy processes in other terminals.
+    agy_conversations: Mutex<Vec<outside::AgyConversation>>,
     outside: Mutex<outside::OutsideView>,
     outside_wake: outside::OutsideWake,
     first_import: history::FirstImport,

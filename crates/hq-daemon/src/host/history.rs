@@ -13,6 +13,7 @@ use hq_signals::history::Conversation;
 use hq_signals::status::Status;
 use hq_store::{Origin, SessionRow, Store, StoreError};
 
+use super::outside::AgyConversation;
 use super::{Host, lock};
 use crate::session::Hosted;
 
@@ -57,7 +58,7 @@ impl Host {
         let started = Instant::now();
         let report = lock(&self.history).scan();
         let mut titles = HashMap::new();
-        let mut busy_agy = Vec::new();
+        let mut agy_conversations = Vec::new();
         let mut added = 0;
         let mut moved = Vec::new();
         let mut failed = 0;
@@ -65,8 +66,12 @@ impl Host {
             if let Some(title) = &conversation.title {
                 titles.insert((conversation.agent, conversation.id.clone()), title.clone());
             }
-            if conversation.agent == Agent::Agy && conversation.busy {
-                busy_agy.push((conversation.cwd.clone(), conversation.id.clone()));
+            if conversation.agent == Agent::Agy {
+                agy_conversations.push(AgyConversation {
+                    folder: conversation.cwd.clone(),
+                    id: conversation.id.clone(),
+                    last_activity_at: conversation.last_activity_at,
+                });
             }
             let store = lock(&self.store);
             match merge(&store, conversation) {
@@ -104,7 +109,7 @@ impl Host {
                 .filter(|id| !moved.contains(id))
                 .collect()
         };
-        *lock(&self.busy_agy) = busy_agy;
+        *lock(&self.agy_conversations) = agy_conversations;
         self.log.line(&format!(
             "history import conversations={} added={added} updated={} parsed={} skipped={} failed={failed} took_ms={}",
             report.conversations.len(),

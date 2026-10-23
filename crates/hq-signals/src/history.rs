@@ -27,8 +27,6 @@ pub struct Conversation {
     pub last_activity_at: u64,
     /// For display only; never stored.
     pub title: Option<String>,
-    /// agy reports this while a conversation is not fully idle.
-    pub busy: bool,
 }
 
 #[derive(Debug, Default)]
@@ -296,7 +294,6 @@ fn read_claude(path: &Path) -> Option<Conversation> {
         started_at,
         last_activity_at,
         title: agent_name.or(ai_title),
-        busy: false,
     })
 }
 
@@ -342,7 +339,6 @@ fn read_codex_rollout(path: &Path) -> Option<Conversation> {
         started_at,
         last_activity_at,
         title: None,
-        busy: false,
     })
 }
 
@@ -357,7 +353,7 @@ fn read_agy(
     )?;
     connection.busy_timeout(std::time::Duration::from_millis(500))?;
     let mut statement = connection.prepare(
-        "SELECT conversation_id, title, workspace_uris, last_modified_time, not_fully_idle
+        "SELECT conversation_id, title, workspace_uris, last_modified_time
          FROM conversation_summaries
          WHERE COALESCE(nesting_depth, 0) = 0",
     )?;
@@ -367,13 +363,12 @@ fn read_agy(
             row.get::<_, Option<String>>(1)?,
             row.get::<_, Option<String>>(2)?,
             row.get::<_, Option<String>>(3)?,
-            row.get::<_, Option<i64>>(4)?,
         ))
     })?;
     let mut conversations = Vec::new();
     let mut skipped = 0;
     for row in rows {
-        let Ok((Some(id), title, workspaces, modified, busy)) = row else {
+        let Ok((Some(id), title, workspaces, modified)) = row else {
             skipped += 1;
             continue;
         };
@@ -399,7 +394,6 @@ fn read_agy(
             started_at,
             last_activity_at,
             title: title.filter(|title| !title.trim().is_empty()),
-            busy: busy.unwrap_or(0) != 0,
         });
     }
     Ok((conversations, skipped))
@@ -664,7 +658,6 @@ mod tests {
             .unwrap();
         assert_eq!(c1.cwd, "/w/my app");
         assert_eq!(c1.title.as_deref(), Some("Ship hero"));
-        assert!(c1.busy);
         assert_eq!(c1.last_activity_at, 1_792_471_659_447);
         let c2 = report
             .conversations
