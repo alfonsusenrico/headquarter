@@ -5,7 +5,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use alacritty_terminal::vte::ansi::Rgb;
 use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone};
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -17,8 +16,8 @@ use gpui_component::Disableable;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
+use hq_protocol::SessionInfo;
 use hq_protocol::sidebar::{age, display_title};
-use hq_protocol::{Origin, SessionInfo};
 use hq_signals::event::Agent;
 
 use super::folders::{self, FolderRow};
@@ -50,14 +49,16 @@ pub struct PickRow {
     pub folder: String,
     pub age: String,
     pub external: bool,
-    /// Why the session cannot be added, when it cannot.
+    /// Why the session cannot be added, when it cannot; shown as a tag on the row.
     pub blocked: Option<&'static str>,
 }
 
+/// The tag on a session running in another terminal: that terminal owns it, so it
+/// cannot be added here (owner, 2026-10-22).
+pub const IN_ANOTHER_TERMINAL: &str = "In another terminal";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickItem {
-    /// "Running in another terminal".
-    Elsewhere,
     Day(String),
     Session(PickRow),
 }
@@ -72,6 +73,19 @@ pub fn day_heading(day: NaiveDate, today: NaiveDate) -> String {
         _ if day.year() == today.year() => day.format("%-d %B").to_string(),
         _ => day.format("%-d %B %Y").to_string(),
     }
+}
+
+/// The sessions the window keeps: a conversation whose folder no longer exists cannot
+/// be continued, so it is left out; such folders are mostly temporary ones of
+/// automated runs (owner, 2026-10-23). One with no known folder stays.
+fn offerable(
+    sessions: Vec<SessionInfo>,
+    folder_exists: impl Fn(&Path) -> bool,
+) -> Vec<SessionInfo> {
+    sessions
+        .into_iter()
+        .filter(|session| session.cwd.is_empty() || folder_exists(Path::new(&session.cwd)))
+        .collect()
 }
 
 /// Sessions the window can list: everything not in the sidebar.
@@ -131,13 +145,7 @@ pub fn pick_items<Tz: TimeZone>(
         .iter()
         .filter(|session| matches(session, filters))
         .collect();
-    shown.sort_by_key(|session| {
-        (
-            session.external.is_none(),
-            std::cmp::Reverse(when(session)),
-            session.id.as_str(),
-        )
-    });
+    shown.sort_by_key(|session| (std::cmp::Reverse(when(session)), session.id.as_str()));
     let zone = now.timezone();
     let today = now.date_naive();
     let now_ms = u64::try_from(now.timestamp_millis()).unwrap_or(0);
@@ -145,20 +153,14 @@ pub fn pick_items<Tz: TimeZone>(
     let mut items = Vec::new();
     let mut current_day: Option<NaiveDate> = None;
     for session in shown {
-        if session.external.is_some() {
-            if items.is_empty() {
-                items.push(PickItem::Elsewhere);
-            }
-        } else {
-            let millis = i64::try_from(when(session)).unwrap_or(i64::MAX);
-            let day = zone
-                .timestamp_millis_opt(millis)
-                .single()
-                .map_or(today, |at| at.date_naive());
-            if current_day != Some(day) {
-                items.push(PickItem::Day(day_heading(day, today)));
-                current_day = Some(day);
-            }
+        let millis = i64::try_from(when(session)).unwrap_or(i64::MAX);
+        let day = zone
+            .timestamp_millis_opt(millis)
+            .single()
+            .map_or(today, |at| at.date_naive());
+        if current_day != Some(day) {
+            items.push(PickItem::Day(day_heading(day, today)));
+            current_day = Some(day);
         }
         items.push(PickItem::Session(PickRow {
             id: session.id.clone(),
@@ -167,8 +169,7 @@ pub fn pick_items<Tz: TimeZone>(
             folder: folders::shown(Path::new(&session.cwd), home),
             age: age(now_ms.saturating_sub(session.last_activity_at)),
             external: session.external.is_some(),
-            blocked: (session.origin == Origin::External)
-                .then_some("Its conversation is not known yet, so it cannot be added."),
+            blocked: session.external.is_some().then_some(IN_ANOTHER_TERMINAL),
         }));
     }
     items
@@ -213,7 +214,6 @@ pub struct OpenSessions {
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     chrome: Chrome,
-    live: Rgb,
     marks: Marks,
     /// Whether the host's first list has arrived; until then the agents check in
     /// where the sessions will be.
@@ -230,7 +230,6 @@ impl OpenSessions {
         agents: Vec<Agent>,
         home: PathBuf,
         chrome: Chrome,
-        live: Rgb,
         marks: Marks,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -248,6 +247,7 @@ impl OpenSessions {
             },
         );
         window.focus(&search.focus_handle(cx), cx);
+        let sessions = offerable(sessions, Path::is_dir);
         let order = sessions
             .iter()
             .map(|session| (session.id.clone(), session.last_activity_at))
@@ -267,7 +267,6 @@ impl OpenSessions {
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             chrome,
-            live,
             marks,
             loaded: true,
             _search_changes: search_changes,
@@ -279,9 +278,8 @@ impl OpenSessions {
         cx.notify();
     }
 
-    pub fn set_chrome(&mut self, chrome: Chrome, live: Rgb, cx: &mut Context<Self>) {
+    pub fn set_chrome(&mut self, chrome: Chrome, cx: &mut Context<Self>) {
         self.chrome = chrome;
-        self.live = live;
         cx.notify();
     }
 
@@ -292,7 +290,7 @@ impl OpenSessions {
     }
 
     pub fn update_sessions(&mut self, sessions: Vec<SessionInfo>, cx: &mut Context<Self>) {
-        self.sessions = sessions;
+        self.sessions = offerable(sessions, Path::is_dir);
         cx.notify();
     }
 
@@ -472,38 +470,6 @@ impl OpenSessions {
     fn render_line(&self, item: &PickItem, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let chrome = self.chrome;
         match item {
-            PickItem::Elsewhere => super::heading(chrome)
-                .h(px(LINE))
-                .items_end()
-                .pb(px(6.))
-                .child(
-                    div()
-                        .size(px(7.))
-                        .mb(px(4.))
-                        .rounded_full()
-                        .bg(hsla(self.live)),
-                )
-                .child("RUNNING IN ANOTHER TERMINAL")
-                .child(
-                    div()
-                        .id("elsewhere-info")
-                        .size(px(17.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_full()
-                        .border_1()
-                        .border_color(hsla(chrome.track))
-                        .text_size(px(11.))
-                        .font_weight(gpui::FontWeight::NORMAL)
-                        .cursor_pointer()
-                        .child("i")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.info_open = !this.info_open;
-                            cx.notify();
-                        })),
-                )
-                .into_any_element(),
             PickItem::Day(day) => super::heading(chrome)
                 .h(px(LINE))
                 .items_end()
@@ -547,22 +513,20 @@ impl OpenSessions {
                             .truncate()
                             .text_size(px(12.5))
                             .text_color(hsla(chrome.muted))
-                            .child(
-                                row.blocked
-                                    .map_or_else(|| row.folder.clone(), str::to_owned),
-                            ),
+                            .child(row.folder.clone()),
                     ),
             )
-            .children(row.external.then(|| {
+            .children(row.blocked.map(|why| {
                 div()
                     .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(5.))
-                    .text_size(px(12.))
+                    .px(px(8.))
+                    .py(px(1.))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(hsla(chrome.sidebar_line))
+                    .text_size(px(11.5))
                     .text_color(hsla(chrome.muted))
-                    .child(div().size(px(6.)).rounded_full().bg(hsla(self.live)))
-                    .child("running elsewhere")
+                    .child(why)
             }))
             .child(
                 div()
@@ -860,7 +824,7 @@ impl Render for OpenSessions {
 #[cfg(test)]
 mod tests {
     use chrono::FixedOffset;
-    use hq_protocol::External;
+    use hq_protocol::{External, Origin};
     use hq_signals::status::Status;
 
     use super::*;
@@ -903,6 +867,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn conversations_whose_folder_is_gone_are_not_offered() {
+        let mut unknown = session("unknown", Agent::Agy, "", 1);
+        unknown.cwd.clear();
+        let sessions = vec![
+            session("here", Agent::Claude, "/u/api", 1),
+            session("gone", Agent::Agy, "/tmp/eval-run/repo", 2),
+            unknown,
+        ];
+        let kept: Vec<String> = offerable(sessions, |folder| folder == Path::new("/u/api"))
+            .into_iter()
+            .map(|session| session.id)
+            .collect();
+        assert_eq!(kept, ["here", "unknown"]);
+    }
+
     fn fixture() -> Vec<SessionInfo> {
         let mut titled = session("fix", Agent::Claude, "/u/api", 1);
         titled.title = Some("Fix the login flow".into());
@@ -939,7 +919,6 @@ mod tests {
         items
             .iter()
             .map(|item| match item {
-                PickItem::Elsewhere => "# elsewhere".to_owned(),
                 PickItem::Day(day) => format!("# {day}"),
                 PickItem::Session(row) => row.id.clone(),
             })
@@ -957,16 +936,15 @@ mod tests {
     }
 
     #[test]
-    fn running_elsewhere_first_then_by_day_without_sidebar_sessions() {
+    fn by_day_with_sessions_elsewhere_in_place_without_sidebar_sessions() {
         assert_eq!(
             lines(&items(&Filters::default())),
             [
-                "# elsewhere",
-                "external-agy-9",
-                "ext-linked",
                 "# Today",
+                "external-agy-9",
                 "fix",
                 "web-today",
+                "ext-linked",
                 "# Yesterday",
                 "yesterday",
                 "# 13 October",
@@ -985,11 +963,14 @@ mod tests {
         assert_eq!(fix.folder, "~/api");
         assert!(fix.blocked.is_none());
         assert!(row(&items, "ext-linked").external);
-        assert!(
-            row(&items, "external-agy-9")
-                .blocked
-                .unwrap()
-                .contains("not known yet")
+        assert_eq!(
+            row(&items, "ext-linked").blocked,
+            Some(IN_ANOTHER_TERMINAL),
+            "a session open in another terminal cannot be added"
+        );
+        assert_eq!(
+            row(&items, "external-agy-9").blocked,
+            Some(IN_ANOTHER_TERMINAL)
         );
     }
 
@@ -1033,13 +1014,7 @@ mod tests {
         };
         assert_eq!(
             lines(&items(&web)),
-            [
-                "# elsewhere",
-                "external-agy-9",
-                "ext-linked",
-                "# Today",
-                "web-today"
-            ],
+            ["# Today", "external-agy-9", "web-today", "ext-linked"],
             "the folder and its subfolders; not /u/webby"
         );
         let path_text = Filters {
