@@ -19,3 +19,8 @@ working tree with this change, 2026-10-23.
 ## Not verified
 
 - On screen (task 1.2): waits for the owner.
+
+## On screen and final check (2026-10-23)
+
+- The owner confirmed it on the test build (`test/combined-build`).
+- `./scripts/check` on the branch as pushed: passed, 383 tests, 22 OpenSpec items (at aca8788).
