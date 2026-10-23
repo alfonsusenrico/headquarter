@@ -79,6 +79,7 @@ else
   check "app installed" '[ -x "$home/.local/bin/headquarter-app" ]'
   check "menu entry" 'grep -q "Exec=$home/.local/bin/headquarter-app" "$home/.local/share/applications/headquarter.desktop"'
   check "icons" '[ -f "$home/.local/share/icons/hicolor/256x256/apps/headquarter.png" ]'
+  check "menu entry names the window class" 'grep -q "^StartupWMClass=headquarter$" "$home/.local/share/applications/headquarter.desktop"'
 fi
 check "manifest lists only home paths" '! grep -v "^$home/" "$home/.local/share/headquarter/install-manifest"'
 
