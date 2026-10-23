@@ -47,7 +47,7 @@ The system SHALL read quotas only through the providers' documented local interf
 - **THEN** the read stops without answering and counts as a failed update
 
 ### Requirement: Usage strip
-The system SHALL show, under the sidebar, centred usage marks for the enabled agents nearest their limits, as many as fit on one line, each with an outer ring filled to the share used of the agent's longest current window (the week) and an inner ring for its shortest (5 hours) when it has two, per-model windows left to the details, SHALL fold the rest into a "+N" chip that opens every agent's usage, SHALL draw a ring red when its window has used 80% or more, and SHALL, from 80%, name the one agent near its limit with its nearest window (the shorter window when the whole percentages are equal) or, when several agents are, say how many.
+The system SHALL show, under the sidebar, centred usage marks for the enabled agents nearest their limits, as many as fit on one line, each with an outer ring filled to the share used of the agent's longest current window (the week) and an inner ring for its shortest (5 hours) when it has two, per-model windows left to the details, and SHALL fold the rest into a "+N" chip that opens every agent's usage.
 
 #### Scenario: Three agents
 - **WHEN** Claude, Codex and agy are enabled and Codex has used 82% of its five-hour window and 30% of its week
@@ -105,7 +105,7 @@ The system SHALL show, when the owner opens an agent's ring, each window with it
 - **THEN** Claude's details list "week · Fable" at 3% below the all-models week
 
 ### Requirement: Reading cadence
-The system SHALL read Codex usage 10 seconds after a hosted Codex session's turn ends, every five minutes while a client shows usage, and on refresh; SHALL take Claude usage from each report of a hosted Claude session and with a hidden `/usage` read on refresh, every ten minutes while a client shows usage and no hosted Claude session has reported, and after a Claude session in another terminal finishes a turn, at most every two minutes; SHALL read agy usage 10 seconds after a hosted agy session's turn ends, every ten minutes while a client shows usage, and on refresh; and SHALL NOT read any of them when no client is showing usage.
+The system SHALL read Codex usage 10 seconds after a hosted Codex session's turn ends, every five minutes while a client shows usage, and on refresh, and SHALL NOT read any agent's usage when no client is showing usage.
 
 #### Scenario: App closed
 - **WHEN** no app window is open
@@ -196,3 +196,28 @@ The system SHALL fill the rings of an agent that reports only pools of models fr
 #### Scenario: Claude and GPT pool nearer its limit
 - **WHEN** agy's Gemini pool has used 11% of its week and its Claude and GPT pool 85% of its five hours and 40% of its week
 - **THEN** agy's inner ring is filled to 85% and its outer ring to 40%, both from the Claude and GPT pool, and the label reads "agy 85% · 5h · Claude and GPT"
+
+### Requirement: Usage near its limit
+The system SHALL draw a ring red when its window has used 80% or more, and SHALL, from 80%, name the one agent near its limit with its nearest window (the shorter window when the whole percentages are equal) or, when several agents are, say how many.
+
+#### Scenario: Exactly at the threshold
+- **WHEN** Codex has used exactly 80% of its week and less of its five hours, and no other agent is near its limit
+- **THEN** Codex's outer ring is red and the label reads "codex 80% · week"
+
+### Requirement: Claude reading cadence
+The system SHALL take Claude usage from each report of a hosted Claude session and with a hidden `/usage` read on refresh, every ten minutes while a client shows usage and no hosted Claude session has reported, and after a Claude session in another terminal finishes a turn, at most every two minutes.
+
+#### Scenario: Hosted Claude reports
+- **WHEN** a hosted Claude session reports its usage while the app is open
+- **THEN** the Claude ring shows that reading and no hidden `/usage` read is started for it
+
+#### Scenario: Turns in another terminal
+- **WHEN** a Claude session in another terminal finishes two turns a minute apart while the app is open
+- **THEN** Claude usage is read after the first turn and not again before two minutes have passed
+
+### Requirement: agy reading cadence
+The system SHALL read agy usage 10 seconds after a hosted agy session's turn ends, every ten minutes while a client shows usage, and on refresh.
+
+#### Scenario: agy while usage is shown
+- **WHEN** the app shows usage for twenty minutes and no hosted agy session finishes a turn
+- **THEN** agy usage is read about every ten minutes
