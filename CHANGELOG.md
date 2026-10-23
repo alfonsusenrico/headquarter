@@ -2,6 +2,30 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.1 (2026-10-23)
+
+- First run: setup lists only the agents Headquarter hosts, with their versions and
+  install links, lets you pick a theme with a live preview, and ends with the three
+  shortcuts you need.
+- While the host starts or sessions load, the agents' marks light up in turn instead of
+  an empty window.
+- Usage: each agent's ring now shows both windows, 5 hours inside and the week outside,
+  and turns red from 80%. The line under the rings names the one agent near its limit,
+  or says how many are. Refresh keeps the details open until the new numbers arrive.
+- agy's usage, read with agy's own `/usage`, one window per pool of models.
+- Add sessions:
+  - sessions running in another terminal are tagged and cannot be added;
+  - it offers only conversations you started that the agent still keeps, and whose
+    folder still exists;
+  - untitled conversations read "Untitled conversation" with their short id;
+  - a ⋯ menu removes a past conversation: Claude Code's to the Trash, Codex's with its
+    own archive or delete, with Undo.
+- Fixes: agents start with their own runtime on `PATH` (Codex from Homebrew); the folder
+  search no longer makes macOS ask for Music or Photos; idle sessions in other terminals
+  are flagged at once; past conversations show their titles; an agy session in another
+  terminal no longer shows twice; a closed session no longer comes back after a restart;
+  usage problems are worded from the agent's side.
+
 ## 0.1.0 (2026-10-22)
 
 The first release.
