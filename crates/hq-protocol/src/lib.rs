@@ -202,6 +202,12 @@ pub enum Request {
         group: i64,
         collapsed: bool,
     },
+    /// Pick a group's colour by palette name, or `None` for automatic.
+    SetGroupColor {
+        group: i64,
+        #[serde(default)]
+        color: Option<String>,
+    },
     /// Put a sidebar session in a group, or in none.
     SetGroup {
         session: String,
@@ -463,6 +469,88 @@ pub struct GroupInfo {
     pub id: i64,
     pub name: String,
     pub collapsed: bool,
+    /// The picked colour's palette name; `None`, or a name this version does not know,
+    /// is automatic. Hosts that predate colours send nothing (add-group-colors D6).
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+impl GroupInfo {
+    /// The colour the group shows: the picked one, else its automatic colour.
+    pub fn shown_color(&self) -> GroupColor {
+        self.color
+            .as_deref()
+            .and_then(GroupColor::from_name)
+            .unwrap_or_else(|| GroupColor::automatic(self.id))
+    }
+}
+
+/// The group colours, in the order automatic colours take them (add-group-colors D1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GroupColor {
+    Mauve,
+    Green,
+    Teal,
+    Peach,
+    Blue,
+    Pink,
+    Yellow,
+    Red,
+}
+
+impl GroupColor {
+    pub const ALL: [GroupColor; 8] = [
+        GroupColor::Mauve,
+        GroupColor::Green,
+        GroupColor::Teal,
+        GroupColor::Peach,
+        GroupColor::Blue,
+        GroupColor::Pink,
+        GroupColor::Yellow,
+        GroupColor::Red,
+    ];
+
+    /// The name stored and sent on the wire.
+    pub fn name(self) -> &'static str {
+        match self {
+            GroupColor::Mauve => "mauve",
+            GroupColor::Green => "green",
+            GroupColor::Teal => "teal",
+            GroupColor::Peach => "peach",
+            GroupColor::Blue => "blue",
+            GroupColor::Pink => "pink",
+            GroupColor::Yellow => "yellow",
+            GroupColor::Red => "red",
+        }
+    }
+
+    /// The name the owner sees.
+    pub fn label(self) -> &'static str {
+        match self {
+            GroupColor::Mauve => "Mauve",
+            GroupColor::Green => "Green",
+            GroupColor::Teal => "Teal",
+            GroupColor::Peach => "Peach",
+            GroupColor::Blue => "Blue",
+            GroupColor::Pink => "Pink",
+            GroupColor::Yellow => "Yellow",
+            GroupColor::Red => "Red",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<GroupColor> {
+        GroupColor::ALL
+            .into_iter()
+            .find(|color| color.name() == name)
+    }
+
+    /// A group's colour while none is picked: by its id, so consecutive groups differ
+    /// and reordering or deleting others never changes it (D2).
+    pub fn automatic(group: i64) -> GroupColor {
+        let count = GroupColor::ALL.len() as i64;
+        let index = (group - 1).rem_euclid(count);
+        GroupColor::ALL[usize::try_from(index).unwrap_or(0)]
+    }
 }
 
 /// Group names are at most this many characters.
@@ -564,6 +652,39 @@ pub fn group_labels<'a>(folders: &[&'a str]) -> HashMap<&'a str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_group_colours_follow_the_id() {
+        assert_eq!(GroupColor::automatic(1), GroupColor::Mauve);
+        assert_eq!(GroupColor::automatic(2), GroupColor::Green);
+        assert_eq!(
+            GroupColor::automatic(9),
+            GroupColor::Mauve,
+            "the ninth repeats"
+        );
+        assert_eq!(GroupColor::from_name("green"), Some(GroupColor::Green));
+        assert_eq!(
+            GroupColor::from_name("Green"),
+            None,
+            "stored names are lower case"
+        );
+        let picked = GroupInfo {
+            id: 1,
+            name: "Backend".into(),
+            collapsed: false,
+            color: Some("red".into()),
+        };
+        assert_eq!(picked.shown_color(), GroupColor::Red);
+        let unknown = GroupInfo {
+            color: Some("ultraviolet".into()),
+            ..picked
+        };
+        assert_eq!(
+            unknown.shown_color(),
+            GroupColor::Mauve,
+            "unknown names are automatic"
+        );
+    }
 
     #[test]
     fn refusals_name_the_host_protocol() {
@@ -738,10 +859,20 @@ mod tests {
                 id: 1,
                 name: "Backend".into(),
                 collapsed: false,
+                color: Some("green".into()),
             }],
         };
         let bytes = serde_json::to_vec(&groups).unwrap();
         assert_eq!(Response::parse(&bytes).unwrap(), groups);
+        let older = Response::parse(
+            br#"{"type":"groups-changed","groups":[{"id":3,"name":"Web","collapsed":false}]}"#,
+        )
+        .unwrap();
+        let Response::GroupsChanged { groups } = older else {
+            panic!("unexpected {older:?}");
+        };
+        assert_eq!(groups[0].color, None, "an older host sends no colour");
+        assert_eq!(groups[0].shown_color(), GroupColor::Teal, "automatic by id");
         assert_eq!(
             Response::parse(br#"{"type":"sessions","sessions":[]}"#).unwrap(),
             Response::Sessions {

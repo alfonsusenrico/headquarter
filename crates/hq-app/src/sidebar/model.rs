@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use hq_protocol::sidebar::{self, age};
-use hq_protocol::{GroupInfo, SessionInfo};
+use hq_protocol::{GroupColor, GroupInfo, SessionInfo};
 use hq_signals::event::Agent;
 use hq_signals::status::Status;
 
@@ -124,6 +124,9 @@ pub enum Item {
         total: usize,
         needing: usize,
         collapsed: bool,
+        /// The colour shown, and whether the owner picked it (add-group-colors).
+        color: GroupColor,
+        picked: Option<GroupColor>,
     },
     /// The line that adds a group; also a drop target.
     NewGroup,
@@ -203,6 +206,8 @@ pub fn items(
             total: section.sessions.len(),
             needing: section.needing,
             collapsed: group.collapsed,
+            color: group.shown_color(),
+            picked: group.color.as_deref().and_then(GroupColor::from_name),
         });
         if !group.collapsed {
             items.extend(
@@ -240,6 +245,7 @@ pub enum RailItem {
         initials: String,
         total: usize,
         waiting: bool,
+        color: GroupColor,
     },
     /// Separates "Needs you", the groups and the ungrouped sessions.
     Line,
@@ -263,6 +269,8 @@ pub fn rail_items(items: &[Item]) -> Vec<RailItem> {
                 total,
                 needing,
                 collapsed,
+                color,
+                ..
             } => {
                 line(&mut rail);
                 if *collapsed {
@@ -272,6 +280,7 @@ pub fn rail_items(items: &[Item]) -> Vec<RailItem> {
                         initials: initials(name),
                         total: *total,
                         waiting: *needing > 0,
+                        color: *color,
                     });
                 }
             }
@@ -514,6 +523,7 @@ mod tests {
             id,
             name: name.to_owned(),
             collapsed,
+            color: None,
         }
     }
 
@@ -630,6 +640,30 @@ mod tests {
     }
 
     #[test]
+    fn group_headers_carry_their_colour() {
+        let mut colored = groups(false);
+        colored[0].color = Some("red".into());
+        let items = items(&fixture(), &colored, None, NOW);
+        let headers: Vec<(i64, GroupColor, Option<GroupColor>)> = items
+            .iter()
+            .filter_map(|item| match item {
+                Item::GroupHeader {
+                    id, color, picked, ..
+                } => Some((*id, *color, *picked)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            headers.contains(&(colored[0].id, GroupColor::Red, Some(GroupColor::Red))),
+            "a picked colour wins: {headers:?}"
+        );
+        assert!(
+            headers.contains(&(2, GroupColor::Green, None)),
+            "otherwise the colour follows the id: {headers:?}"
+        );
+    }
+
+    #[test]
     fn collapsed_groups_hide_rows_but_not_needs_you() {
         let items = items(&fixture(), &groups(true), None, NOW);
         assert!(rows(&items, "web-ask").len() == 1, "only the pinned copy");
@@ -639,6 +673,8 @@ mod tests {
             total: 1,
             needing: 1,
             collapsed: true,
+            color: GroupColor::Green,
+            picked: None,
         }));
     }
 
@@ -743,6 +779,8 @@ mod tests {
             total: 1,
             needing: 1,
             collapsed: true,
+            color: GroupColor::Green,
+            picked: None,
         }];
         assert!(in_motion(&waiting));
         let open = [Item::GroupHeader {
@@ -751,6 +789,8 @@ mod tests {
             total: 1,
             needing: 1,
             collapsed: false,
+            color: GroupColor::Green,
+            picked: None,
         }];
         assert!(!in_motion(&open), "an open group shows its row instead");
     }

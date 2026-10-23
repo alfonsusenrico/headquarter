@@ -521,6 +521,11 @@ impl Host {
                                 .map(|()| Response::Done)
                                 .unwrap_or_else(|error| *error),
                         ),
+                        Request::SetGroupColor { group, color } => send(
+                            self.set_group_color(group, color.as_deref())
+                                .map(|()| Response::Done)
+                                .unwrap_or_else(|error| *error),
+                        ),
                         Request::SetGroup { session, group } => send(
                             self.set_group(&session, group)
                                 .map(|()| Response::Done)
@@ -1012,6 +1017,7 @@ impl Host {
                 id: row.id,
                 name: row.name,
                 collapsed: row.collapsed,
+                color: row.color,
             })
             .collect())
     }
@@ -1052,6 +1058,7 @@ impl Host {
             id,
             name,
             collapsed: false,
+            color: None,
         })
     }
 
@@ -1101,6 +1108,20 @@ impl Host {
         self.group_row(id)?;
         lock(&self.store)
             .set_group_collapsed(id, collapsed)
+            .map_err(storage_error)?;
+        self.broadcast_groups()
+    }
+
+    /// Picks a group's colour from the palette, or `None` for automatic.
+    fn set_group_color(&self, id: i64, color: Option<&str>) -> OpResult<()> {
+        self.group_row(id)?;
+        if let Some(name) = color
+            && hq_protocol::GroupColor::from_name(name).is_none()
+        {
+            return Err(bad_request(format!("`{name}` is not a group colour")));
+        }
+        lock(&self.store)
+            .set_group_color(id, color)
             .map_err(storage_error)?;
         self.broadcast_groups()
     }

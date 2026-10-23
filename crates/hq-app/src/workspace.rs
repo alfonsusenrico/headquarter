@@ -53,6 +53,8 @@ mod sidebar_view;
 
 use groups::{DraggedSession, GroupRename};
 
+/// How far a group's rows sit in from its header, where the group's colour line runs.
+const GROUP_LINE_INDENT: f32 = 12.0;
 /// Ages ("3m") are redrawn this often.
 const CLOCK: Duration = Duration::from_secs(30);
 const ROW_HEIGHT: f32 = 40.0;
@@ -177,6 +179,8 @@ pub struct Workspace {
     group_rename: Option<GroupRename>,
     /// The group waiting for "Delete group" to be confirmed.
     confirm_delete: Option<i64>,
+    /// The group whose colour picker is open (add-group-colors D3).
+    color_picker: Option<i64>,
     /// Where a dragged session would land now; drawn lit.
     drop_target: Option<Target>,
     /// The agents' marks present on this machine (`crate::marks`).
@@ -341,6 +345,7 @@ impl Workspace {
             look_appearance: appearance.clone(),
             group_rename: None,
             confirm_delete: None,
+            color_picker: None,
             drop_target: None,
             marks: Marks::default(),
             marks_setting: None,
@@ -1711,7 +1716,17 @@ impl Workspace {
                 total,
                 needing,
                 collapsed,
-            } => self.render_group_header(*id, name, *total, *needing, *collapsed, cx),
+                color,
+                picked,
+            } => self.render_group_header(
+                *id,
+                name,
+                *total,
+                *needing,
+                *collapsed,
+                (*color, *picked),
+                cx,
+            ),
             Item::NewGroup => self.render_new_group_line(cx),
             Item::UngroupedHeader { total } => self.render_ungrouped_header(*total),
             Item::Row(row) => self.render_row(row, window, cx),
@@ -1819,7 +1834,26 @@ impl Workspace {
                     .bg(hsla(chrome.text)),
             );
         }
-        line.into_any_element()
+        // A group's rows stand beside a line in the group's colour (add-group-colors D4).
+        let group_color = match row.section {
+            model::Section::Group(id) => self
+                .groups
+                .iter()
+                .find(|group| group.id == id)
+                .map(|group| self.theme.group_color(group.shown_color())),
+            model::Section::Pinned | model::Section::Ungrouped => None,
+        };
+        match group_color {
+            Some(color) => div()
+                .flex_none()
+                .ml(px(GROUP_LINE_INDENT))
+                .pl(px(4.))
+                .border_l_2()
+                .border_color(hsla(color))
+                .child(line)
+                .into_any_element(),
+            None => line.into_any_element(),
+        }
     }
 
     /// A row's title. The open session's title renames it when clicked (the pointer

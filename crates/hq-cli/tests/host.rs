@@ -2086,6 +2086,14 @@ fn sidebar_membership_and_groups() {
             group: first.id,
             collapsed: true,
         },
+        Request::SetGroupColor {
+            group: docs.id,
+            color: Some("green".into()),
+        },
+        Request::SetGroupColor {
+            group: first.id,
+            color: None,
+        },
         Request::SetGroup {
             session: hosted.id.clone(),
             group: Some(docs.id),
@@ -2124,6 +2132,28 @@ fn sidebar_membership_and_groups() {
         env.all_sessions().len(),
         known,
         "the refused start recorded nothing"
+    );
+    match env.connect().request(&Request::SetGroupColor {
+        group: docs.id,
+        color: Some("ultraviolet".into()),
+    }) {
+        Response::Error { code, message } => {
+            assert_eq!(code, ErrorCode::BadRequest);
+            assert!(message.contains("ultraviolet"), "{message}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    let listed = match env.connect().request(&Request::List {}) {
+        Response::Sessions { groups, .. } => groups,
+        other => panic!("unexpected {other:?}"),
+    };
+    let colors: Vec<(i64, Option<String>)> = listed
+        .iter()
+        .map(|group| (group.id, group.color.clone()))
+        .collect();
+    assert!(
+        colors.contains(&(docs.id, Some("green".into()))) && colors.contains(&(first.id, None)),
+        "picked and automatic colours are kept: {colors:?}"
     );
 
     // Seen clears "done, not read yet" and nothing else.

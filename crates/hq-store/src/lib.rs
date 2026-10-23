@@ -48,6 +48,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "interrupted",
         sql: include_str!("../migrations/0006_interrupted.sql"),
     },
+    Migration {
+        version: 7,
+        name: "group_color",
+        sql: include_str!("../migrations/0007_group_color.sql"),
+    },
 ];
 
 /// How a session entered the index.
@@ -140,6 +145,8 @@ pub struct GroupRow {
     /// The group's place among the groups, from 0.
     pub position: i64,
     pub collapsed: bool,
+    /// The picked colour's palette name; `None` is automatic.
+    pub color: Option<String>,
 }
 
 pub struct Store {
@@ -388,9 +395,9 @@ impl Store {
 
     /// The owner's groups, in the owner's order.
     pub fn groups(&self) -> Result<Vec<GroupRow>> {
-        let mut statement = self
-            .conn
-            .prepare("SELECT id, name, position, collapsed FROM groups ORDER BY position, id")?;
+        let mut statement = self.conn.prepare(
+            "SELECT id, name, position, collapsed, color FROM groups ORDER BY position, id",
+        )?;
         let groups = statement
             .query_map([], |row| {
                 Ok(GroupRow {
@@ -398,6 +405,7 @@ impl Store {
                     name: row.get(1)?,
                     position: row.get(2)?,
                     collapsed: row.get::<_, i64>(3)? == 1,
+                    color: row.get(4)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<GroupRow>>>()?;
@@ -461,6 +469,15 @@ impl Store {
         self.conn.execute(
             "UPDATE groups SET collapsed = ?2 WHERE id = ?1",
             params![id, i64::from(collapsed)],
+        )?;
+        Ok(())
+    }
+
+    /// Picks a group's colour by palette name, or `None` for automatic.
+    pub fn set_group_color(&self, id: i64, color: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE groups SET color = ?2 WHERE id = ?1",
+            params![id, color],
         )?;
         Ok(())
     }
@@ -1026,6 +1043,18 @@ mod tests {
         store.set_group_collapsed(docs, true).unwrap();
         let guides = store.group(docs).unwrap().unwrap();
         assert_eq!((guides.name.as_str(), guides.collapsed), ("Guides", true));
+        assert_eq!(guides.color, None, "a new group's colour is automatic");
+        store.set_group_color(docs, Some("green")).unwrap();
+        assert_eq!(
+            store.group(docs).unwrap().unwrap().color.as_deref(),
+            Some("green")
+        );
+        store.set_group_color(docs, None).unwrap();
+        assert_eq!(
+            store.group(docs).unwrap().unwrap().color,
+            None,
+            "back to automatic"
+        );
 
         store.set_session_group("a", Some(docs)).unwrap();
         assert_eq!(store.get("a").unwrap().unwrap().group_id, Some(docs));
