@@ -20,6 +20,10 @@ The system SHALL install the command line and the app for the owner's operating 
 - **WHEN** `~/.local/bin` is not on `PATH`
 - **THEN** the installer prints the line to add to the shell's start-up file
 
+#### Scenario: Linux window matched to its entry
+- **WHEN** Headquarter runs on a Linux desktop after the install line
+- **THEN** its window carries the app id `headquarter`, the desktop entry names the same window class, and the dock and window switcher show the Headquarter icon
+
 ### Requirement: Verified downloads
 The system SHALL verify every downloaded archive against its published SHA-256 before installing anything.
 
