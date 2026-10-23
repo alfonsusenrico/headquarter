@@ -52,9 +52,12 @@ pub fn read(
 ) -> (Appearance, Option<String>) {
     match watcher.current() {
         Ok(settings) => {
-            let mut notes: Vec<String> =
-                settings.warnings.iter().map(ToString::to_string).collect();
-            notes.extend(font_notes(&settings.appearance, &has_face));
+            // The font note first: only the app can tell it, so it must not be one of
+            // the "more" that `hq agents` lists.
+            let mut notes: Vec<String> = font_note(&settings.appearance, &has_face)
+                .into_iter()
+                .collect();
+            notes.extend(settings.warnings.iter().map(ToString::to_string));
             (settings.appearance, settings_note(&notes))
         }
         Err(error) => (
@@ -101,7 +104,6 @@ fn has_face(_family: &str, _style: &str) -> Option<bool> {
 /// The bold, italic or bold italic style as the settings file names it.
 struct NamedStyle<'a> {
     key: &'static str,
-    words: &'static str,
     style: Option<&'a str>,
     weight: Option<u16>,
     default_weight: FontWeight,
@@ -113,7 +115,6 @@ fn named_styles(font: &FontSettings) -> [NamedStyle<'_>; 3] {
     [
         NamedStyle {
             key: "font.bold",
-            words: "bold",
             style: font.bold_style.as_deref(),
             weight: font.bold_weight,
             default_weight: defaults.bold_weight,
@@ -121,7 +122,6 @@ fn named_styles(font: &FontSettings) -> [NamedStyle<'_>; 3] {
         },
         NamedStyle {
             key: "font.italic",
-            words: "italic",
             style: font.italic_style.as_deref(),
             weight: font.italic_weight,
             default_weight: defaults.italic_weight,
@@ -129,7 +129,6 @@ fn named_styles(font: &FontSettings) -> [NamedStyle<'_>; 3] {
         },
         NamedStyle {
             key: "font.bold_italic",
-            words: "bold italic",
             style: font.bold_italic_style.as_deref(),
             weight: font.bold_italic_weight,
             default_weight: defaults.bold_italic_weight,
@@ -150,21 +149,21 @@ fn falls_back(family: &str, style: Option<&str>, lookup: &FaceLookup) -> bool {
     style.is_some_and(|style| lookup(family, style) == Some(false))
 }
 
-/// One note per style the font has no face for (D3).
-fn font_notes(appearance: &Appearance, lookup: &FaceLookup) -> Vec<String> {
+/// One note naming every style the font has no face for (D3).
+fn font_note(appearance: &Appearance, lookup: &FaceLookup) -> Option<String> {
     let family = family_of(&appearance.font);
-    named_styles(&appearance.font)
+    let missing: Vec<String> = named_styles(&appearance.font)
         .into_iter()
         .filter(|named| falls_back(&family, named.style, lookup))
-        .map(|named| {
-            format!(
-                "{} style \"{}\" is not in {family}; {} text uses the normal face, as in Alacritty",
-                named.key,
-                named.style.unwrap_or_default(),
-                named.words,
-            )
-        })
-        .collect()
+        .map(|named| format!("{} \"{}\"", named.key, named.style.unwrap_or_default()))
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{} not in {family}; that text uses the normal face, as in Alacritty",
+        missing.join(" and ")
+    ))
 }
 
 pub fn pane_options(appearance: &Appearance) -> PaneOptions {
@@ -375,11 +374,10 @@ mod tests {
         assert_eq!(options.italic_weight, FontWeight::NORMAL, "Italic exists");
         assert!(options.italic_slanted);
         assert_eq!(
-            font_notes(&appearance, &jetbrains),
-            [
-                "font.bold style \"Heavy\" is not in JetBrainsMono Nerd Font; bold text uses the normal face, as in Alacritty",
-                "font.bold_italic style \"Heavy Italic\" is not in JetBrainsMono Nerd Font; bold italic text uses the normal face, as in Alacritty",
-            ]
+            font_note(&appearance, &jetbrains).as_deref(),
+            Some(
+                "font.bold \"Heavy\" and font.bold_italic \"Heavy Italic\" not in JetBrainsMono Nerd Font; that text uses the normal face, as in Alacritty"
+            )
         );
     }
 
@@ -390,11 +388,10 @@ mod tests {
         appearance.font.bold_weight = Some(800);
         let options = pane_options_with(&appearance, &jetbrains);
         assert_eq!(options.bold_weight, FontWeight::EXTRA_BOLD);
+        let note = font_note(&appearance, &jetbrains).unwrap_or_default();
         assert!(
-            !font_notes(&appearance, &jetbrains)
-                .iter()
-                .any(|note| note.starts_with("font.bold ")),
-            "no note for a face the font has"
+            !note.contains("font.bold \""),
+            "no mention of a face the font has: {note}"
         );
         let unchecked = pane_options_with(&owner_settings(), &unknown);
         assert_eq!(
@@ -402,7 +399,7 @@ mod tests {
             FontWeight::BLACK,
             "nothing changes where faces cannot be listed (Linux, unknown family)"
         );
-        assert!(font_notes(&owner_settings(), &unknown).is_empty());
+        assert_eq!(font_note(&owner_settings(), &unknown), None);
     }
 
     #[cfg(target_os = "macos")]

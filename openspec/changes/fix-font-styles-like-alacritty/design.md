@@ -20,5 +20,8 @@ macOS.
 
 ### D3. Said, not silent
 
-Each fallback adds a settings note, for example: `font.bold style "Heavy" is not in
-JetBrainsMono Nerd Font; bold text uses the normal face, as in Alacritty`.
+One settings note names every style that falls back, for example: `font.bold "Heavy"
+and font.bold_italic "Heavy Italic" not in JetBrainsMono Nerd Font; that text uses the
+normal face, as in Alacritty`. It comes before the settings file's own warnings: only
+the app can tell it, and the note's "and N more; see `hq agents`" must count only what
+`hq agents` lists (found on screen 2026-10-23).
