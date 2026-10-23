@@ -25,6 +25,10 @@ The system SHALL offer an Open sessions window (the sidebar's command field, Cmd
 - **WHEN** the owner picks a session running in another terminal and presses "Open 1"
 - **THEN** it appears in the sidebar marked "ext" with its status, the pane says it is running in another terminal, and the other process is unaffected
 
+#### Scenario: Rows line up
+- **WHEN** rows that can and cannot be picked are listed together
+- **THEN** their tags and ages line up in the same columns
+
 #### Scenario: Picking keeps the place
 - **WHEN** the owner scrolls halfway down and picks a session
 - **THEN** the row shows as picked and the list neither re-sorts nor scrolls

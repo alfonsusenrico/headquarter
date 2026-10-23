@@ -1300,6 +1300,19 @@ printf '%s\n' "$@" >> "$STUB_ARGS"
 sleep 30
 "#;
 
+/// Lists one Claude session with no known conversation while `$STUB_ARGS.outside`
+/// exists, and none otherwise.
+const CLAUDE_OUTSIDE_COMING_AND_GOING: &str = r#"if [ "$1" = "agents" ]; then
+  if [ -e "$STUB_ARGS.outside" ]; then
+    printf '[{"pid":1,"cwd":"%s","kind":"interactive","sessionId":"conv-unknown","startedAt":1000,"status":"waiting"}]\n' "$WORK"
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+sleep 30
+"#;
+
 const TITLE_SECRET: &str = "TITLE-SECRET-91";
 
 /// Answers `account/rateLimits/read` like `codex app-server`, recording each start;
@@ -1757,6 +1770,56 @@ fn outside_sessions_are_linked_and_block_resume() {
     let listed = String::from_utf8_lossy(&env.hq(&["ls"]).stdout).into_owned();
     assert!(listed.contains("working · external 1"), "{listed}");
     assert!(!listed.contains("needs you"), "{listed}");
+}
+
+#[test]
+fn clients_hear_outside_agents_come_and_go() {
+    let mut env = TestEnv::new("outgo");
+    env.stub("claude", CLAUDE_OUTSIDE_COMING_AND_GOING);
+    let mut daemon = env.command();
+    daemon.env("WORK", env.work());
+    env.daemons.push(
+        daemon
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    let mut app = env.connect();
+    assert!(matches!(
+        app.request(&Request::Subscribe { usage: false }),
+        Response::Done
+    ));
+    let flag = env.root.join("stub-args.txt.outside");
+    let entry = |session: &SessionInfo| {
+        session.origin == hq_protocol::Origin::External
+            && session.agent_session_id.as_deref() == Some("conv-unknown")
+    };
+
+    // Started after the app listed the sessions: reported without a new list.
+    std::fs::write(&flag, "").unwrap();
+    let appeared = loop {
+        match app.next_response() {
+            Response::SessionChanged { session } if entry(&session) => break session,
+            _ => continue,
+        }
+    };
+    assert!(appeared.offered);
+
+    // Exited: reported once more as no longer offered.
+    std::fs::remove_file(&flag).unwrap();
+    let gone = loop {
+        match app.next_response() {
+            Response::SessionChanged { session } if entry(&session) => break session,
+            _ => continue,
+        }
+    };
+    assert_eq!(gone.id, appeared.id);
+    assert!(!gone.offered);
 }
 
 impl TestEnv {

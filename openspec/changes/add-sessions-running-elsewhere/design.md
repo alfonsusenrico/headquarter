@@ -29,10 +29,30 @@ says "Closed in the other terminal." with an "Open here" button that resumes it,
 resuming at once (owner chose to decide each time), and reusing "<agent> stopped."
 (it reads as a failure in Headquarter).
 
-### D3. No host or protocol change
+### D3. No protocol change
 
 The list already carries `external` and its process id. Adding uses the existing add
 request. Nothing new is stored.
+
+### D4. Unlinked outside agents are kept current in clients
+
+The host lists unlinked outside agents (`Origin::External`, id
+`external-<agent>-<pid>`) in its answer to a list request, but sent no change when one
+appeared, linked or exited, so a client kept its first view. On screen, the dev host's
+first scan ran before its first history import: every Claude process was unlinked,
+linked seconds later, and the greyed rows stayed beside the linked ones.
+
+Each outside scan now compares its unlinked entries with the previous scan's: a new or
+changed entry is sent as a session change; one that is gone (linked or exited) is sent
+once more with `offered = false`, which clients already treat as "do not offer"
+(remove-conversations). Rejected: a new "session removed" message (a protocol change
+for what `offered` already says), and re-listing in the app on a timer (more traffic,
+and still stale between lists).
+
+### D5. Rows line up
+
+A row that cannot be picked keeps an empty slot the tick's width, so the tag and age
+columns line up with pickable rows.
 
 ## Failure behaviour
 

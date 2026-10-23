@@ -679,9 +679,11 @@ impl OpenSessions {
                     .child(row.age.clone()),
             )
             .child(self.render_more(row, cx));
-        if pickable {
-            line = line.child(super::tick(picked, chrome));
-        }
+        line = if pickable {
+            line.child(super::tick(picked, chrome))
+        } else {
+            line.child(div().flex_none().w(px(super::TICK_SIZE)))
+        };
         if picked {
             line = line.bg(super::tint(chrome, 0.16));
         } else if self.cursor == Some(index) {

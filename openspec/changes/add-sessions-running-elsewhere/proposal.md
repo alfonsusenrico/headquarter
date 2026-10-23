@@ -30,6 +30,13 @@ observed only. Only the app's Add sessions window refuses it.
   nothing has opened since its section was removed on 2026-10-22, is removed.
 - `hq-app` (`workspace.rs`): the details pane tells apart a session that was closed
   in another terminal while shown, with "Open here".
+- `hq-app` (`modal/open_sessions.rs`): a row that cannot be picked keeps the tick's
+  space, so tags and ages line up with pickable rows (owner, on screen, 2026-10-23).
+- `hq-daemon` (`host/outside.rs`): outside agents with no known conversation are
+  reported to clients as they appear, and reported as no longer offered when they link
+  to a conversation or exit. Until now a client kept the unlinked rows from its first
+  list: the owner saw greyed "claude pid N" rows beside the same sessions linked, and
+  a new outside agent did not appear (found on screen 2026-10-23; also in 0.1.1).
 
 Decisions (owner, 2026-10-23): add it now and open it here later (rejected: taking
 it over by closing the other terminal, which would signal an outside process; and
@@ -40,7 +47,7 @@ the owner when the other terminal closes it (rejected: continuing it at once).
 
 - Headquarter never attaches to, signals, or ends the outside process; the boundary
   in `AGENTS.md` is unchanged.
-- No change to the host, the protocol, `hq add`, or the index.
+- No change to the protocol, `hq add`, or the index.
 
 ## Capabilities
 
@@ -58,4 +65,5 @@ their tests. Verified against the agent versions installed on 2026-10-23 (Claude
 
 ## Approval
 
-Approved by the owner on 2026-10-23 ("yes go ahead").
+Approved by the owner on 2026-10-23 ("yes go ahead"). The host fix for stale
+unlinked rows and the row alignment were added with the owner's approval the same day.
