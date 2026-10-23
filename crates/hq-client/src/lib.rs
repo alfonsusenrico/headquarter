@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 pub use hq_daemon::paths::HostPaths;
 use hq_protocol::{
-    AgentUsage, ErrorCode, Frame, GroupInfo, PROTOCOL_VERSION, Request, Response, SessionInfo,
-    host_protocol_in_refusal, read_frame, write_frame,
+    AgentUsage, ErrorCode, Frame, GroupInfo, PROTOCOL_VERSION, RemoveWay, Request, Response,
+    SessionInfo, host_protocol_in_refusal, read_frame, write_frame,
 };
 use hq_signals::details::SessionDetails;
 use hq_signals::event::Agent;
@@ -407,6 +407,17 @@ pub fn usage(paths: &HostPaths) -> Result<Vec<AgentUsage>> {
 /// Asks for a new reading; subscribers to usage receive it.
 pub fn refresh_usage(paths: &HostPaths) -> Result<()> {
     request_done(paths, &Request::RefreshUsage {})
+}
+
+/// Removes a past conversation from its agent, the way that agent allows.
+pub fn remove_conversation(paths: &HostPaths, session: &str, way: RemoveWay) -> Result<()> {
+    request_done(
+        paths,
+        &Request::RemoveConversation {
+            session: session.to_owned(),
+            way,
+        },
+    )
 }
 
 /// Continues an ended session's conversation in Headquarter.

@@ -17,6 +17,10 @@ usage quota. Targets macOS and Linux.
     integration is passed per launch (`--settings`, `-c`, environment);
   - persists prompt text or model output; the index keeps metadata only (ids, paths,
     timestamps, status, quota numbers).
+- **One exception to leaving agent data alone (owner, 2026-10-23):** removing a past
+  conversation the owner chose in Add sessions: Claude Code's transcript (and the folder
+  beside it) goes to the system Trash, Codex only through its own `archive` and
+  `delete`; agy is never changed (`host/remove.rs`).
 
 Capabilities: database
 Design surface: desktop application (session sidebar, terminal pane, quota footer)

@@ -1355,6 +1355,106 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
         .any(|window| window == needle.as_bytes())
 }
 
+/// Removing past conversations: Claude Code's transcript and the folder beside it go
+/// to the Trash, Codex runs its own archive and delete, agy is refused, and a removed
+/// conversation is no longer offered.
+#[test]
+fn past_conversations_are_removed_the_way_their_agent_allows() {
+    let mut env = TestEnv::new("remove");
+    let transcript = env.claude_transcript("conv-gone", "Old work");
+    std::fs::create_dir_all(transcript.with_extension("").join("subagents")).unwrap();
+    let rollout = |id: &str| {
+        let path = env.root.join(format!(
+            "home/.codex/sessions/2026/10/20/rollout-{id}.jsonl"
+        ));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"{}\",\"source\":\"cli\"}}}}\n{{\"type\":\"response_item\",\"payload\":{{}}}}\n",
+                env.work().display()
+            ),
+        )
+        .unwrap();
+    };
+    rollout("11111111-1111-1111-1111-111111111111");
+    rollout("22222222-2222-2222-2222-222222222222");
+    env.stub(
+        "codex",
+        r#"echo "$@" >> "$STUB_ARGS"; [ "$1" = archive ] || [ "$1" = delete ]"#,
+    );
+    let trash = env.root.join("trash");
+    let mut daemon = env.command();
+    daemon.env("HQ_TRASH_DIR", &trash);
+    env.daemons.push(
+        daemon
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    let row = |env: &TestEnv, conversation: &str| {
+        env.sessions()
+            .into_iter()
+            .find(|session| session.agent_session_id.as_deref() == Some(conversation))
+    };
+    wait_until("history imported", || {
+        row(&env, "conv-gone").is_some()
+            && row(&env, "22222222-2222-2222-2222-222222222222").is_some()
+    });
+    let mut conn = env.connect();
+    let mut remove = |session: String, way: hq_protocol::RemoveWay| {
+        conn.request(&Request::RemoveConversation { session, way })
+    };
+
+    let claude = row(&env, "conv-gone").unwrap();
+    assert!(matches!(
+        remove(claude.id.clone(), hq_protocol::RemoveWay::Delete),
+        Response::Error {
+            code: ErrorCode::BadRequest,
+            ..
+        }
+    ));
+    assert!(matches!(
+        remove(claude.id.clone(), hq_protocol::RemoveWay::Trash),
+        Response::Done
+    ));
+    assert!(!transcript.exists());
+    assert!(trash.join("conv-gone.jsonl").is_file());
+    assert!(
+        trash.join("conv-gone/subagents").is_dir(),
+        "the folder beside it too"
+    );
+    assert_eq!(
+        row(&env, "conv-gone").map(|session| session.offered),
+        Some(false)
+    );
+
+    let archived = row(&env, "11111111-1111-1111-1111-111111111111").unwrap();
+    assert!(matches!(
+        remove(archived.id, hq_protocol::RemoveWay::Archive),
+        Response::Done
+    ));
+    let deleted = row(&env, "22222222-2222-2222-2222-222222222222").unwrap();
+    assert!(matches!(
+        remove(deleted.id, hq_protocol::RemoveWay::Delete),
+        Response::Done
+    ));
+    let ran = std::fs::read_to_string(env.root.join("stub-args.txt")).unwrap();
+    assert!(
+        ran.contains("archive 11111111-1111-1111-1111-111111111111"),
+        "{ran}"
+    );
+    assert!(
+        ran.contains("delete --force 22222222-2222-2222-2222-222222222222"),
+        "{ran}"
+    );
+}
+
 /// Add sessions offers a past conversation only while its agent keeps it and when the
 /// owner started it: a scripted run is not offered, and one the agent deleted stops
 /// being offered without the row going away.

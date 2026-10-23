@@ -6,6 +6,7 @@ mod close;
 mod details;
 mod history;
 mod outside;
+mod remove;
 mod usage;
 
 use std::collections::{HashMap, HashSet};
@@ -60,6 +61,8 @@ pub struct HostOptions {
     pub usage_interval: Duration,
     /// How often the agents' history is read again.
     pub history_interval: Duration,
+    /// Where removed Claude transcripts go instead of the system Trash (tests only).
+    pub trash_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -120,6 +123,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         idle_exit: options.idle_exit,
         usage_interval: options.usage_interval,
         history_interval: options.history_interval,
+        trash_dir: options.trash_dir,
         store: Mutex::new(store),
         live: Mutex::new(HashMap::new()),
         subscribers: Mutex::new(Vec::new()),
@@ -225,6 +229,7 @@ struct Host {
     idle_exit: Duration,
     usage_interval: Duration,
     history_interval: Duration,
+    trash_dir: Option<PathBuf>,
     store: Mutex<Store>,
     live: Mutex<HashMap<String, Arc<Hosted>>>,
     subscribers: Mutex<Vec<Subscriber>>,
@@ -480,6 +485,11 @@ impl Host {
                         ),
                         Request::Remove { sessions } => send(
                             self.remove_from_sidebar(&sessions)
+                                .map(|()| Response::Done)
+                                .unwrap_or_else(|error| *error),
+                        ),
+                        Request::RemoveConversation { session, way } => send(
+                            self.remove_conversation(&session, way)
                                 .map(|()| Response::Done)
                                 .unwrap_or_else(|error| *error),
                         ),
