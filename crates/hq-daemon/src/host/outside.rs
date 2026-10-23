@@ -335,6 +335,7 @@ fn unlinked_entry(session: &ExternalSession, external: External) -> SessionInfo 
         group: None,
         owner_named: false,
         interrupted: false,
+        offered: true,
     }
 }
 

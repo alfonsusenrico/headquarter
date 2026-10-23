@@ -75,15 +75,17 @@ pub fn day_heading(day: NaiveDate, today: NaiveDate) -> String {
     }
 }
 
-/// The sessions the window keeps: a conversation whose folder no longer exists cannot
-/// be continued, so it is left out; such folders are mostly temporary ones of
-/// automated runs (owner, 2026-10-23). One with no known folder stays.
+/// The sessions the window keeps: those the host offers (a conversation its agent still
+/// keeps, started by the owner) whose folder still exists, since neither a deleted
+/// conversation nor a removed folder can be continued (owner, 2026-10-23). One with no
+/// known folder stays.
 fn offerable(
     sessions: Vec<SessionInfo>,
     folder_exists: impl Fn(&Path) -> bool,
 ) -> Vec<SessionInfo> {
     sessions
         .into_iter()
+        .filter(|session| session.offered)
         .filter(|session| session.cwd.is_empty() || folder_exists(Path::new(&session.cwd)))
         .collect()
 }
@@ -864,6 +866,7 @@ mod tests {
             group: None,
             owner_named: false,
             interrupted: false,
+            offered: true,
         }
     }
 
@@ -871,16 +874,19 @@ mod tests {
     fn conversations_whose_folder_is_gone_are_not_offered() {
         let mut unknown = session("unknown", Agent::Agy, "", 1);
         unknown.cwd.clear();
+        let mut scripted = session("scripted", Agent::Claude, "/u/api", 3);
+        scripted.offered = false;
         let sessions = vec![
             session("here", Agent::Claude, "/u/api", 1),
             session("gone", Agent::Agy, "/tmp/eval-run/repo", 2),
             unknown,
+            scripted,
         ];
         let kept: Vec<String> = offerable(sessions, |folder| folder == Path::new("/u/api"))
             .into_iter()
             .map(|session| session.id)
             .collect();
-        assert_eq!(kept, ["here", "unknown"]);
+        assert_eq!(kept, ["here", "unknown"], "nor one the host does not offer");
     }
 
     fn fixture() -> Vec<SessionInfo> {

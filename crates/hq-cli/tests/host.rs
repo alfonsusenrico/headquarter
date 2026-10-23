@@ -1355,6 +1355,53 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
         .any(|window| window == needle.as_bytes())
 }
 
+/// Add sessions offers a past conversation only while its agent keeps it and when the
+/// owner started it: a scripted run is not offered, and one the agent deleted stops
+/// being offered without the row going away.
+#[test]
+fn past_conversations_are_offered_only_while_kept_and_owner_started() {
+    let mut env = TestEnv::new("offered");
+    let typed = env.claude_transcript("conv-typed", "Typed work");
+    let scripted = env.claude_transcript("conv-scripted", "Scripted work");
+    std::fs::write(
+        &scripted,
+        format!(
+            "{{\"type\":\"user\",\"cwd\":\"{}\",\"entrypoint\":\"sdk-cli\"}}\n",
+            env.work().display()
+        ),
+    )
+    .unwrap();
+    let mut daemon = env.command();
+    daemon.env("HQ_HISTORY_INTERVAL_SECS", "1");
+    env.daemons.push(
+        daemon
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    let offered = |env: &TestEnv, conversation: &str| {
+        env.sessions()
+            .into_iter()
+            .find(|session| session.agent_session_id.as_deref() == Some(conversation))
+            .map(|session| session.offered)
+    };
+    wait_until("both imported", || {
+        offered(&env, "conv-typed").is_some() && offered(&env, "conv-scripted").is_some()
+    });
+    assert_eq!(offered(&env, "conv-typed"), Some(true));
+    assert_eq!(offered(&env, "conv-scripted"), Some(false));
+
+    std::fs::remove_file(&typed).unwrap();
+    wait_until("the deleted conversation is no longer offered", || {
+        offered(&env, "conv-typed") == Some(false)
+    });
+}
+
 /// Claude Code writes a conversation's title after its first message, so the title
 /// often arrives in a later import pass than the conversation, with no new activity.
 #[test]

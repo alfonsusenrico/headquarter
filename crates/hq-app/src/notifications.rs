@@ -94,6 +94,7 @@ mod tests {
             group: None,
             owner_named: true,
             interrupted: false,
+            offered: true,
         }
     }
 

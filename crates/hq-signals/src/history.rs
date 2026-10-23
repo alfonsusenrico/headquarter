@@ -27,6 +27,10 @@ pub struct Conversation {
     pub last_activity_at: u64,
     /// For display only; never stored.
     pub title: Option<String>,
+    /// Whether the owner had it: false for a run a program started (`claude -p` or the
+    /// Agent SDK, `codex exec`) and for an agy conversation never used, which Add sessions
+    /// does not offer (offer-continuable-sessions).
+    pub offered: bool,
 }
 
 #[derive(Debug, Default)]
@@ -265,6 +269,7 @@ fn read_claude(path: &Path) -> Option<Conversation> {
     let mut cwd = None;
     let mut ai_title = None;
     let mut agent_name = None;
+    let mut entrypoint = None;
     for line in BufReader::new(File::open(path).ok()?)
         .lines()
         .map_while(Result::ok)
@@ -272,7 +277,8 @@ fn read_claude(path: &Path) -> Option<Conversation> {
         // Check cheaply before parsing; most lines are messages we never need.
         let wants_cwd = cwd.is_none() && line.contains("\"cwd\"");
         let wants_title = line.contains("ai-title") || line.contains("agent-name");
-        if !wants_cwd && !wants_title {
+        let wants_entrypoint = entrypoint.is_none() && line.contains("\"entrypoint\"");
+        if !wants_cwd && !wants_title && !wants_entrypoint {
             continue;
         }
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
@@ -280,6 +286,9 @@ fn read_claude(path: &Path) -> Option<Conversation> {
         };
         if wants_cwd {
             cwd = text(&record, "cwd");
+        }
+        if wants_entrypoint {
+            entrypoint = text(&record, "entrypoint");
         }
         match record.get("type").and_then(Value::as_str) {
             Some("ai-title") => ai_title = text(&record, "aiTitle").or(ai_title),
@@ -294,6 +303,8 @@ fn read_claude(path: &Path) -> Option<Conversation> {
         started_at,
         last_activity_at,
         title: agent_name.or(ai_title),
+        // `sdk-cli`, `sdk-ts`, …: started through `claude -p` or the Agent SDK.
+        offered: !entrypoint.is_some_and(|entrypoint| entrypoint.starts_with("sdk")),
     })
 }
 
@@ -332,6 +343,11 @@ fn read_codex_rollout(path: &Path) -> Option<Conversation> {
         return None;
     }
     let payload = line.get("payload")?;
+    // A sub-agent's rollout (`{"subagent": …}`) belongs to its parent's conversation.
+    let source = payload.get("source");
+    if source.is_some_and(Value::is_object) {
+        return None;
+    }
     Some(Conversation {
         agent: Agent::Codex,
         id: text(payload, "session_id").or_else(|| text(payload, "id"))?,
@@ -339,6 +355,7 @@ fn read_codex_rollout(path: &Path) -> Option<Conversation> {
         started_at,
         last_activity_at,
         title: None,
+        offered: source.and_then(Value::as_str) != Some("exec"),
     })
 }
 
@@ -353,7 +370,7 @@ fn read_agy(
     )?;
     connection.busy_timeout(std::time::Duration::from_millis(500))?;
     let mut statement = connection.prepare(
-        "SELECT conversation_id, title, workspace_uris, last_modified_time
+        "SELECT conversation_id, title, workspace_uris, last_modified_time, step_count
          FROM conversation_summaries
          WHERE COALESCE(nesting_depth, 0) = 0",
     )?;
@@ -363,12 +380,13 @@ fn read_agy(
             row.get::<_, Option<String>>(1)?,
             row.get::<_, Option<String>>(2)?,
             row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<i64>>(4)?,
         ))
     })?;
     let mut conversations = Vec::new();
     let mut skipped = 0;
     for row in rows {
-        let Ok((Some(id), title, workspaces, modified)) = row else {
+        let Ok((Some(id), title, workspaces, modified, steps)) = row else {
             skipped += 1;
             continue;
         };
@@ -394,6 +412,8 @@ fn read_agy(
             started_at,
             last_activity_at,
             title: title.filter(|title| !title.trim().is_empty()),
+            // Opened and left before a single step.
+            offered: steps.unwrap_or(0) > 0,
         });
     }
     Ok((conversations, skipped))
@@ -627,12 +647,12 @@ mod tests {
             .execute_batch(&format!(
                 "CREATE TABLE conversation_summaries (conversation_id TEXT, title TEXT NOT NULL DEFAULT '',
                      preview TEXT NOT NULL DEFAULT '', workspace_uris TEXT, last_modified_time datetime,
-                     nesting_depth INTEGER, not_fully_idle numeric);
+                     nesting_depth INTEGER, not_fully_idle numeric, step_count INTEGER NOT NULL DEFAULT 0);
                  INSERT INTO conversation_summaries VALUES
-                     ('c1', 'Ship hero', '{SECRET}', '[\"file:///w/my%20app\"]', '2026-10-20 04:47:39.447906+00:00', 0, 1),
-                     ('c2', '', '{SECRET}', '[\"file:///w/site\"]', '2026-10-19 00:00:00+00:00', NULL, 0),
-                     ('child', 'Sub', '{SECRET}', '[\"file:///w/site\"]', '2026-10-19 00:00:00+00:00', 1, 0),
-                     ('c3', 'Bad', '{SECRET}', '[\"https://example.com\"]', '2026-10-19 00:00:00+00:00', 0, 0);"
+                     ('c1', 'Ship hero', '{SECRET}', '[\"file:///w/my%20app\"]', '2026-10-20 04:47:39.447906+00:00', 0, 1, 12),
+                     ('c2', '', '{SECRET}', '[\"file:///w/site\"]', '2026-10-19 00:00:00+00:00', NULL, 0, 0),
+                     ('child', 'Sub', '{SECRET}', '[\"file:///w/site\"]', '2026-10-19 00:00:00+00:00', 1, 0, 4),
+                     ('c3', 'Bad', '{SECRET}', '[\"https://example.com\"]', '2026-10-19 00:00:00+00:00', 0, 0, 1);"
             ))
             .unwrap();
         path
@@ -659,13 +679,57 @@ mod tests {
         assert_eq!(c1.cwd, "/w/my app");
         assert_eq!(c1.title.as_deref(), Some("Ship hero"));
         assert_eq!(c1.last_activity_at, 1_792_471_659_447);
+        assert!(c1.offered);
         let c2 = report
             .conversations
             .iter()
             .find(|conversation| conversation.id == "c2")
             .unwrap();
         assert_eq!(c2.title, None);
+        assert!(!c2.offered, "opened and left before a single step");
         assert!(!format!("{report:?}").contains(SECRET));
+    }
+
+    #[test]
+    fn program_runs_and_sub_agents_are_told_apart() {
+        let fixture = Fixture::new("started-by");
+        fixture.write(
+            "claude/projects/-w/typed.jsonl",
+            r#"{"type":"user","cwd":"/w","entrypoint":"cli"}"#,
+        );
+        fixture.write(
+            "claude/projects/-w/scripted.jsonl",
+            r#"{"type":"user","cwd":"/w","entrypoint":"sdk-cli"}"#,
+        );
+        fixture.write(
+            "codex/sessions/rollout-cli.jsonl",
+            r#"{"type":"session_meta","payload":{"id":"cli","cwd":"/w","source":"cli"}}"#,
+        );
+        fixture.write(
+            "codex/sessions/rollout-exec.jsonl",
+            r#"{"type":"session_meta","payload":{"id":"exec","cwd":"/w","source":"exec"}}"#,
+        );
+        fixture.write(
+            "codex/sessions/rollout-sub.jsonl",
+            r#"{"type":"session_meta","payload":{"id":"sub","cwd":"/w","source":{"subagent":{"other":"guardian"}}}}"#,
+        );
+        let report = fixture.reader().scan();
+        let mut offered: Vec<(&str, bool)> = report
+            .conversations
+            .iter()
+            .map(|conversation| (conversation.id.as_str(), conversation.offered))
+            .collect();
+        offered.sort_unstable();
+        assert_eq!(
+            offered,
+            [
+                ("cli", true),
+                ("exec", false),
+                ("scripted", false),
+                ("typed", true)
+            ],
+            "a Codex sub-agent's rollout is not a conversation of its own"
+        );
     }
 
     #[test]

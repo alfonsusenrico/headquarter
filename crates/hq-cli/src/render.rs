@@ -256,6 +256,7 @@ mod tests {
             group: None,
             owner_named: false,
             interrupted: false,
+            offered: true,
         }
     }
 

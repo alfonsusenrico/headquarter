@@ -8,7 +8,7 @@ mod history;
 mod outside;
 mod usage;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read};
 use std::net::Shutdown;
@@ -130,6 +130,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         stopping: AtomicBool::new(false),
         history: Mutex::new(HistoryReader::new(HistoryRoots::standard())),
         titles: Mutex::new(HashMap::new()),
+        offered: Mutex::new(HashSet::new()),
         agy_conversations: Mutex::new(Vec::new()),
         outside: Mutex::new(outside::OutsideView::default()),
         outside_wake: outside::OutsideWake::default(),
@@ -236,6 +237,9 @@ struct Host {
     history: Mutex<HistoryReader>,
     /// Agent titles by (agent, conversation id), for display only; never stored.
     titles: Mutex<HashMap<(Agent, String), String>>,
+    /// The past conversations Add sessions offers, as the last history pass found them:
+    /// still kept by their agent, and started by the owner (offer-continuable-sessions).
+    offered: Mutex<HashSet<(Agent, String)>>,
     /// agy's top-level conversations as the last history pass read them, for linking
     /// agy processes in other terminals.
     agy_conversations: Mutex<Vec<outside::AgyConversation>>,
@@ -598,6 +602,12 @@ impl Host {
                 .cloned()
         });
         let external = lock(&self.outside).linked.get(&row.id).cloned();
+        let offered = match row.origin {
+            Origin::Hosted => true,
+            Origin::History => row.agent_session_id.as_ref().is_some_and(|conversation| {
+                lock(&self.offered).contains(&(row.agent, conversation.clone()))
+            }),
+        };
         SessionInfo {
             id: row.id,
             agent: row.agent,
@@ -620,6 +630,7 @@ impl Host {
             group: row.group_id,
             owner_named: row.owner_named,
             interrupted: row.interrupted_at.is_some(),
+            offered,
         }
     }
 
