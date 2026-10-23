@@ -3,7 +3,10 @@
 //! - Codex: `account/rateLimits/read` on a short-lived `codex app-server`.
 //! - Claude Code: `rate_limits` in the status line input of a session Headquarter
 //!   launched, saved as a snapshot.
-//! - agy: quota is only exposed through its file-configured status line.
+//! - agy: its own headless `/usage` command (`agy -p "/usage" --output-format json`,
+//!   agy 1.4), which starts no conversation and uses no model quota. agy keeps a
+//!   5-hour and a weekly window per pool of models; each pool's windows carry the
+//!   pool's name, as Claude's per-model windows do.
 //!
 //! What the limits belong to (a subscription and its plan, an API key, a cloud
 //! provider) comes from `account/read` for Codex and `claude auth status --json` for
@@ -377,20 +380,119 @@ pub fn migrate_snapshot(old: &Path, current: &Path) -> std::io::Result<bool> {
     Ok(true)
 }
 
-/// An agent whose usage Headquarter cannot read: one plain line for every such agent,
-/// "Agy usage not available", without how the agent keeps it (owner, 2026-10-23).
-pub fn not_available(agent: Agent) -> QuotaReport {
+/// The plain line for an agent whose usage Headquarter cannot read at all, the same
+/// for every agent: "Agy usage not available", without how the agent keeps it (owner,
+/// 2026-10-23).
+pub fn not_available_text(agent: Agent) -> String {
     let id = agent.id();
     let mut name = id[..1].to_uppercase();
     name.push_str(&id[1..]);
-    QuotaReport::Unavailable {
-        provider: agent,
-        reason: format!("{name} usage not available"),
+    format!("{name} usage not available")
+}
+
+/// Runs agy's headless `/usage` in `folder` and reads its windows. agy prints the
+/// answer once and exits; one that does not within `timeout` is stopped.
+pub fn read_agy(executable: &Path, folder: &Path, timeout: Duration, now: u64) -> QuotaReport {
+    let unavailable = |reason: String| QuotaReport::Unavailable {
+        provider: Agent::Agy,
+        reason,
+    };
+    let mut command = Command::new(executable);
+    command
+        .args(["-p", "/usage", "--output-format", "json"])
+        .current_dir(folder)
+        .env("PATH", hq_discovery::shell::agent_path(executable))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    for marker in crate::adapters::PARENT_SESSION_MARKERS {
+        command.env_remove(marker);
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => return unavailable(format!("cannot start agy: {error}")),
+    };
+    let Some(stdout) = child.stdout.take() else {
+        return unavailable("agy's output is not readable".to_owned());
+    };
+    let (done_tx, done_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut BufReader::new(stdout), &mut text);
+        let _ = done_tx.send(text);
+    });
+    let text = done_rx.recv_timeout(timeout);
+    let _ = child.kill();
+    let _ = child.wait();
+    let Ok(text) = text else {
+        return unavailable(format!("agy did not answer within {}s", timeout.as_secs()));
+    };
+    let windows = serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|answer| parse_agy_usage(&answer));
+    match windows {
+        Some(windows) => QuotaReport::Available(QuotaReading {
+            provider: Agent::Agy,
+            windows,
+            read_at: now,
+        }),
+        None => unavailable("agy's /usage answer had no usage windows".to_owned()),
     }
 }
 
-pub fn read_agy() -> QuotaReport {
-    not_available(Agent::Agy)
+/// The windows in agy's `/usage` answer: `command.data.groups[].buckets[]`, each with a
+/// `window` ("5h", "weekly"), the `remaining_fraction`, and a `reset_time` (RFC 3339).
+/// Windows of unknown length are left out; `None` when none is usable.
+pub fn parse_agy_usage(answer: &Value) -> Option<Vec<QuotaWindow>> {
+    if answer.get("status").and_then(Value::as_str) != Some("SUCCESS") {
+        return None;
+    }
+    let groups = answer.pointer("/command/data/groups")?.as_array()?;
+    let mut windows = Vec::new();
+    for group in groups {
+        let pool = group
+            .get("name")
+            .and_then(Value::as_str)
+            .map(pool_name)
+            .filter(|name| !name.is_empty());
+        for bucket in group
+            .get("buckets")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let minutes = match bucket.get("window").and_then(Value::as_str) {
+                Some("5h") => FIVE_HOURS_MINS,
+                Some("weekly") => WEEK_MINS,
+                _ => continue,
+            };
+            let Some(remaining) = bucket.get("remaining_fraction").and_then(Value::as_f64) else {
+                continue;
+            };
+            let resets_at = bucket
+                .get("reset_time")
+                .and_then(Value::as_str)
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .and_then(|at| u64::try_from(at.timestamp()).ok());
+            windows.push(QuotaWindow {
+                duration_mins: Some(minutes),
+                used_percent: ((1.0 - remaining) * 100.0).clamp(0.0, 100.0),
+                resets_at,
+                model: pool.clone(),
+            });
+        }
+    }
+    (!windows.is_empty()).then_some(windows)
+}
+
+/// "Gemini Models" → "Gemini", "Claude and GPT models" → "Claude and GPT".
+fn pool_name(name: &str) -> String {
+    let trimmed = name.trim();
+    let lower = trimmed.to_lowercase();
+    match lower.strip_suffix(" models") {
+        Some(rest) => trimmed[..rest.len()].to_owned(),
+        None => trimmed.to_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -534,14 +636,86 @@ mod tests {
     }
 
     #[test]
-    fn agy_is_unavailable_with_reason() {
-        match read_agy() {
-            QuotaReport::Unavailable { provider, reason } => {
-                assert_eq!(provider, Agent::Agy);
-                assert_eq!(reason, "Agy usage not available");
+    fn an_agent_without_a_usage_source_gets_one_plain_line() {
+        assert_eq!(not_available_text(Agent::Agy), "Agy usage not available");
+        assert_eq!(
+            not_available_text(Agent::Codex),
+            "Codex usage not available"
+        );
+    }
+
+    /// The shape agy 1.4.4 printed on 2026-10-23 (research/evidence/agy-usage).
+    fn agy_answer() -> Value {
+        json!({
+            "conversation_id": "",
+            "status": "SUCCESS",
+            "num_turns": 0,
+            "command": {
+                "name": "usage",
+                "data": {
+                    "description": "Quota",
+                    "groups": [
+                        {
+                            "name": "Gemini Models",
+                            "buckets": [
+                                {"id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.89, "reset_time": "2026-10-24T04:44:50Z"},
+                                {"id": "gemini-5h", "window": "5h", "remaining_fraction": 1.0, "reset_time": "2026-10-23T06:14:15Z"}
+                            ]
+                        },
+                        {
+                            "name": "Claude and GPT models",
+                            "buckets": [
+                                {"id": "3p-5h", "window": "5h", "remaining_fraction": 0.25, "reset_time": "2026-10-23T06:14:15Z"},
+                                {"id": "3p-daily", "window": "daily", "remaining_fraction": 0.5}
+                            ]
+                        },
+                        {
+                            "name": "Gemini 4 Argon",
+                            "buckets": [
+                                {"id": "gemini-argon-wtu-weekly", "window": "weekly", "remaining_fraction": 1.0, "reset_time": "2026-10-30T01:14:15Z"}
+                            ]
+                        }
+                    ]
+                }
             }
-            QuotaReport::Available(_) => panic!("agy quota should be unavailable"),
-        }
+        })
+    }
+
+    #[test]
+    fn agy_usage_gives_each_pool_its_windows() {
+        let windows = parse_agy_usage(&agy_answer()).unwrap();
+        let shown: Vec<(Option<u64>, i64, Option<&str>)> = windows
+            .iter()
+            .map(|window| {
+                (
+                    window.duration_mins,
+                    window.used_percent.round() as i64,
+                    window.model.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            vec![
+                (Some(WEEK_MINS), 11, Some("Gemini")),
+                (Some(FIVE_HOURS_MINS), 0, Some("Gemini")),
+                (Some(FIVE_HOURS_MINS), 75, Some("Claude and GPT")),
+                (Some(WEEK_MINS), 0, Some("Gemini 4 Argon")),
+            ],
+            "a window of unknown length is left out"
+        );
+        assert_eq!(windows[0].resets_at, Some(1_792_817_090));
+    }
+
+    #[test]
+    fn a_failed_or_empty_agy_answer_has_no_usage() {
+        let mut failed = agy_answer();
+        failed["status"] = json!("ERROR");
+        assert_eq!(parse_agy_usage(&failed), None);
+        assert_eq!(
+            parse_agy_usage(&json!({"status": "SUCCESS", "command": {"data": {"groups": []}}})),
+            None
+        );
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {

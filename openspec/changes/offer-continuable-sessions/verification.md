@@ -30,3 +30,8 @@ hide-gone-folders is archived; archive that change first.
 ## Not verified
 
 - On screen (task 1.4): waits for the owner.
+
+## On screen and final check (2026-10-23)
+
+- The owner confirmed it on the test build (`test/combined-build`).
+- `./scripts/check` on the branch as pushed: passed, 382 tests, 21 OpenSpec items (at 66e6ccc).

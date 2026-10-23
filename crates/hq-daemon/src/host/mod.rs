@@ -17,7 +17,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, mpsc};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -128,6 +128,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         live: Mutex::new(HashMap::new()),
         subscribers: Mutex::new(Vec::new()),
         usage: Mutex::new(usage::UsageBook::default()),
+        usage_settled: Condvar::new(),
         details: Mutex::new(details::DetailsBook::default()),
         clients: AtomicUsize::new(0),
         next_viewer: AtomicU64::new(1),
@@ -234,6 +235,8 @@ struct Host {
     live: Mutex<HashMap<String, Arc<Hosted>>>,
     subscribers: Mutex<Vec<Subscriber>>,
     usage: Mutex<usage::UsageBook>,
+    /// Signalled when a usage read finishes and its result has gone out.
+    usage_settled: Condvar,
     /// Sessions' details, in memory only.
     details: Mutex<details::DetailsBook>,
     clients: AtomicUsize,
@@ -1370,11 +1373,14 @@ impl Host {
         if status == Status::DoneUnread {
             self.resolve_conversation(hosted);
         }
-        if hosted.agent == Agent::Codex
-            && change.previous == Some(Status::Working)
+        if change.previous == Some(Status::Working)
             && matches!(status, Status::DoneUnread | Status::Done)
         {
-            self.codex_turn_ended();
+            match hosted.agent {
+                Agent::Codex => self.codex_turn_ended(),
+                Agent::Agy => self.agy_turn_ended(),
+                Agent::Claude => {}
+            }
         }
         self.broadcast(&hosted.id);
     }
