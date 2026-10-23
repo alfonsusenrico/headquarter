@@ -10,11 +10,11 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::CursorShape;
 use gpui::{
     App, Bounds, ClipboardItem, Context, ElementInputHandler, Entity, EntityInputHandler,
-    FocusHandle, Focusable, Font, FontStyle, FontWeight, Hsla, InteractiveElement, IntoElement,
-    KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, SharedString,
-    StrikethroughStyle, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, canvas,
-    div, fill, point, px, size,
+    ExternalPaths, FocusHandle, Focusable, Font, FontStyle, FontWeight, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent,
+    SharedString, StrikethroughStyle, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle,
+    Window, canvas, div, fill, point, px, size,
 };
 
 use super::frame::{self, Frame, TextStyle, Underline};
@@ -233,6 +233,16 @@ impl TerminalView {
             .update(cx, |session, cx| session.input(&bytes, cx));
     }
 
+    /// Files dropped on the pane are typed as their paths, as a paste (add-terminal-file-drop).
+    fn drop_paths(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+        let text = keys::dropped_paths(paths.paths());
+        if text.is_empty() {
+            return;
+        }
+        window.focus(&self.focus, cx);
+        self.paste(&text, cx);
+    }
+
     fn cell_at(&self, position: Point<Pixels>) -> Option<(usize, usize)> {
         let layout = self.layout.get()?;
         let x = (position.x - layout.origin.x) / layout.cell_width;
@@ -393,6 +403,7 @@ impl Render for TerminalView {
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_scroll_wheel(cx.listener(Self::scroll))
+            .on_drop(cx.listener(Self::drop_paths))
             .child(
                 canvas(
                     move |bounds, window, cx| {
