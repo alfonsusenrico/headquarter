@@ -215,6 +215,9 @@ pub struct OpenSessions {
     chrome: Chrome,
     live: Rgb,
     marks: Marks,
+    /// Whether the host's first list has arrived; until then the agents check in
+    /// where the sessions will be.
+    loaded: bool,
     _search_changes: Subscription,
 }
 
@@ -266,6 +269,7 @@ impl OpenSessions {
             chrome,
             live,
             marks,
+            loaded: true,
             _search_changes: search_changes,
         }
     }
@@ -282,6 +286,11 @@ impl OpenSessions {
     }
 
     /// New data from the host while the window is open; the order stays as it was.
+    pub fn set_loaded(&mut self, loaded: bool, cx: &mut Context<Self>) {
+        self.loaded = loaded;
+        cx.notify();
+    }
+
     pub fn update_sessions(&mut self, sessions: Vec<SessionInfo>, cx: &mut Context<Self>) {
         self.sessions = sessions;
         cx.notify();
@@ -815,10 +824,24 @@ impl Render for OpenSessions {
                     .min_h(px(0.))
                     .px(px(10.))
                     .children((count == 0).then(|| {
-                        div()
-                            .p(px(16.))
-                            .text_color(hsla(chrome.muted))
-                            .child("No sessions match.")
+                        if self.loaded {
+                            div()
+                                .p(px(16.))
+                                .text_color(hsla(chrome.muted))
+                                .child("No sessions match.")
+                                .into_any_element()
+                        } else {
+                            div()
+                                .pt(px(48.))
+                                .child(crate::loading::agents_checking_in(
+                                    "open-sessions-loading",
+                                    &self.marks,
+                                    28.,
+                                    chrome,
+                                    "Loading your sessions…",
+                                ))
+                                .into_any_element()
+                        }
                     }))
                     .child(list)
                     .child(Scrollbar::vertical(&self.scroll))
