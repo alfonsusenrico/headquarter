@@ -52,6 +52,8 @@ pub struct ColorSettings {
     pub background: Option<u32>,
     pub cursor: Option<u32>,
     pub selection: Option<u32>,
+    /// Selected text; `None` keeps each cell's colour (Alacritty's `CellForeground`).
+    pub selection_text: Option<u32>,
     pub normal: [Option<u32>; 8],
     pub bright: [Option<u32>; 8],
     pub dim: [Option<u32>; 8],
@@ -72,6 +74,7 @@ impl ColorSettings {
         pick(&mut self.background, over.background);
         pick(&mut self.cursor, over.cursor);
         pick(&mut self.selection, over.selection);
+        pick(&mut self.selection_text, over.selection_text);
         for index in 0..8 {
             pick(&mut self.normal[index], over.normal[index]);
             pick(&mut self.bright[index], over.bright[index]);
@@ -230,6 +233,7 @@ struct RawCursorColors {
 #[derive(Deserialize, Default)]
 struct RawSelectionColors {
     background: Option<toml::Spanned<String>>,
+    text: Option<toml::Spanned<String>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -551,6 +555,16 @@ pub(crate) fn colors(raw: &RawColors) -> Result<ColorSettings, (usize, String)> 
         background: parse(&raw.primary.background)?,
         cursor: parse(&raw.cursor.cursor)?,
         selection: parse(&raw.selection.background)?,
+        selection_text: match raw
+            .selection
+            .text
+            .as_ref()
+            .map(|text| text.get_ref().trim())
+        {
+            // Alacritty's cell keywords keep the cells' own colours.
+            Some("CellForeground" | "CellBackground") => None,
+            _ => parse(&raw.selection.text)?,
+        },
         normal: eight(&raw.normal)?,
         bright: eight(&raw.bright)?,
         dim: eight(&raw.dim)?,
@@ -594,6 +608,22 @@ fn key_name(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_text_colour_from_a_theme() {
+        // As in Catppuccin Mocha for Alacritty.
+        let mocha =
+            imported_colors("[colors.selection]\ntext = '#1E1E2E'\nbackground = '#F5E0DC'\n")
+                .unwrap();
+        assert_eq!(mocha.selection_text, Some(0x1E1E2E));
+        assert_eq!(mocha.selection, Some(0xF5E0DC));
+        let cells = imported_colors("[colors.selection]\ntext = 'CellForeground'\n").unwrap();
+        assert_eq!(
+            cells.selection_text, None,
+            "Alacritty's keyword keeps cell colours"
+        );
+        assert!(imported_colors("[colors.selection]\ntext = 'pink'\n").is_err());
+    }
 
     #[test]
     fn key_names_and_weights() {

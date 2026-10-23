@@ -14,6 +14,10 @@ terminal model received the request and dropped it.
   reach an agent that uses the mouse. Cmd-C copies the selection too.
 - Text copied by an agent through OSC 52 (for example Claude Code's own copy commands)
   lands on the system clipboard; agents still cannot read it.
+- A "Copied" note confirms each copy; copies are tidied (no trailing spaces, shared
+  margin or blank edges); selected text stays readable in themes with a light selection
+  block; a drag keeps going outside the pane and scrolls back through history past the
+  top or bottom (owner, on screen, 2026-10-23).
 
 ## What Changes
 
@@ -30,6 +34,11 @@ terminal model received the request and dropped it.
 - `hq-app` (`terminal/session.rs`): after each output chunk, kept copies go to the
   clipboard; on Linux the "selection" target goes to the primary selection, on macOS it
   is ignored as Alacritty does.
+
+- `hq-app` (`terminal/copy.rs`): tidying and the note's words; (`terminal/view.rs`) the
+  note, window-wide drag tracking and edge scrolling; (`terminal/frame.rs`, `theme.rs`)
+  the selection text colour.
+- `hq-config`: `colors.selection.text` is read (it was reported as unsupported).
 
 ## Non-goals
 
@@ -59,4 +68,5 @@ both).
 ## Approval
 
 Approved by the owner on 2026-10-23 ("Approve"; widened to drag selection with
-auto-copy for every agent, "Headquarter owns drags").
+auto-copy for every agent, "Headquarter owns drags"; then the note, tidying, readable
+selection and edge scrolling, "Approve").

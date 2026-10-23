@@ -6,6 +6,8 @@
 
 - [x] 1.2 Headquarter owns drags: select, copy on release; clicks without a drag go to an agent that uses the mouse. Verify with `drags_select_and_copy_while_clicks_reach_the_agent`. Done: passes; hq-app 141 tests, clippy clean (2026-10-23).
 
+- [x] 1.3 Copied note, tidy copies, selection text colour, drag tracking outside the pane and edge scrolling. Verify with `margins_trailing_spaces_and_blank_edges_go`, `a_selection_started_mid_row_keeps_the_others_margin_right`, `the_note_counts_lines`, `dragging_past_an_edge_scrolls_faster_further_out`, `selection_paints_its_background` (theme text colour) and `selection_text_colour_from_a_theme`. Done: pass; hq-app 146 tests, clippy clean (2026-10-23).
+
 Expected Result: `cargo test -p hq-app` passes.
 
 ## 2. On screen and delivery

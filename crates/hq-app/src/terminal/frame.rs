@@ -137,6 +137,11 @@ pub fn build(model: &TerminalModel) -> Frame {
         }
         if selection.is_some_and(|range| range.contains(indexed.point)) {
             back = Paint::solid(palette.selection).with_opacity(palette.opacity.selection);
+            // The theme's selected-text colour keeps selected text readable, as in
+            // Alacritty (fix-agent-clipboard-copy).
+            if let Some(text) = palette.selection_text {
+                foreground = Paint::solid(text);
+            }
         }
         if flags.contains(Flags::HIDDEN) {
             foreground = back;
@@ -426,6 +431,28 @@ mod tests {
         model.extend_selection(0, 5);
         let frame = build(&model);
         assert_eq!(frame.rows[0][2].background.rgb, palette.selection);
+        assert_eq!(
+            frame.rows[0][2].style.color.rgb, palette.foreground,
+            "no selection text colour: the cell keeps its own"
+        );
         assert_eq!(frame.rows[0][8].background.rgb, palette.background);
+
+        let mut themed = palette.clone();
+        themed.selection_text = Some(alacritty_terminal::vte::ansi::Rgb {
+            r: 0x1E,
+            g: 0x1E,
+            b: 0x2E,
+        });
+        model.set_palette(themed.clone());
+        let frame = build(&model);
+        assert_eq!(
+            frame.rows[0][2].style.color.rgb,
+            themed.selection_text.unwrap(),
+            "the theme's selected-text colour, as Catppuccin sets"
+        );
+        assert_eq!(
+            frame.rows[0][8].style.color.rgb, themed.foreground,
+            "outside it, unchanged"
+        );
     }
 }

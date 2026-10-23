@@ -237,6 +237,16 @@ impl TerminalModel {
         self.term.selection = None;
     }
 
+    /// Whether the selection starts after the first column of its row, so its first
+    /// line lacks the row's margin.
+    pub fn selection_starts_mid_row(&self) -> bool {
+        self.term
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.to_range(&self.term))
+            .is_some_and(|range| range.start.column.0 > 0)
+    }
+
     pub fn selected_text(&self) -> Option<String> {
         self.term
             .selection_to_string()

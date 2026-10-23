@@ -13,6 +13,14 @@ The system SHALL copy selected text to the system clipboard, SHALL put text the 
 - **WHEN** the owner selects text with the mouse inside Claude Code, which copies it with OSC 52
 - **THEN** the text is on the system clipboard, as in Alacritty
 
+#### Scenario: Copy confirmed
+- **WHEN** the owner releases a drag over three lines
+- **THEN** a note says "Copied 3 lines" at the bottom right of the pane for about 1.5 seconds
+
+#### Scenario: Tidy copy
+- **WHEN** the owner copies an indented reply whose lines end in spaces, with blank lines above and below
+- **THEN** the clipboard holds the lines without trailing spaces, without the margin they share, and without the blank lines at the ends
+
 #### Scenario: Agent asks to read the clipboard
 - **WHEN** an agent sends an OSC 52 request to read the clipboard
 - **THEN** nothing is sent back and the clipboard is unchanged
@@ -35,3 +43,11 @@ The system SHALL keep scrollback for the normal screen, SHALL select text when t
 #### Scenario: Word and line
 - **WHEN** the owner double-clicks a word, or triple-clicks a line
 - **THEN** the word or line is selected and copied
+
+#### Scenario: Dragging past the bottom
+- **WHEN** the owner drags from the pane to below its bottom edge on the normal screen
+- **THEN** the view scrolls through the output while the selection follows, faster the further below the pointer is
+
+#### Scenario: Readable selection
+- **WHEN** the theme sets a selection text colour, as Catppuccin does
+- **THEN** selected text is drawn in that colour on the selection background
