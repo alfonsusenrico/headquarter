@@ -6,7 +6,7 @@ How Headquarter picks up where the owner left off: the app reopens its window an
 ## Requirements
 
 ### Requirement: Window and view come back
-The system SHALL reopen the app with the window's last size and position, when they fit a connected display, and SHALL show the session that was shown when it still exists.
+The system SHALL reopen the app with the window's last size and position, when they fit a connected display, and SHALL show the session that was shown when it still exists and is still in the sidebar.
 
 #### Scenario: Reopened
 - **WHEN** the owner quits the app with the window on the right half of the screen showing session `api-fix`, and opens it again
@@ -15,6 +15,10 @@ The system SHALL reopen the app with the window's last size and position, when t
 #### Scenario: Shown session stopped meanwhile
 - **WHEN** the shown session's agent stopped before the app reopened
 - **THEN** the session is shown with its details and "Open again", and its agent is not restarted
+
+#### Scenario: Shown session left the sidebar
+- **WHEN** the session last shown was closed or removed from the sidebar before the app reopened
+- **THEN** the app opens without showing that session
 
 #### Scenario: Display gone
 - **WHEN** the last position was on an external display that is no longer connected

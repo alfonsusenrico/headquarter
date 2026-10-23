@@ -29,7 +29,7 @@ The system SHALL show in the sidebar only sessions the owner has added and sessi
 - **THEN** the sidebar holds the same sessions
 
 ### Requirement: Add sessions
-The system SHALL offer an Open sessions window (the sidebar's command field, Cmd-O or Ctrl-Shift-O) that lists, by provider, every session not in the sidebar: those running in another terminal first, the rest newest first by day. It SHALL add the sessions the owner picks to the sidebar in no group and show the first.
+The system SHALL offer an Open sessions window (the sidebar's command field, Cmd-O or Ctrl-Shift-O) that lists, by provider, every session not in the sidebar, newest first by day, with a session running in another terminal greyed in its place, tagged "In another terminal", and not pickable, because that terminal owns it. It SHALL add the sessions the owner picks to the sidebar in no group and show the first.
 
 #### Scenario: Several sessions added
 - **WHEN** the owner opens the window, picks three conversations and presses "Open 3"
@@ -45,7 +45,7 @@ The system SHALL offer an Open sessions window (the sidebar's command field, Cmd
 
 #### Scenario: Running elsewhere
 - **WHEN** a Claude session runs in another terminal with a known conversation
-- **THEN** it is listed under "Running in another terminal" with a live mark and an "i" that explains it when clicked, and can be picked to watch it
+- **THEN** it is listed in date order, greyed, tagged "In another terminal", and cannot be picked
 
 #### Scenario: Picking keeps the place
 - **WHEN** the owner scrolls halfway down and picks a session
@@ -65,7 +65,7 @@ The system SHALL offer an Open sessions window (the sidebar's command field, Cmd
 
 #### Scenario: Outside session without a conversation
 - **WHEN** an agent runs in another terminal and no conversation is linked to it
-- **THEN** it is listed greyed with the reason it cannot be added yet, cannot be picked, and never appears in the sidebar
+- **THEN** it is listed greyed, tagged "In another terminal", cannot be picked, and never appears in the sidebar
 
 #### Scenario: Unknown session from the command line
 - **WHEN** the owner runs `hq add` naming one known session and one unknown name
@@ -442,3 +442,52 @@ The app SHALL draw the sidebar's motion, a working row's "working" word and the 
 #### Scenario: Reduced motion
 - **WHEN** the operating system asks for reduced motion and a session is working
 - **THEN** the "working" word is drawn still and the app draws no frames for it
+
+### Requirement: Folder search leaves media libraries alone
+The system SHALL NOT read the Music, Movies or Pictures folders directly in the home folder, nor package folders such as apps and media libraries, while it searches for project folders.
+
+#### Scenario: Opening the New session window
+- **WHEN** the owner opens the New session window on macOS
+- **THEN** macOS does not ask whether Headquarter may access Apple Music, the photo library or videos
+
+#### Scenario: A project's own media folder
+- **WHEN** a project folder contains a folder named `Music`
+- **THEN** that folder is still found by name
+
+### Requirement: Add sessions offers only continuable conversations
+The system SHALL leave out of Add sessions, and out of its counts, every conversation the host does not offer and every conversation whose working folder no longer exists, SHALL keep a session whose folder is unknown, and SHALL NOT delete such conversations from any agent's history or from its index.
+
+#### Scenario: Conversation from a removed temporary folder
+- **WHEN** an agy conversation was run in a temporary folder that has since been removed
+- **THEN** Add sessions does not list it, and `hq ls --all` still does
+
+#### Scenario: Folder still there
+- **WHEN** a conversation's folder exists
+- **THEN** Add sessions lists it as before
+
+#### Scenario: Not offered by the host
+- **WHEN** the host reports a conversation as not offered, such as a `codex exec` run or one Claude Code deleted
+- **THEN** Add sessions does not list it, for every agent alike
+
+### Requirement: Removing past conversations
+The system SHALL offer, on each Add sessions row whose conversation is not running, a menu to remove it from its agent the way that agent allows: Claude Code's transcript and the folder beside it to the system Trash, Codex through its own archive or permanent delete, and nothing for agy; SHALL let Move to Trash and Archive be undone for 5 seconds before they take effect, SHALL ask before Delete permanently, and SHALL keep the menu's space on rows without one so their ages line up.
+
+#### Scenario: Claude conversation to the Trash
+- **WHEN** the owner chooses Move to Trash on a past Claude Code conversation and lets the toast pass
+- **THEN** its transcript and the folder beside it are in the Trash, and the row is gone from Add sessions
+
+#### Scenario: Undo
+- **WHEN** the owner chooses Archive on a Codex conversation and presses Undo within 5 seconds
+- **THEN** the row comes back and Codex is not called
+
+#### Scenario: Permanent delete
+- **WHEN** the owner chooses Delete permanently on a Codex conversation
+- **THEN** a confirmation says it cannot be undone, and only after Delete does Headquarter run `codex delete --force` with its id
+
+#### Scenario: agy and running sessions
+- **WHEN** a row is an agy conversation, or a session running here or in another terminal
+- **THEN** it has no menu, and its age lines up with the other rows
+
+#### Scenario: Agent refuses
+- **WHEN** Codex fails to archive or delete
+- **THEN** the row comes back with a note that it could not be removed, and the host log names the agent and the way only
