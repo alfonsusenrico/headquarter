@@ -55,6 +55,12 @@ run() {
     sh "$repo/scripts/install.sh" "${3:-}" >"$1/out" 2>&1
 }
 
+# As the app's updater runs it.
+run_with_progress() {
+  HOME=$1 HQ_INSTALL_FROM=$2 HQ_PROGRESS=1 PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    sh "$repo/scripts/install.sh" >"$1/out" 2>&1
+}
+
 # Install.
 if [ "$(uname -s)" = Darwin ]; then searched=$(security list-keychains -d user); fi
 home=$root/home
@@ -64,6 +70,7 @@ check "install succeeds" 'run "$home" "$release"'
 check "hq and headquarter installed" '[ -x "$home/.local/bin/hq" ] && [ -x "$home/.local/bin/headquarter" ]'
 check "PATH advice printed" 'grep -q "is not on your PATH" "$home/out"'
 check "version read from the release" 'grep -q "Installed Headquarter 9.8.7" "$home/out"'
+check "no progress lines unless asked" '! grep -q "^progress " "$home/out"'
 if [ "$(uname -s)" = Darwin ]; then
   app=$home/Applications/Headquarter.app
   check "bundle assembled" '[ -x "$app/Contents/MacOS/headquarter-app" ] && [ -x "$app/Contents/MacOS/hq" ] && [ -f "$app/Contents/Resources/Headquarter.icns" ]'
@@ -83,8 +90,9 @@ else
 fi
 check "manifest lists only home paths" '! grep -v "^$home/" "$home/.local/share/headquarter/install-manifest"'
 
-# A second run updates in place.
-check "reinstall succeeds" 'run "$home" "$release"'
+# A second run updates in place, as the app's updater runs it, with progress lines.
+check "reinstall succeeds" 'run_with_progress "$home" "$release"'
+check "progress lines in order" '[ "$(grep "^progress " "$home/out" | tr "\n" " ")" = "progress download progress verify progress install progress done 9.8.7 " ]'
 if [ "$(uname -s)" = Darwin ]; then
   check "reinstall keeps the certificate" '[ "$(certificate)" = "$first_certificate" ]'
 fi

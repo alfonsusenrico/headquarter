@@ -11,6 +11,7 @@
 #   HQ_INSTALL_DIR   where the commands go (default ~/.local/bin)
 #   HQ_VERSION       a release such as 0.1.0 (default: the latest)
 #   HQ_INSTALL_FROM  a folder holding the release archives, instead of downloading
+#   HQ_PROGRESS      1 adds a "progress <step>" line per step, for the app's updater
 set -eu
 
 REPO=alfonsusenrico/headquarter
@@ -25,6 +26,9 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 
 say() { printf '%s\n' "$*"; }
 fail() { printf 'headquarter install: %s\n' "$*" >&2; exit 1; }
+progress() {
+  if [ "${HQ_PROGRESS:-}" = 1 ]; then say "progress $*"; fi
+}
 
 target() {
   case $(uname -m) in
@@ -251,11 +255,16 @@ install() {
   target=$(target)
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT INT TERM
+  progress download
   for package in hq-cli hq-app; do
     fetch "$package-$target.tar.gz" "$work"
+  done
+  progress verify
+  for package in hq-cli hq-app; do
     verify "$work/$package-$target.tar.gz"
   done
   # Everything is verified; only now is anything unpacked or installed.
+  progress install
   for package in hq-cli hq-app; do
     mkdir -p "$work/$package"
     tar -xzf "$work/$package-$target.tar.gz" -C "$work/$package"
@@ -272,6 +281,7 @@ install() {
     *) install_linux_app "$work/hq-app" ;;
   esac
   mv -f "$MANIFEST.new" "$MANIFEST"
+  progress done "$version"
 
   say "Installed Headquarter $version."
   case $target in
