@@ -2645,13 +2645,41 @@ impl Workspace {
                             .map(|error| format!("Couldn't start: {}", error.reason))
                     });
                 let folder = hq_protocol::sidebar::home_path(&session.cwd, self.home.as_deref());
+                // With its folder gone the agent cannot start there, so the pane offers
+                // to remove the session instead (owner, 2026-10-24).
+                let folder_gone = !std::path::Path::new(&session.cwd).is_dir();
+                let reason = if folder_gone {
+                    Some(format!("The folder {folder} no longer exists."))
+                } else {
+                    reason
+                };
+                let action = if folder_gone {
+                    Button::new("pane-remove")
+                        .danger()
+                        .label("Remove from Sidebar")
+                        .on_click(cx.listener({
+                            let id = id.clone();
+                            move |this, _, _, cx| this.request_close(id.clone(), cx)
+                        }))
+                } else {
+                    Button::new("pane-resume")
+                        .primary()
+                        .label("Resume Session")
+                        .on_click(cx.listener({
+                            let id = id.clone();
+                            move |this, _, window, cx| this.resume(id.clone(), window, cx)
+                        }))
+                };
                 centred
                     .id("pane-inactive")
                     .track_focus(&self.pane_focus)
                     .on_key_down(cx.listener({
                         let id = id.clone();
                         move |this, event: &KeyDownEvent, window, cx| {
-                            if event.keystroke.key == "enter" && this.resuming.is_none() {
+                            if event.keystroke.key == "enter"
+                                && this.resuming.is_none()
+                                && !folder_gone
+                            {
                                 cx.stop_propagation();
                                 this.resume(id.clone(), window, cx);
                             }
@@ -2676,14 +2704,7 @@ impl Workspace {
                             .text_color(hsla(chrome.amber))
                             .child(reason)
                     }))
-                    .child(
-                        Button::new("pane-resume")
-                            .primary()
-                            .label("Resume Session")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.resume(id.clone(), window, cx)
-                            })),
-                    )
+                    .child(action)
                     .into_any_element()
             }
         }
