@@ -230,11 +230,13 @@ pub fn parse_claude_agents(json: &str) -> Result<Vec<ExternalSession>, String> {
 }
 
 /// One Claude Code session, as `claude agents --json` lists it and as its session
-/// record stores it (the same fields, seen in 2.1.303 to 2.1.306).
+/// record stores it (the same fields, seen in 2.1.303 to 2.1.310). "shell" (seen in
+/// 2.1.310) means its turn ended while background shell commands still run: work for
+/// the session, so working (fix-claude-shell-status).
 fn claude_entry(entry: &Value) -> ExternalSession {
     let text = |key: &str| entry.get(key).and_then(Value::as_str).map(str::to_owned);
     let status = match (text("status").as_deref(), text("state").as_deref()) {
-        (Some("busy"), _) | (_, Some("working")) => Some(Status::Working),
+        (Some("busy" | "shell"), _) | (_, Some("working")) => Some(Status::Working),
         (Some("waiting"), _) | (_, Some("blocked")) => Some(Status::NeedsYou),
         (Some("idle"), _) | (_, Some("done" | "failed")) => Some(Status::Done),
         (_, Some("stopped")) => Some(Status::Inactive),
@@ -663,7 +665,8 @@ mod tests {
             {"pid": 11, "cwd": "/b", "kind": "interactive", "sessionId": "s2", "status": "waiting", "waitingFor": "permission prompt"},
             {"pid": 12, "cwd": "/c", "kind": "interactive", "sessionId": "s3", "status": "idle"},
             {"cwd": "/d", "kind": "background", "id": "b1", "state": "stopped"},
-            {"cwd": "/e", "kind": "interactive", "status": "something-new"}
+            {"cwd": "/e", "kind": "interactive", "status": "something-new"},
+            {"pid": 13, "cwd": "/f", "kind": "interactive", "sessionId": "s4", "status": "shell"}
         ]"#;
         let sessions = parse_claude_agents(json).unwrap();
         let statuses: Vec<Option<Status>> = sessions.iter().map(|s| s.status).collect();
@@ -674,7 +677,8 @@ mod tests {
                 Some(Status::NeedsYou),
                 Some(Status::Done),
                 Some(Status::Inactive),
-                None
+                None,
+                Some(Status::Working)
             ]
         );
         assert_eq!(sessions[0].started_at, Some(1792000000));

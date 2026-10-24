@@ -129,3 +129,7 @@ The system SHALL show a session as working while its agent runs work for it in t
 #### Scenario: Background state unavailable
 - **WHEN** `claude agents --json` fails
 - **THEN** the Claude session's status follows its own reports alone
+
+#### Scenario: Claude Code records "shell"
+- **WHEN** a hosted Claude Code session ends its turn while its background shell command runs, and its session record says "shell"
+- **THEN** the session shows working until the record changes, without waiting for `claude agents --json`
