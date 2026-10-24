@@ -26,6 +26,8 @@ pub struct Settings {
     pub login_shell: bool,
     pub appearance: Appearance,
     pub notifications: Notifications,
+    /// Whether the app checks for new releases by itself (add-in-app-update D8).
+    pub check_updates: bool,
     /// Settings that were read but have no effect, such as unsupported Alacritty keys.
     pub warnings: Vec<SettingsError>,
     /// Imported files, watched for changes like the settings file itself.
@@ -63,6 +65,7 @@ impl Default for Settings {
             login_shell: true,
             appearance: Appearance::default(),
             notifications: Notifications::default(),
+            check_updates: true,
             warnings: Vec::new(),
             imports: Vec::new(),
         }
@@ -122,6 +125,8 @@ struct RawSettings {
     #[serde(default)]
     notifications: RawNotifications,
     #[serde(default)]
+    updates: RawUpdates,
+    #[serde(default)]
     general: appearance::RawGeneral,
     #[serde(default)]
     window: appearance::RawWindow,
@@ -152,6 +157,11 @@ struct RawDiscovery {
 struct RawNotifications {
     needs_you: Option<bool>,
     replied: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawUpdates {
+    check: Option<bool>,
 }
 
 /// Where the settings file lives: `$XDG_CONFIG_HOME/headquarter/config.toml`, or in
@@ -236,6 +246,9 @@ pub fn parse(
     }
     if let Some(replied) = raw.notifications.replied {
         settings.notifications.replied = replied;
+    }
+    if let Some(check) = raw.updates.check {
+        settings.check_updates = check;
     }
     for (id, agent) in raw.agents {
         if !known_agents.contains(&id.as_str()) {
@@ -405,6 +418,20 @@ mod tests {
         assert_eq!(wrong.line, Some(2));
         let unknown = parse_text("[notifications]\nreplies = false\n").unwrap_err();
         assert!(unknown.message.contains("replies"), "{unknown}");
+    }
+
+    #[test]
+    fn update_checks_are_on_unless_turned_off() {
+        assert!(parse_text("").unwrap().check_updates);
+        assert!(
+            !parse_text("[updates]\ncheck = false\n")
+                .unwrap()
+                .check_updates
+        );
+        let wrong = parse_text("[updates]\ncheck = \"no\"\n").unwrap_err();
+        assert_eq!(wrong.line, Some(2));
+        let unknown = parse_text("[updates]\nchannel = \"beta\"\n").unwrap_err();
+        assert!(unknown.message.contains("channel"), "{unknown}");
     }
 
     #[test]

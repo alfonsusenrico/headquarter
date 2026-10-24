@@ -11,6 +11,7 @@ actions!(
     headquarter,
     [
         About,
+        CheckForUpdates,
         ThemeSwitcher,
         Hide,
         HideOthers,
@@ -58,6 +59,7 @@ pub fn install(cx: &mut App) {
     cx.set_menus(vec![
         Menu::new("Headquarter").items([
             MenuItem::action("About Headquarter", About),
+            MenuItem::action("Check for Updates…", CheckForUpdates),
             MenuItem::separator(),
             MenuItem::action("Themes…", ThemeSwitcher),
             MenuItem::separator(),

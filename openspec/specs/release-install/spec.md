@@ -57,7 +57,7 @@ On macOS the app SHALL show its name, Headquarter, in the menu bar, the Dock and
 
 #### Scenario: Installed app
 - **WHEN** the owner opens Headquarter.app
-- **THEN** the menu bar reads "Headquarter" with About Headquarter, Themes (⌘G), Hide (⌘H), Hide Others and Quit (⌘Q), an Edit menu with Copy and Paste, and a Window menu with Minimize (⌘M), New Session (⌘N) and Open Sessions (⌘O)
+- **THEN** the menu bar reads "Headquarter" with About Headquarter, Check for Updates…, Themes (⌘G), Hide (⌘H), Hide Others and Quit (⌘Q), an Edit menu with Copy and Paste, and a Window menu with Minimize (⌘M), New Session (⌘N) and Open Sessions (⌘O)
 
 #### Scenario: Menu item
 - **WHEN** the owner chooses Window > New Session
@@ -89,3 +89,14 @@ On macOS the installer SHALL sign the app bundle with a self-signed code-signing
 #### Scenario: Uninstall
 - **WHEN** the owner uninstalls Headquarter
 - **THEN** the keychain file with the certificate is removed with the rest
+
+### Requirement: Installer progress
+The installer SHALL, when `HQ_PROGRESS=1` is set, print one line per step (`progress download`, `progress verify`, `progress install`, `progress done <version>`) besides its usual output, and SHALL print nothing new without it.
+
+#### Scenario: Progress asked for
+- **WHEN** the installer runs with `HQ_PROGRESS=1`
+- **THEN** its output holds `progress download`, `progress verify`, `progress install` and `progress done 0.1.9` in that order
+
+#### Scenario: Not asked for
+- **WHEN** the installer runs without `HQ_PROGRESS`
+- **THEN** its output has no progress lines

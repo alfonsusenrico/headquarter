@@ -51,6 +51,7 @@ mod header;
 mod rail;
 mod shell;
 mod sidebar_view;
+mod update;
 
 use groups::{DraggedSession, GroupRename};
 
@@ -248,6 +249,10 @@ pub struct Workspace {
     watcher: SettingsWatcher,
     /// Which system notifications to post (add-notifications D4).
     notifications: hq_config::Notifications,
+    /// Whether to check for new releases by itself (`[updates] check`).
+    check_updates: bool,
+    /// New releases and the update in progress (add-in-app-update).
+    updates: update::Updates,
     _list: Task<()>,
     _reload: Task<()>,
     _clock: Task<()>,
@@ -393,6 +398,8 @@ impl Workspace {
             appearance,
             settings_note,
             notifications: hq_config::Notifications::default(),
+            check_updates: true,
+            updates: update::Updates::new(),
             watcher,
             _list: list,
             _reload: reload,
@@ -409,6 +416,7 @@ impl Workspace {
                 .collect(),
         };
         workspace.notifications = settings::notifications(&mut workspace.watcher, None);
+        workspace.check_updates = settings::check_updates(&mut workspace.watcher, None);
         workspace.listen_for_notification_clicks(window, cx);
         // Outside an app bundle macOS shows none of the app's notifications (D5).
         if cfg!(target_os = "macos") && cx.app_path().is_err() {
@@ -509,6 +517,7 @@ impl Workspace {
             return;
         }
         self.notifications = settings::notifications(&mut self.watcher, Some(self.notifications));
+        self.check_updates = settings::check_updates(&mut self.watcher, Some(self.check_updates));
         let (appearance, note) = settings::read(&mut self.watcher, Some(&self.appearance));
         if appearance == self.appearance && note == self.settings_note {
             return;
@@ -661,8 +670,13 @@ impl Workspace {
                 self.sessions = sessions;
                 self.groups = groups;
                 self.usage = usage;
+                let first = !self.listed;
                 self.listed = true;
                 self.show_kept_session(window, cx);
+                if first {
+                    self.schedule_update_checks(window, cx);
+                    self.check_host_version(window, cx);
+                }
             }
             ListEvent::Usage(usage) => self.usage = usage,
             ListEvent::Changed(session) => self.upsert(session, window, cx),
@@ -685,6 +699,7 @@ impl Workspace {
             }
         }
         self.tell_start_failures(cx);
+        self.restart_if_idle(window, cx);
         if let Some(Modal::Open { view: window, .. }) = &self.modal {
             let sessions = self.sessions.clone();
             let loaded = self.listed;
@@ -972,6 +987,7 @@ impl Workspace {
         // While the host starts, the pane shows it; the sidebar stays quiet.
         let empty_state = (empty && !rail && self.listed)
             .then(|| self.render_empty_sidebar(cx).into_any_element());
+        let update_pill = self.render_update_pill(rail, cx);
         let usage_strip = if rail {
             self.render_rail_usage(cx)
         } else {
@@ -1025,6 +1041,7 @@ impl Workspace {
                     )
                     .child(Scrollbar::vertical(&self.rows_scroll)),
             )
+            .children(update_pill)
             .children(usage_strip)
             .children(notes.into_iter().map(|message| {
                 // The rail has no room for the words; they are in the tooltip.
@@ -2835,6 +2852,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &menus::OpenSessions, window, cx| {
                 this.run_shortcut(Shortcut::OpenSessions, window, cx);
             }))
+            .on_action(cx.listener(|this, _: &menus::CheckForUpdates, window, cx| {
+                this.check_for_update(true, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &menus::ToggleShell, window, cx| {
                 this.run_shortcut(Shortcut::ToggleShell, window, cx);
             }))
@@ -2862,6 +2882,7 @@ impl Render for Workspace {
             .children(creator)
             .children(self.render_confirm_delete(cx))
             .children(self.render_confirm_close(cx))
+            .children(self.render_update_window(cx))
     }
 }
 

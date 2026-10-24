@@ -14,6 +14,7 @@ const SUPPORTED: &[&str] = &[
     "discovery.login_shell",
     "notifications.needs_you",
     "notifications.replied",
+    "updates.check",
     "general.import",
     "general.live_config_reload",
     "window.opacity",

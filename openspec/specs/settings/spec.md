@@ -95,3 +95,10 @@ On macOS, the system SHALL draw the bold, italic and bold italic styles with the
 #### Scenario: Style the font has
 - **WHEN** the settings file sets bold "ExtraBold" for JetBrainsMono Nerd Font
 - **THEN** bold text is drawn with the ExtraBold face and no note is shown
+
+### Requirement: Update settings
+The system SHALL check for updates automatically unless the settings file sets `[updates] check = false`, applied without a restart; Check for Updates… SHALL work either way.
+
+#### Scenario: Checks turned off
+- **WHEN** the settings file sets `[updates] check = false`
+- **THEN** no automatic check runs, and Check for Updates… still checks

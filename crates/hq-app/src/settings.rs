@@ -44,6 +44,14 @@ pub fn notifications(
     }
 }
 
+/// Whether to check for updates by itself; an invalid file keeps the last good choice.
+pub fn check_updates(watcher: &mut SettingsWatcher, last_good: Option<bool>) -> bool {
+    match watcher.current() {
+        Ok(settings) => settings.check_updates,
+        Err(_) => last_good.unwrap_or(true),
+    }
+}
+
 /// The settings to use, and what to tell the owner about the file. An invalid file
 /// leaves the last good settings in force, as Alacritty does.
 pub fn read(
