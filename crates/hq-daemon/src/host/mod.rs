@@ -211,6 +211,20 @@ fn bind_private(path: &Path) -> Result<UnixListener, HostError> {
     Ok(listener)
 }
 
+/// Whether the agent has saved conversation `id`, so it can resume it. Only Claude Code
+/// is checked: Headquarter gives it the id before anything is saved. Others count as
+/// saved, and an unknown home folder too, so their resume works as before.
+fn conversation_saved(agent: Agent, id: Option<&str>) -> bool {
+    let (Agent::Claude, Some(id)) = (agent, id) else {
+        return true;
+    };
+    let Some(projects) = hq_signals::paths::claude_config_dir().map(|dir| dir.join("projects"))
+    else {
+        return true;
+    };
+    hq_signals::history::claude_transcript(&projects, id).is_some()
+}
+
 /// Errors are boxed responses: `Response` is large and most calls succeed.
 type OpResult<T> = Result<T, Box<Response>>;
 
@@ -795,12 +809,20 @@ impl Host {
         }
         let folder = canonical_folder(&row.cwd)?;
         let program = self.resolve_agent(row.agent)?;
+        let saved = conversation_saved(row.agent, row.agent_session_id.as_deref());
+        let conversation = match row.agent_session_id.as_deref() {
+            // Claude Code saves a conversation only once it has a message, and refuses to
+            // resume one it never saved: start it afresh under the same id, as empty as
+            // it was (add-inactive-sessions D7).
+            Some(id) if !saved => Conversation::New { id },
+            id => Conversation::Resume(id),
+        };
         let spawned = self.spawn(SpawnPlan {
             id: &row.id,
             agent: row.agent,
             folder: &folder,
             program,
-            conversation: Conversation::Resume(row.agent_session_id.as_deref()),
+            conversation,
             extra_args: Vec::new(),
             term,
         })?;
@@ -819,7 +841,7 @@ impl Host {
         self.start(spawned);
         self.clear_start_error(&row.id);
         self.log.line(&format!(
-            "session started id={} agent={} resume=true known_conversation={}",
+            "session started id={} agent={} resume=true known_conversation={} saved={saved}",
             row.id,
             row.agent,
             row.agent_session_id.is_some()

@@ -715,22 +715,30 @@ fn a_host_crash_restarts_what_ran_with_the_agent_resume() {
     env.stub("claude", RECORDING_STUB);
     env.start_daemon();
     let session = env.create(Agent::Claude);
-    wait_until("stub started", || {
+    let unsaved = env.create(Agent::Claude);
+    wait_until("stubs started", || {
         std::fs::read_to_string(env.root.join("stub-args.txt"))
-            .is_ok_and(|args| args.contains("--session-id"))
+            .is_ok_and(|args| args.matches("--session-id").count() == 2)
     });
+    // Claude Code saved the first conversation; the second never had a message.
+    env.claude_transcript(&session.id, "Saved");
 
     // The host dies without cleaning up.
     let mut crashed = env.daemons.pop().unwrap();
     crashed.kill().unwrap();
     crashed.wait().unwrap();
+    std::fs::write(env.root.join("stub-args.txt"), "").unwrap();
 
     env.start_daemon();
-    wait_until("started with the host", || env.session(&session.id).live);
+    wait_until("started with the host", || {
+        env.session(&session.id).live && env.session(&unsaved.id).live
+    });
     assert_eq!(env.session(&session.id).name, "claude-1");
-    wait_until("resume arguments", || {
-        std::fs::read_to_string(env.root.join("stub-args.txt"))
-            .is_ok_and(|args| args.contains(&format!("--resume\n{}\n", session.id)))
+    wait_until("start arguments", || {
+        std::fs::read_to_string(env.root.join("stub-args.txt")).is_ok_and(|args| {
+            args.contains(&format!("--resume\n{}\n", session.id))
+                && args.contains(&format!("--session-id\n{}\n", unsaved.id))
+        })
     });
     assert!(matches!(
         env.connect().request(&Request::Resume {
