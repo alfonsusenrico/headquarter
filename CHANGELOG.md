@@ -2,6 +2,12 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.7 (2026-10-24)
+
+- A Claude Code session running a background command shows "working" again until the
+  command finishes. Claude Code 2.1.310 started calling that state "shell", which
+  Headquarter didn't recognise, so the session looked idle.
+
 ## 0.1.6 (2026-10-24)
 
 - Your clipboard stays yours. Opening a session no longer swaps it for that session's
