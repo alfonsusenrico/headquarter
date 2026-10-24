@@ -134,6 +134,18 @@ pub enum Request {
         cols: u16,
         rows: u16,
     },
+    /// Attach to the session's shell, first starting the owner's login shell in the
+    /// session's folder when none runs (add-session-shell-panel). Input, resizes and
+    /// output then flow as for an attached session.
+    AttachShell {
+        session: String,
+        cols: u16,
+        rows: u16,
+    },
+    /// End the session's shell, if one runs.
+    CloseShell {
+        session: String,
+    },
     Resize {
         cols: u16,
         rows: u16,
