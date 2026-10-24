@@ -2,6 +2,17 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.8 (2026-10-24)
+
+- A shell beside every agent. Cmd-T (Ctrl-Shift-T on Linux) opens a terminal under the
+  session, in its folder, without touching the sidebar. Drag the line between them to
+  share the room. The shell keeps running while you look at other sessions, and ends
+  when you press Cmd-T again, type `exit`, or close the session. Plain Ctrl-T still goes
+  to the agent.
+- The shell runs in Headquarter's background host, which an update doesn't restart. If
+  your host was already running before the update, the panel reports an error until
+  the host restarts (`hq stop`, which also ends your sessions, then reopen the app).
+
 ## 0.1.7 (2026-10-24)
 
 - A Claude Code session running a background command shows "working" again until the
