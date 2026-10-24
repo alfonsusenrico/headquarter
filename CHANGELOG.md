@@ -2,6 +2,13 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.6 (2026-10-24)
+
+- Your clipboard stays yours. Opening a session no longer swaps it for that session's
+  old selection: Claude Code re-sends its last selection whenever it redraws, and
+  Headquarter now only takes an agent's copy right after you dragged, clicked or typed
+  in that session.
+
 ## 0.1.5 (2026-10-24)
 
 - Notifications say which session they're about: the title is what the sidebar shows,
