@@ -2,6 +2,14 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.10 (2026-10-24)
+
+- Restarting for an update no longer ends with "cannot reach the Headquarter host". The
+  old background host takes a moment to end your agents before it exits, and the new
+  one now waits for it instead of giving up.
+- Coming from 0.1.9: use the Update pill. The restart that brings you to 0.1.10 already
+  starts the new host, which carries this fix.
+
 ## 0.1.9 (2026-10-24)
 
 - Quit to save memory, not your place. `/exit` an agent and its memory goes back to your
