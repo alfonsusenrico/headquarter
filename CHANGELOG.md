@@ -2,6 +2,31 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.9 (2026-10-24)
+
+- Quit to save memory, not your place. `/exit` an agent and its memory goes back to your
+  Mac (a Claude Code session holds 270-720 MB), but the session stays in the sidebar,
+  dimmed with a moon. Open it and press Resume Session to carry on where it was. The ✕
+  still closes a session for good, and asks before removing an inactive one.
+- Sessions come back by themselves. After a reboot, a crash or `hq stop`, whatever was
+  running starts again on its conversation, the session you were looking at first, the
+  rest one at a time while they breathe "starting". Inactive sessions stay asleep.
+  The "N sessions were running" note and `hq resume --interrupted` are gone.
+- A session that can't start (its folder was deleted, say) stays inactive, says why,
+  and tells you once with a notification. With its folder gone, the pane offers Remove
+  from Sidebar instead of a Resume that could only fail.
+- A Claude Code session you opened but never typed in now resumes as the empty
+  conversation it was, instead of failing.
+- Updates from inside the app. A new release shows as an "Update" pill at the bottom of
+  the sidebar (or choose Headquarter > Check for Updates…). One click downloads it,
+  checks the installer against the checksum GitHub publishes, installs it and restarts
+  Headquarter, asking first if a session is busy, and your running sessions come back.
+  `[updates] check = false` turns the automatic checks off.
+- `hq ls` says "inactive" and "starting".
+- Coming from 0.1.8: install this one with the install line, since 0.1.8 cannot update
+  itself. Then open Headquarter and press "Restart to finish update" in the sidebar:
+  the old background host stops, and the sessions it ran start again on the new one.
+
 ## 0.1.8 (2026-10-24)
 
 - A shell beside every agent. Cmd-T (Ctrl-Shift-T on Linux) opens a terminal under the
