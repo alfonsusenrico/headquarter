@@ -54,8 +54,11 @@ which finished while you were away.
 - **Your groups, your order.** Drag sessions into groups you make; the rest sit under
   Ungrouped. Collapse it all into an icon rail when you want the room.
 - **Sessions that outlive the window.** A small background host owns your sessions:
-  close the app, and they keep working. After a crash, Headquarter offers to resume
-  what was running.
+  close the app, and they keep working. After a reboot or a crash, what was running
+  starts again by itself, the session you were looking at first.
+- **Quit to save memory, not your place.** `/exit` an agent and its memory goes back to
+  your Mac, but the session stays in the sidebar, dimmed with a moon. Resume Session
+  picks the conversation up where it was.
 - **Agents in other terminals, too.** Sessions you started elsewhere show up beside
   yours, marked external, so nothing hides from you.
 - **Your history, one click away.** Past Claude Code, Codex and agy conversations are
@@ -148,8 +151,7 @@ hq new codex --cwd ~/app -d   # start Codex in ~/app without attaching
 hq ls                         # your sidebar: sessions needing you first
 hq ls --all                   # every session, including your agent history
 hq attach landing-hero        # attach by name or id prefix; detach with Ctrl-\ then d
-hq resume claude-1            # reopen an ended session's conversation
-hq resume --interrupted       # restart the sessions a crash or restart interrupted
+hq resume claude-1            # resume an inactive session's conversation
 hq usage                      # each agent's usage and reset times
 hq agents                     # the agent CLIs found on this machine
 hq stop                       # end every session and the background host
