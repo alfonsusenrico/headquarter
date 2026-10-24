@@ -2,6 +2,13 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.5 (2026-10-24)
+
+- Notifications say which session they're about: the title is what the sidebar shows,
+  such as "Fixing Unresponsive Docker Daemon", instead of an id like "claude-e0c6f139".
+- Usage details keep every window name on one line, including agy's per-model windows
+  ("week · Gemini") next to "reset since this reading".
+
 ## 0.1.4 (2026-10-23)
 
 - Select and copy like you mean it. Drag over any agent's output and it lands on your
