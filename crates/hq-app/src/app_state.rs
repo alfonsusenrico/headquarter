@@ -210,6 +210,18 @@ pub fn save_shell_share(path: &Path, share: f32) -> std::io::Result<()> {
     save_entry(path, "shell_share", json!(share))
 }
 
+/// The time of the latest start failure the owner was told about (Unix milliseconds),
+/// so a failure is told once (add-inactive-sessions D6).
+pub fn load_start_failures_told(path: &Path) -> u64 {
+    read(path)
+        .and_then(|state| state.get("start_failures_told")?.as_u64())
+        .unwrap_or(0)
+}
+
+pub fn save_start_failures_told(path: &Path, at: u64) -> std::io::Result<()> {
+    save_entry(path, "start_failures_told", json!(at))
+}
+
 fn read(path: &Path) -> Option<Value> {
     serde_json::from_slice::<Value>(&std::fs::read(path).ok()?).ok()
 }
@@ -371,6 +383,16 @@ mod tests {
             SHELL_SHARE,
             "an impossible share is ignored"
         );
+    }
+
+    #[test]
+    fn the_last_start_failure_told_is_kept() {
+        let path = file("failures");
+        assert_eq!(load_start_failures_told(&path), 0);
+        save_shown(&path, "abc123").unwrap();
+        save_start_failures_told(&path, 1_700).unwrap();
+        assert_eq!(load_start_failures_told(&path), 1_700);
+        assert_eq!(load_shown(&path).as_deref(), Some("abc123"));
     }
 
     #[test]

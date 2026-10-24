@@ -1,6 +1,7 @@
 //! The sidebar's divider and its icon rail
 //! (`openspec/changes/add-sidebar-rail/design.md`, D1 to D4).
 
+use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, AppContext, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
@@ -227,8 +228,13 @@ impl Workspace {
         if needs_you {
             tooltip.push_str("\nNeeds you");
         }
+        if row.dimmed() {
+            tooltip.push_str("\nInactive");
+        }
         let open_id = row.id.clone();
-        let mark = div().child(self.marks.element(row.agent, 20., chrome.muted));
+        let mark = div()
+            .when(row.dimmed(), |mark| mark.opacity(0.5))
+            .child(self.marks.element(row.agent, 20., chrome.muted));
         let mut cell = div()
             .id(SharedString::from(format!(
                 "rail-{}-{}",

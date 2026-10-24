@@ -16,6 +16,10 @@ pub enum Glyph {
     NeedsYou,
     IdleUnread,
     Idle,
+    /// Its agent is not running; the owner resumes it (add-inactive-sessions).
+    Inactive,
+    /// The host is starting it with itself, until its agent is ready.
+    Starting,
     /// Running in another terminal: no status is shown until it runs here.
     Elsewhere,
 }
@@ -25,9 +29,11 @@ impl Glyph {
         if session.external.is_some() {
             return Glyph::Elsewhere;
         }
-        // A session whose agent is not running is idle: opening it resumes the agent.
+        if session.starting {
+            return Glyph::Starting;
+        }
         if !session.live {
-            return Glyph::Idle;
+            return Glyph::Inactive;
         }
         Glyph::from_status(session.status)
     }
@@ -38,7 +44,7 @@ impl Glyph {
             Status::NeedsYou => Glyph::NeedsYou,
             Status::DoneUnread => Glyph::IdleUnread,
             Status::Done => Glyph::Idle,
-            Status::Inactive => Glyph::Idle,
+            Status::Inactive => Glyph::Inactive,
         }
     }
 }
@@ -93,6 +99,16 @@ impl Row {
         self.glyph == Glyph::IdleUnread
     }
 
+    /// Inactive: the title and age are dimmed.
+    pub fn dimmed(&self) -> bool {
+        self.glyph == Glyph::Inactive
+    }
+
+    /// The status word breathes: the agent works, or is starting with the host.
+    pub fn breathing(&self) -> bool {
+        matches!(self.glyph, Glyph::Working | Glyph::Starting)
+    }
+
     /// In the pinned "Needs you" section.
     pub fn pinned(&self) -> bool {
         self.section == Section::Pinned
@@ -108,6 +124,7 @@ impl Row {
         match self.glyph {
             Glyph::Working => Some("working"),
             Glyph::NeedsYou => Some("needs you"),
+            Glyph::Starting => Some("starting"),
             _ => None,
         }
     }
@@ -315,11 +332,11 @@ pub fn initials(name: &str) -> String {
 /// (fix-sidebar-motion-redraw).
 pub const MOTION_STEP: Duration = Duration::from_nanos(1_000_000_000 / 12);
 
-/// Whether anything in the sidebar moves: a working row's "working" word, or the dot of
-/// a collapsed group waiting on the owner.
+/// Whether anything in the sidebar moves: a working or starting row's word, or the dot
+/// of a collapsed group waiting on the owner.
 pub fn in_motion(items: &[Item]) -> bool {
     items.iter().any(|item| match item {
-        Item::Row(row) => row.glyph == Glyph::Working,
+        Item::Row(row) => row.breathing(),
         Item::GroupHeader {
             needing, collapsed, ..
         } => *collapsed && *needing > 0,
@@ -353,30 +370,12 @@ pub fn needing_note(count: usize) -> String {
     }
 }
 
-/// The sidebar sessions that were running when Headquarter stopped without ending
-/// them, offered for restarting together (add-session-restore D4).
-pub fn interrupted(sessions: &[SessionInfo]) -> Vec<&SessionInfo> {
-    sessions
-        .iter()
-        .filter(|session| session.in_sidebar && session.interrupted && !session.live)
-        .collect()
-}
-
 /// The session kept from the last launch, while it is still in the sidebar: one closed
 /// or removed since is no longer the owner's to show.
 pub fn kept_session<'a>(sessions: &'a [SessionInfo], id: &str) -> Option<&'a SessionInfo> {
     sessions
         .iter()
         .find(|session| session.id == id && session.in_sidebar)
-}
-
-/// The first line of the restart note; with nothing left to offer, only failures remain.
-pub fn interrupted_headline(count: usize) -> String {
-    match count {
-        0 => "Some sessions could not restart".to_owned(),
-        1 => "1 session was running when Headquarter stopped".to_owned(),
-        _ => format!("{count} sessions were running when Headquarter stopped"),
-    }
 }
 
 /// The group a session moves to with the keyboard alternative to dragging: one step
@@ -437,14 +436,6 @@ pub fn next_needing(sessions: &[SessionInfo], current: Option<&str>) -> Option<S
     next.map(|id| (*id).to_owned())
 }
 
-/// Whether an update shows the agent in another terminal was closed there: it ran
-/// elsewhere and now runs nowhere. Nothing is started for it (add-sessions-running-elsewhere D2).
-pub fn closed_elsewhere(previous: Option<&SessionInfo>, current: &SessionInfo) -> bool {
-    previous.is_some_and(|previous| previous.external.is_some())
-        && current.external.is_none()
-        && !current.live
-}
-
 #[cfg(test)]
 mod tests {
     use hq_protocol::{External, Origin};
@@ -472,37 +463,24 @@ mod tests {
             in_sidebar: true,
             group: None,
             owner_named: false,
-            interrupted: false,
+            starting: false,
+            start_error: None,
             offered: true,
         }
     }
 
     #[test]
-    fn closing_the_other_terminal_is_told_apart() {
+    fn closed_in_the_other_terminal_becomes_inactive() {
         let mut elsewhere = session("s", "/u/api", Status::Done, 0);
         elsewhere.live = false;
         elsewhere.external = Some(External {
             pid: Some(5),
             status: None,
         });
+        assert_eq!(Glyph::of(&elsewhere), Glyph::Elsewhere);
         let mut closed = elsewhere.clone();
         closed.external = None;
-        assert!(closed_elsewhere(Some(&elsewhere), &closed));
-        assert!(
-            !closed_elsewhere(Some(&elsewhere), &elsewhere),
-            "still running there"
-        );
-        assert!(
-            !closed_elsewhere(Some(&closed), &closed),
-            "it ended earlier, not now"
-        );
-        assert!(!closed_elsewhere(None, &closed), "first seen ended");
-        let mut hosted = closed.clone();
-        hosted.live = true;
-        assert!(
-            !closed_elsewhere(Some(&elsewhere), &hosted),
-            "continued here at once"
-        );
+        assert_eq!(Glyph::of(&closed), Glyph::Inactive);
     }
 
     #[test]
@@ -631,9 +609,11 @@ mod tests {
         let ended = &rows(&items, "web-old")[0];
         assert_eq!(
             ended.glyph,
-            Glyph::Idle,
-            "a stopped agent's session is idle"
+            Glyph::Inactive,
+            "a stopped agent's session is inactive"
         );
+        assert!(ended.dimmed());
+        assert_eq!(ended.status_word(), None, "inactive keeps its age");
         assert_eq!(ended.path, "/u/web", "the tooltip's full folder");
         assert_eq!(items[5].target(), Some(Target::Group(1)));
         assert_eq!(items[2].target(), None, "pinned rows are not a drop target");
@@ -810,35 +790,26 @@ mod tests {
     }
 
     #[test]
-    fn the_restart_note_offers_only_stopped_sidebar_sessions_marked_interrupted() {
-        let mut stopped = session("stopped", "/u/api", Status::Inactive, 0);
-        stopped.live = false;
-        stopped.interrupted = true;
-        let mut restarted = stopped.clone();
-        restarted.id = "restarted".into();
-        restarted.live = true;
-        let mut removed = stopped.clone();
-        removed.id = "removed".into();
-        removed.in_sidebar = false;
-        let mut ended = stopped.clone();
-        ended.id = "ended".into();
-        ended.interrupted = false;
-        let sessions = [stopped, restarted, removed, ended];
-        let offered: Vec<&str> = interrupted(&sessions)
-            .iter()
-            .map(|session| session.id.as_str())
-            .collect();
-        assert_eq!(offered, ["stopped"]);
-
-        assert_eq!(
-            interrupted_headline(1),
-            "1 session was running when Headquarter stopped"
-        );
-        assert_eq!(
-            interrupted_headline(3),
-            "3 sessions were running when Headquarter stopped"
-        );
-        assert_eq!(interrupted_headline(0), "Some sessions could not restart");
+    fn sessions_starting_with_the_host_breathe_until_ready() {
+        let mut waiting = session("waiting", "/u/api", Status::Inactive, 0);
+        waiting.live = false;
+        waiting.starting = true;
+        let mut launched = waiting.clone();
+        launched.id = "launched".into();
+        launched.live = true;
+        launched.status = Status::Done;
+        let mut ready = launched.clone();
+        ready.id = "ready".into();
+        ready.starting = false;
+        let items = items(&[waiting, launched, ready], &[], None, NOW);
+        for id in ["waiting", "launched"] {
+            let row = &rows(&items, id)[0];
+            assert_eq!(row.glyph, Glyph::Starting, "{id}");
+            assert_eq!(row.status_word(), Some("starting"));
+            assert!(row.breathing() && !row.dimmed());
+        }
+        assert_eq!(rows(&items, "ready")[0].glyph, Glyph::Idle);
+        assert!(in_motion(&items));
     }
 
     #[test]

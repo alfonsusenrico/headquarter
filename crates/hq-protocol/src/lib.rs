@@ -169,11 +169,6 @@ pub enum Request {
         #[serde(default)]
         term: Option<String>,
     },
-    /// Clear the interrupted mark of these sessions without restarting them; an empty
-    /// list clears every mark ("Not now").
-    Dismiss {
-        sessions: Vec<String>,
-    },
     /// Put sessions in the sidebar: names or id prefixes, all or nothing.
     Add {
         sessions: Vec<String>,
@@ -460,10 +455,14 @@ pub struct SessionInfo {
     /// Whether the owner gave `name`; it is then shown instead of the agent's title.
     #[serde(default)]
     pub owner_named: bool,
-    /// Whether the session was running when the host stopped without ending it (a
-    /// crash, a reboot), until it is restarted or dismissed.
+    /// Whether the host is starting it with itself (add-inactive-sessions): waiting its
+    /// turn, or started and not yet ready.
     #[serde(default)]
-    pub interrupted: bool,
+    pub starting: bool,
+    /// Why the host could not start it with itself, until it starts or leaves the
+    /// sidebar.
+    #[serde(default)]
+    pub start_error: Option<StartError>,
     /// Whether Add sessions offers it: false for a past conversation its agent no longer
     /// keeps, a run a program started, or one never used (offer-continuable-sessions).
     /// Hosts that predate it send nothing, which counts as offered.
@@ -473,6 +472,14 @@ pub struct SessionInfo {
 
 fn offered_by_default() -> bool {
     true
+}
+
+/// A session the host could not start with itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartError {
+    pub reason: String,
+    /// Unix milliseconds.
+    pub at: u64,
 }
 
 /// A group the owner made in the sidebar. Lists of groups are in the owner's order.
@@ -850,10 +857,6 @@ mod tests {
             Request::Close {
                 session: "claude-1".into(),
             },
-            Request::Dismiss { sessions: vec![] },
-            Request::Dismiss {
-                sessions: vec!["claude-1".into()],
-            },
         ] {
             let bytes = serde_json::to_vec(&request).unwrap();
             assert_eq!(Request::parse(&bytes).unwrap(), request);
@@ -895,19 +898,23 @@ mod tests {
     }
 
     #[test]
-    fn a_session_from_before_the_interrupted_mark_reads_as_not_interrupted() {
-        let older = br#"{"type":"sessions","sessions":[{"id":"a","agent":"claude","cwd":"/w","name":"claude-1","agent_session_id":null,"status":"inactive","needs_reason":null,"created_at":1,"last_activity_at":2,"ended_at":null,"live":false,"origin":"hosted","title":null,"external":null,"in_sidebar":true}]}"#;
+    fn a_session_from_an_older_host_is_not_starting() {
+        let older = br#"{"type":"sessions","sessions":[{"id":"a","agent":"claude","cwd":"/w","name":"claude-1","agent_session_id":null,"status":"inactive","needs_reason":null,"created_at":1,"last_activity_at":2,"ended_at":null,"live":false,"origin":"hosted","title":null,"external":null,"in_sidebar":true,"interrupted":true}]}"#;
         let Response::Sessions { sessions, .. } = Response::parse(older).unwrap() else {
             panic!("not a session list");
         };
-        assert!(!sessions[0].interrupted);
+        assert!(!sessions[0].starting);
+        assert_eq!(sessions[0].start_error, None);
 
-        let mut marked = sessions[0].clone();
-        marked.interrupted = true;
-        let bytes = serde_json::to_vec(&marked).unwrap();
+        let mut failed = sessions[0].clone();
+        failed.start_error = Some(StartError {
+            reason: "the folder no longer exists".into(),
+            at: 5,
+        });
+        let bytes = serde_json::to_vec(&failed).unwrap();
         assert_eq!(
             serde_json::from_slice::<SessionInfo>(&bytes).unwrap(),
-            marked
+            failed
         );
     }
 

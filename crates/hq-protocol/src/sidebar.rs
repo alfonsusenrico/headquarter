@@ -203,7 +203,8 @@ mod tests {
             in_sidebar: true,
             group: None,
             owner_named: false,
-            interrupted: false,
+            starting: false,
+            start_error: None,
             offered: true,
         }
     }

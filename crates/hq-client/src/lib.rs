@@ -395,17 +395,6 @@ pub fn close(paths: &HostPaths, session: &str) -> Result<()> {
     )
 }
 
-/// Clears the interrupted mark of `sessions` without restarting them; none clears every
-/// mark.
-pub fn dismiss(paths: &HostPaths, sessions: &[String]) -> Result<()> {
-    request_done(
-        paths,
-        &Request::Dismiss {
-            sessions: sessions.to_vec(),
-        },
-    )
-}
-
 /// Every enabled agent's usage, read now when due.
 pub fn usage(paths: &HostPaths) -> Result<Vec<AgentUsage>> {
     let mut client = Client::connect_or_start(paths)?;
@@ -560,7 +549,8 @@ mod tests {
             in_sidebar: false,
             group: None,
             owner_named: false,
-            interrupted: false,
+            starting: false,
+            start_error: None,
             offered: true,
         }
     }

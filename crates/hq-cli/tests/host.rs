@@ -710,42 +710,35 @@ sleep 30
 }
 
 #[test]
-fn restart_marks_sessions_inactive_and_resume_uses_the_agent_resume() {
+fn a_host_crash_restarts_what_ran_with_the_agent_resume() {
     let mut env = TestEnv::new("restart");
     env.stub("claude", RECORDING_STUB);
     env.start_daemon();
     let session = env.create(Agent::Claude);
-    wait_until("stub started", || {
+    let unsaved = env.create(Agent::Claude);
+    wait_until("stubs started", || {
         std::fs::read_to_string(env.root.join("stub-args.txt"))
-            .is_ok_and(|args| args.contains("--session-id"))
+            .is_ok_and(|args| args.matches("--session-id").count() == 2)
     });
+    // Claude Code saved the first conversation; the second never had a message.
+    env.claude_transcript(&session.id, "Saved");
 
     // The host dies without cleaning up.
     let mut crashed = env.daemons.pop().unwrap();
     crashed.kill().unwrap();
     crashed.wait().unwrap();
+    std::fs::write(env.root.join("stub-args.txt"), "").unwrap();
 
     env.start_daemon();
-    let listed = env.session(&session.id);
-    assert_eq!(listed.status, Status::Inactive);
-    assert!(!listed.live);
-    assert!(listed.interrupted, "running when the host died");
-    assert_eq!(listed.name, "claude-1");
-
-    match env.connect().request(&Request::Resume {
-        session: "claude-1".into(),
-        term: None,
-    }) {
-        Response::Created { session: resumed } => {
-            assert_eq!(resumed.id, session.id);
-            assert!(resumed.live);
-            assert!(!resumed.interrupted, "restarting clears the mark");
-        }
-        other => panic!("unexpected resume answer {other:?}"),
-    }
-    wait_until("resume arguments", || {
-        std::fs::read_to_string(env.root.join("stub-args.txt"))
-            .is_ok_and(|args| args.contains(&format!("--resume\n{}\n", session.id)))
+    wait_until("started with the host", || {
+        env.session(&session.id).live && env.session(&unsaved.id).live
+    });
+    assert_eq!(env.session(&session.id).name, "claude-1");
+    wait_until("start arguments", || {
+        std::fs::read_to_string(env.root.join("stub-args.txt")).is_ok_and(|args| {
+            args.contains(&format!("--resume\n{}\n", session.id))
+                && args.contains(&format!("--session-id\n{}\n", unsaved.id))
+        })
     });
     assert!(matches!(
         env.connect().request(&Request::Resume {
@@ -976,12 +969,15 @@ fn cli_starts_the_host_and_manages_sessions() {
     assert!(stopped.status.success(), "{stopped:?}");
     let restarted = env.hq(&["new", "agy", "--detach", "--cwd", &work]);
     assert!(restarted.status.success(), "{restarted:?}");
-    let live: Vec<SessionInfo> = serde_json::from_slice(&env.hq(&["ls", "--json"]).stdout).unwrap();
-    assert_eq!(live.iter().filter(|session| session.live).count(), 1);
+    // The fresh host runs the new session and starts again the one the stop ended.
+    let live_count = || {
+        let listed: Vec<SessionInfo> =
+            serde_json::from_slice(&env.hq(&["ls", "--json"]).stdout).unwrap();
+        listed.iter().filter(|session| session.live).count()
+    };
+    wait_until("both running on the fresh host", || live_count() == 2);
     std::thread::sleep(Duration::from_millis(500));
-    let still: Vec<SessionInfo> =
-        serde_json::from_slice(&env.hq(&["ls", "--json"]).stdout).unwrap();
-    assert_eq!(still.iter().filter(|session| session.live).count(), 1);
+    assert_eq!(live_count(), 2);
     assert!(env.hq(&["stop", "--yes"]).status.success());
     wait_until("host gone", || {
         UnixStream::connect(env.host_dir().join("agentd.sock")).is_err()
@@ -989,7 +985,7 @@ fn cli_starts_the_host_and_manages_sessions() {
 }
 
 #[test]
-fn stop_ends_running_sessions() {
+fn stop_ends_running_sessions_and_the_next_host_starts_them() {
     let mut env = TestEnv::new("stop");
     env.stub("agy", INTERACTIVE_STUB);
     env.start_daemon();
@@ -1004,54 +1000,169 @@ fn stop_ends_running_sessions() {
 
     env.start_daemon();
     let listed = env.session(&session.id);
-    assert_eq!(listed.status, Status::Inactive);
-    assert!(listed.ended_at.is_some());
     assert!(listed.in_sidebar, "a host stop removes nothing");
-    assert!(!listed.interrupted, "a host stop is on purpose");
+    assert!(listed.starting || listed.live, "{listed:?}");
+    wait_until("started again", || {
+        let session = env.session(&session.id);
+        session.live && !session.starting
+    });
 }
 
+/// Records the folder it starts in, reports itself idle with OSC 7501 shortly after, and
+/// exits 0 on `/quit`.
+const STARTING_STUB: &str = r#"if [ "$1" = "agents" ]; then echo '[]'; exit 0; fi
+printf '%s\n' "$PWD" >> "$STUB_ARGS"
+printf 'stub-ready\n'
+sleep 0.3
+printf '\033]7501;state=done\007'
+while read line; do
+  case "$line" in
+    /quit) exit 0 ;;
+  esac
+done
+"#;
+
 #[test]
-fn not_now_clears_interrupted_marks_and_kill_marks_none() {
-    let mut env = TestEnv::new("dismiss");
-    env.stub("agy", INTERACTIVE_STUB);
+fn sessions_start_with_the_host_in_sidebar_order_and_failures_stay_inactive() {
+    let mut env = TestEnv::new("starts");
+    env.stub("claude", STARTING_STUB);
     env.start_daemon();
-    let first = env.create(Agent::Agy);
-    let second = env.create(Agent::Agy);
-    let killed = env.create(Agent::Agy);
+    let mut created = Vec::new();
+    for folder in ["alpha", "beta", "gone", "quit"] {
+        let cwd = env.work().join(folder);
+        std::fs::create_dir_all(&cwd).unwrap();
+        let session = match env.connect().request(&Request::New {
+            agent: Agent::Claude,
+            cwd: cwd.to_string_lossy().into_owned(),
+            args: vec![],
+            term: None,
+            name: None,
+            group: None,
+        }) {
+            Response::Created { session } => session,
+            other => panic!("unexpected create answer {other:?}"),
+        };
+        // One group each, in this order, fixes the sidebar's order.
+        assert!(matches!(
+            env.connect().request(&Request::NewGroup {
+                name: Some(folder.to_owned()),
+                session: Some(session.id.clone()),
+            }),
+            Response::GroupCreated { .. }
+        ));
+        created.push(session);
+    }
+    let [alpha, beta, gone, quit] = <[SessionInfo; 4]>::try_from(created).unwrap();
+    let mut viewer = env.connect();
     assert!(matches!(
-        env.connect().request(&Request::Kill {
-            session: killed.id.clone()
+        viewer.request(&Request::Attach {
+            session: quit.id.clone(),
+            cols: 80,
+            rows: 24
         }),
+        Response::Attached { .. }
+    ));
+    viewer.output_until("stub-ready");
+    viewer.send_frame(&Frame::Input(b"/quit\n".to_vec()));
+    wait_until("quit", || !env.session(&quit.id).live);
+    let quit_row = env.session(&quit.id);
+    assert!(quit_row.in_sidebar, "a quit keeps the session");
+    assert_eq!(quit_row.status, Status::Inactive);
+
+    assert!(matches!(
+        env.connect().request(&Request::Stop {}),
         Response::Done
     ));
-    wait_until("killed session ended", || !env.session(&killed.id).live);
+    env.daemons.pop().unwrap().wait().unwrap();
+    std::fs::remove_dir_all(env.work().join("gone")).unwrap();
+    std::fs::write(env.root.join("stub-args.txt"), "").unwrap();
 
-    let mut crashed = env.daemons.pop().unwrap();
-    crashed.kill().unwrap();
-    crashed.wait().unwrap();
     env.start_daemon();
-    assert!(env.session(&first.id).interrupted);
-    assert!(env.session(&second.id).interrupted);
-    assert!(!env.session(&killed.id).interrupted, "hung up on purpose");
+    for session in [&alpha, &beta, &gone] {
+        let listed = env.session(&session.id);
+        assert!(listed.starting || listed.live, "{listed:?}");
+    }
+    assert!(!env.session(&quit.id).starting, "inactive stays inactive");
+    wait_until("all settled", || {
+        [&alpha, &beta, &gone]
+            .iter()
+            .all(|session| !env.session(&session.id).starting)
+    });
+    assert!(env.session(&alpha.id).live);
+    assert!(env.session(&beta.id).live);
+    let failed = env.session(&gone.id);
+    assert!(!failed.live);
+    assert_eq!(failed.status, Status::Inactive);
+    let reason = failed.start_error.expect("a start failure").reason;
+    assert!(reason.contains("does not exist"), "{reason}");
+    assert!(!env.session(&quit.id).live);
 
+    let started = std::fs::read_to_string(env.root.join("stub-args.txt")).unwrap();
+    let alpha_at = started.find("/alpha").expect("alpha started");
+    let beta_at = started.find("/beta").expect("beta started");
+    assert!(alpha_at < beta_at, "sidebar order: {started}");
+    assert!(!started.contains("/quit"), "{started}");
+}
+
+/// Never reports itself, so each start waits the full readiness time.
+const SILENT_STUB: &str = r#"if [ "$1" = "agents" ]; then echo '[]'; exit 0; fi
+printf '%s\n' "$PWD" >> "$STUB_ARGS"
+sleep 60
+"#;
+
+#[test]
+fn a_session_asked_for_starts_ahead_of_its_turn() {
+    let mut env = TestEnv::new("ahead");
+    env.stub("claude", SILENT_STUB);
+    env.start_daemon();
+    let mut created = Vec::new();
+    for folder in ["first", "second", "third"] {
+        let cwd = env.work().join(folder);
+        std::fs::create_dir_all(&cwd).unwrap();
+        let session = match env.connect().request(&Request::New {
+            agent: Agent::Claude,
+            cwd: cwd.to_string_lossy().into_owned(),
+            args: vec![],
+            term: None,
+            name: None,
+            group: None,
+        }) {
+            Response::Created { session } => session,
+            other => panic!("unexpected create answer {other:?}"),
+        };
+        assert!(matches!(
+            env.connect().request(&Request::NewGroup {
+                name: Some(folder.to_owned()),
+                session: Some(session.id.clone()),
+            }),
+            Response::GroupCreated { .. }
+        ));
+        created.push(session);
+    }
     assert!(matches!(
-        env.connect().request(&Request::Dismiss {
-            sessions: vec![first.id.clone()]
-        }),
+        env.connect().request(&Request::Stop {}),
         Response::Done
     ));
-    assert!(!env.session(&first.id).interrupted);
-    assert!(env.session(&second.id).interrupted);
-    assert!(matches!(
-        env.connect()
-            .request(&Request::Dismiss { sessions: vec![] }),
-        Response::Done
-    ));
+    env.daemons.pop().unwrap().wait().unwrap();
+
+    env.start_daemon();
+    let third = &created[2];
+    assert!(env.session(&third.id).starting);
+    match env.connect().request(&Request::Resume {
+        session: third.id.clone(),
+        term: None,
+    }) {
+        Response::Created { session } => assert!(session.live),
+        other => panic!("unexpected resume answer {other:?}"),
+    }
     assert!(
-        !env.session(&second.id).interrupted,
-        "an empty list clears every mark"
+        !env.session(&created[1].id).live,
+        "the second waits while the first gets ready"
     );
-    assert!(!env.session(&second.id).live, "nothing restarts");
+    assert!(
+        env.session(&third.id).starting,
+        "starting until it is ready"
+    );
 }
 
 /// Reads lines like a prompt: exactly `/quit` exits 0, `crash` exits 3. Ctrl-U clears
@@ -1103,7 +1214,7 @@ fn closing_quits_with_the_agents_keys_and_leaves_the_sidebar() {
 }
 
 #[test]
-fn only_sessions_running_at_a_crash_are_marked_and_hq_resume_restarts_them() {
+fn only_sessions_running_at_a_crash_start_again() {
     let mut env = TestEnv::new("interrupt");
     env.stub("agy", EXITING_STUB);
     env.start_daemon();
@@ -1134,28 +1245,14 @@ fn only_sessions_running_at_a_crash_are_marked_and_hq_resume_restarts_them() {
     crashed.kill().unwrap();
     crashed.wait().unwrap();
     env.start_daemon();
-    assert!(env.session(&running.id).interrupted);
-    assert!(
-        !env.session(&exited.id).interrupted,
-        "the agent ended itself"
-    );
-    assert!(!env.session(&closed.id).interrupted, "closed on purpose");
-
-    let output = env.hq(&["resume", "--interrupted"]);
-    assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(&format!("{}: restarted", running.name)),
-        "{stdout}"
-    );
-    assert_eq!(stdout.lines().count(), 1, "{stdout}");
-    let restarted = env.session(&running.id);
-    assert!(restarted.live);
-    assert!(!restarted.interrupted);
-    assert!(
-        !env.session(&exited.id).live,
-        "only marked sessions restart"
-    );
+    wait_until("running one started again", || {
+        env.session(&running.id).live
+    });
+    let quit = env.session(&exited.id);
+    assert!(!quit.live && !quit.starting, "the agent ended itself");
+    assert!(quit.in_sidebar);
+    let gone = env.session(&closed.id);
+    assert!(!gone.live && !gone.in_sidebar, "closed on purpose");
 }
 
 #[test]
@@ -1177,11 +1274,11 @@ fn hq_close_waits_for_the_agent_and_reports() {
 }
 
 #[test]
-fn quitting_inside_leaves_the_sidebar_and_a_crash_does_not() {
+fn quitting_inside_or_a_crash_keeps_the_session_inactive() {
     let mut env = TestEnv::new("quit");
     env.stub("agy", EXITING_STUB);
     env.start_daemon();
-    for (line, kept) in [("/quit\n", false), ("crash\n", true)] {
+    for line in ["/quit\n", "crash\n"] {
         let session = env.create(Agent::Agy);
         let mut viewer = env.connect();
         assert!(matches!(
@@ -1196,7 +1293,8 @@ fn quitting_inside_leaves_the_sidebar_and_a_crash_does_not() {
         viewer.send_frame(&Frame::Input(line.as_bytes().to_vec()));
         wait_until("ended", || !env.session(&session.id).live);
         let ended = env.session(&session.id);
-        assert_eq!(ended.in_sidebar, kept, "{line:?}");
+        assert!(ended.in_sidebar, "{line:?}");
+        assert!(!ended.starting, "{line:?}");
         assert_eq!(ended.status, Status::Inactive);
     }
 }

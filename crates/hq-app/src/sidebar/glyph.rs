@@ -99,8 +99,9 @@ fn paint_status(glyph: Glyph, bounds: Bounds<Pixels>, chrome: Chrome, window: &m
             paint(window, dot, chrome.accent);
         }
         Glyph::Idle => paint_bubble(bounds, chrome.muted, false, window),
+        Glyph::Inactive => paint_moon(bounds, chrome.muted, window),
         // The slot stays empty, so ages line up with the other rows.
-        Glyph::Elsewhere | Glyph::Working => {}
+        Glyph::Elsewhere | Glyph::Working | Glyph::Starting => {}
     }
 }
 
@@ -139,6 +140,27 @@ fn paint_bubble(
         bubble.close();
     }
     paint(window, bubble, color);
+}
+
+/// A crescent moon: the session sleeps, its agent stopped (the owner's choice of inactive
+/// glyph). The outer edge is a circle of radius 8 around (12, 12); the inner edge one of
+/// the same radius around (18, 12), so the horns meet where x = 15.
+fn paint_moon(bounds: Bounds<Pixels>, color: impl Into<Paint> + Copy, window: &mut Window) {
+    let grid = Grid::new(bounds, 18.0);
+    let horn = (64.0_f32 - 9.0).sqrt();
+    let (top, bottom) = ((15.0, 12.0 - horn), (15.0, 12.0 + horn));
+    let mut moon = PathBuilder::fill();
+    moon.move_to(grid.at(top.0, top.1));
+    moon.arc_to(
+        grid.radius(8.0),
+        px(0.),
+        true,
+        false,
+        grid.at(bottom.0, bottom.1),
+    );
+    moon.arc_to(grid.radius(8.0), px(0.), false, true, grid.at(top.0, top.1));
+    moon.close();
+    paint(window, moon, color);
 }
 
 /// The status glyph for a row. Working has none: the row's breathing "working" word

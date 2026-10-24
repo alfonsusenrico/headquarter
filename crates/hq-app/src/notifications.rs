@@ -48,6 +48,24 @@ pub fn notice(
     })
 }
 
+/// The notifications for sidebar sessions the host could not start with itself that
+/// failed after `told_until` (Unix milliseconds), the latest failure already told, so
+/// each is told once even across app restarts (add-inactive-sessions D6).
+pub fn start_failures(sessions: &[SessionInfo], told_until: u64) -> Vec<Notice> {
+    sessions
+        .iter()
+        .filter(|session| session.in_sidebar)
+        .filter_map(|session| {
+            let error = session.start_error.as_ref()?;
+            (error.at > told_until).then(|| Notice {
+                tag: session.id.clone(),
+                title: hq_protocol::sidebar::display_title(session),
+                body: format!("Couldn't start: {}", error.reason),
+            })
+        })
+        .collect()
+}
+
 /// The session a clicked notification opens: the one its tag names, while it is still
 /// in the sidebar (D3).
 pub fn clicked<'a>(sessions: &'a [SessionInfo], tag: &str) -> Option<&'a SessionInfo> {
@@ -76,7 +94,7 @@ fn asks(reason: Option<NeedsReason>) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use hq_protocol::{External, Origin};
+    use hq_protocol::{External, Origin, StartError};
     use hq_signals::event::Agent;
 
     use super::*;
@@ -100,7 +118,8 @@ mod tests {
             in_sidebar: true,
             group: None,
             owner_named: true,
-            interrupted: false,
+            starting: false,
+            start_error: None,
             offered: true,
         }
     }
@@ -265,5 +284,27 @@ mod tests {
         let asked = change(Status::Working, Status::NeedsYou).unwrap();
         let replied = change(Status::Working, Status::DoneUnread).unwrap();
         assert_eq!(asked.tag, replied.tag);
+    }
+
+    #[test]
+    fn a_start_failure_is_told_once() {
+        let mut failed = session(Status::Inactive);
+        failed.start_error = Some(StartError {
+            reason: "folder `/home/me/api` does not exist".into(),
+            at: 2_000,
+        });
+        let mut outside = failed.clone();
+        outside.id = "s-2".into();
+        outside.in_sidebar = false;
+        let sessions = [failed, outside];
+        assert_eq!(
+            start_failures(&sessions, 1_000),
+            [Notice {
+                tag: "s-1".into(),
+                title: "Fix login".into(),
+                body: "Couldn't start: folder `/home/me/api` does not exist".into(),
+            }]
+        );
+        assert!(start_failures(&sessions, 2_000).is_empty(), "told already");
     }
 }
