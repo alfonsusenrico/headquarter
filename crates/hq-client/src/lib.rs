@@ -23,6 +23,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(3);
 pub struct Client {
     pub reader: BufReader<UnixStream>,
     pub writer: UnixStream,
+    /// The version the host named in its welcome; empty until it answered.
+    pub host_version: String,
 }
 
 impl Client {
@@ -62,9 +64,13 @@ impl Client {
         let mut client = Client {
             reader: BufReader::new(stream),
             writer,
+            host_version: String::new(),
         };
         match client.request(&Request::Hello { protocol })? {
-            Response::Welcome { .. } => Ok(Greeting::Welcome(client)),
+            Response::Welcome { version, .. } => {
+                client.host_version = version;
+                Ok(Greeting::Welcome(client))
+            }
             Response::Error {
                 code: ErrorCode::ProtocolMismatch,
                 message,
@@ -395,6 +401,21 @@ pub fn close(paths: &HostPaths, session: &str) -> Result<()> {
     )
 }
 
+/// Stops the host and every session it runs; those running start again with the next
+/// host (add-inactive-sessions).
+pub fn stop_host(paths: &HostPaths) -> Result<()> {
+    let mut client = Client::connect(paths)?;
+    match expect_ok(client.request(&Request::Stop {})?)? {
+        Response::Done => Ok(()),
+        other => bail!("unexpected answer: {other:?}"),
+    }
+}
+
+/// The version of the running host, without starting one.
+pub fn host_version(paths: &HostPaths) -> Result<String> {
+    Ok(Client::connect(paths)?.host_version)
+}
+
 /// Every enabled agent's usage, read now when due.
 pub fn usage(paths: &HostPaths) -> Result<Vec<AgentUsage>> {
     let mut client = Client::connect_or_start(paths)?;
@@ -598,6 +619,7 @@ mod tests {
         let client = Client {
             reader: BufReader::new(near.try_clone().unwrap()),
             writer: near.try_clone().unwrap(),
+            host_version: String::new(),
         };
         let (mut feed, catalog) = SessionFeed::start(client, true).unwrap();
         assert!(catalog.sessions[0].external.is_none());

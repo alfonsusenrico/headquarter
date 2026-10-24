@@ -17,6 +17,7 @@ mod sidebar;
 mod terminal;
 mod theme;
 mod themes;
+mod update;
 mod workspace;
 
 use std::time::Duration;
