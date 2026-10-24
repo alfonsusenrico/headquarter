@@ -90,7 +90,12 @@ What the installer does:
 Want to read it first? Download `install.sh` from the latest release, read it, then
 run `sh install.sh`. To install a particular version, set `HQ_VERSION=0.1.0`.
 
-**Update** by running the same line again. **Uninstall** with:
+**Update** from the app: when a new release is out, an "Update" pill appears at the
+bottom of the sidebar (or choose Headquarter > Check for Updates…). One click downloads
+it, checks the installer against the checksum GitHub publishes, installs it, and
+restarts Headquarter, waiting first if you'd rather not interrupt a busy session. Your
+running sessions start again on their conversations. Running the install line again
+works too. **Uninstall** with:
 
 ```bash
 curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/latest/download/install.sh | sh -s -- --uninstall
@@ -189,6 +194,9 @@ enabled = false                # hide agy
 [notifications]
 needs_you = true               # a session needs you
 replied = false                # a session finished its turn
+
+[updates]
+check = true                   # look for a new release at start and every 6 hours
 ```
 
 Notifications show while the app is open and you are not already looking at that
