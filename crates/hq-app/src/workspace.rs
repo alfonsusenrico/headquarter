@@ -2447,15 +2447,7 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                // A name such as "week · Fable" stays on one line; the bar
-                                // gives way.
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .min_w(px(WINDOW_NAME_PX))
-                                        .whitespace_nowrap()
-                                        .child(name),
-                                )
+                                .child(window_name_cell(name))
                                 .child(
                                     div()
                                         .flex_1()
@@ -2721,12 +2713,29 @@ fn translucent(color: impl Into<crate::theme::Paint>, opacity: f32) -> gpui::Hsl
 }
 
 /// A usage window shown without a number, with why.
+/// A window's name in usage details, shared by every row so all keep it on one line:
+/// "week · Gemini 4 Argon" never wraps; the bar or the words beside it give way
+/// (fix-usage-reset-row-names).
+fn window_name_cell(name: String) -> gpui::Div {
+    div()
+        .flex_none()
+        .min_w(px(WINDOW_NAME_PX))
+        .whitespace_nowrap()
+        .child(name)
+}
+
 fn reset_row(name: String, words: &'static str, muted: crate::theme::Paint) -> gpui::Div {
     div()
         .flex()
         .gap(px(8.))
-        .child(div().w(px(WINDOW_NAME_PX)).child(name))
-        .child(div().text_color(hsla(muted)).child(words))
+        .child(window_name_cell(name))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_color(hsla(muted))
+                .child(words),
+        )
 }
 
 fn overlay(chrome: Chrome) -> gpui::Hsla {
