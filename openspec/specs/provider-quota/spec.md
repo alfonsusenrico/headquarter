@@ -104,6 +104,10 @@ The system SHALL show, when the owner opens an agent's ring, each window with it
 - **WHEN** Claude's `/usage` shows "Current week (Fable)" at 3%
 - **THEN** Claude's details list "week · Fable" at 3% below the all-models week
 
+#### Scenario: Long window name without a bar
+- **WHEN** agy's details show "week · Gemini" as reset since the last reading, next to "week · Gemini 4 Argon" with a bar
+- **THEN** both names stay on one line, and "reset since this reading" takes the remaining width
+
 ### Requirement: Reading cadence
 The system SHALL read Codex usage 10 seconds after a hosted Codex session's turn ends, every five minutes while a client shows usage, and on refresh, and SHALL NOT read any agent's usage when no client is showing usage.
 
