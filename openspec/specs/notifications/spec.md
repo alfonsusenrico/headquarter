@@ -32,6 +32,10 @@ The system SHALL show a system notification when a session in the sidebar starts
 - **WHEN** a sidebar session running in another terminal asks for permission there
 - **THEN** no notification is shown
 
+#### Scenario: Session never renamed
+- **WHEN** a session the owner never renamed, which the sidebar shows as "Fixing Unresponsive Docker Daemon", finishes a turn while the owner works elsewhere
+- **THEN** the notification is titled "Fixing Unresponsive Docker Daemon", not the session's id
+
 ### Requirement: Open from a notification
 The system SHALL bring the app forward with the notified session shown when the owner clicks its notification.
 

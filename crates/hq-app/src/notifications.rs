@@ -41,7 +41,9 @@ pub fn notice(
     };
     Some(Notice {
         tag: current.id.clone(),
-        title: current.name.clone(),
+        // What the sidebar row shows: the owner's name for it, else the agent's title,
+        // else "Untitled conversation · id" (owner, 2026-10-24).
+        title: hq_protocol::sidebar::display_title(current),
         body: format!("{agent} {wants}"),
     })
 }
@@ -151,12 +153,24 @@ mod tests {
     }
 
     #[test]
+    fn the_title_is_what_the_sidebar_shows() {
+        let mut titled = session(Status::DoneUnread);
+        titled.owner_named = false;
+        titled.name = "claude-e0c6f139".into();
+        titled.title = Some("Fixing Unresponsive Docker Daemon".into());
+        let mut before = titled.clone();
+        before.status = Status::Working;
+        let posted = notice(Some(&before), &titled, false, Notifications::default()).unwrap();
+        assert_eq!(
+            posted.title, "Fixing Unresponsive Docker Daemon",
+            "not the id"
+        );
+    }
+
+    #[test]
     fn a_finished_turn_notifies_as_replied_without_the_folder() {
         let posted = change(Status::Working, Status::DoneUnread).unwrap();
-        assert_eq!(
-            posted.title, "Fix login",
-            "the name, never the agent's title"
-        );
+        assert_eq!(posted.title, "Fix login", "the owner's name for it wins");
         assert_eq!(posted.body, "Claude replied");
         assert!(!posted.body.contains("api"), "no folder");
     }
