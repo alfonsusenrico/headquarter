@@ -12,13 +12,16 @@ Expected Result: `cargo test -p hq-store -p hq-daemon -p hq-protocol -p hq-cli` 
 
 ## 2. App
 
-- [ ] 2.1 Moon glyph and dimmed inactive rows; "starting" breathing on every session the host will start until its agent is ready; Resume Session pane (Enter presses it); ✕ on inactive asks "Remove “title” from the sidebar?"; the shown session is resumed first; the interrupted note removed. Verify with sidebar model tests and on screen.
-- [ ] 2.2 Start-failure notification, told once across app restarts. Verify with a notifications unit test and on screen (a session whose folder was renamed while the host was stopped).
+- [x] 2.1 Moon glyph and dimmed inactive rows; "starting" breathing on every session the host will start until its agent is ready; Resume Session pane (Enter presses it); ✕ on inactive asks "Remove “title” from the sidebar?"; the shown session is resumed first; the interrupted note removed. Verify with sidebar model tests and on screen.
+- [x] 2.3 Never-used Claude sessions start afresh under their id (D7); the inactive pane offers "Remove from Sidebar" when the folder is gone (D8). Verify with the host test `a_host_crash_restarts_what_ran_with_the_agent_resume` (unsaved → `--session-id`) and on screen.
+- [x] 2.2 Start-failure notification, told once across app restarts. Verify with a notifications unit test and on screen (a session whose folder was renamed while the host was stopped).
+
+Done 2026-10-24: `sessions_starting_with_the_host_breathe_until_ready`, `closed_in_the_other_terminal_becomes_inactive`, `a_start_failure_is_told_once`, `the_last_start_failure_told_is_kept` pass; on screen the owner confirmed quit to inactive, Resume Session, the remove question, starting with the host, a never-used session resuming, and Remove from Sidebar for a missing folder ("ok working"). The notification itself was not seen: macOS shows them only from the installed app.
 
 Expected Result: the owner checks it on screen in a dev window: quit an agent, see the moon, resume it; stop the dev host and reopen, sessions start with the shown one first.
 
 ## 3. Delivery
 
-- [ ] 3.1 `./scripts/check` passes; `verification.md`; archive; push and open the PR for the owner to merge. No release (owner, 2026-10-24).
+- [x] 3.1 `./scripts/check` passes; `verification.md`; archive; push and open the PR for the owner to merge. No release (owner, 2026-10-24). Done: `./scripts/check` passed, 427 tests (2026-10-24).
 
 Expected Result: the PR is open.

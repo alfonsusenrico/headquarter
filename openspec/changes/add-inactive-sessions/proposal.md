@@ -80,6 +80,9 @@ Approved by the owner on 2026-10-24 ("approve, go ahead").
 - ✕ on an inactive row asks before removing.
 - On upgrade, only sessions running when the old host stopped start; the rest are
   inactive.
+- Found in the on-screen check, decided the same day: a Claude session that never had
+  a message starts afresh under its id (option A); an inactive session whose folder is
+  gone offers "Remove from Sidebar" instead of Resume Session.
 
 ## Impact
 

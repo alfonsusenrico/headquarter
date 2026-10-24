@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Opening sessions
-The system SHALL show a sidebar session in the terminal pane when chosen; for an inactive session it SHALL show the session with a "Resume Session" button and start its agent on the same conversation only when it is pressed. It SHALL mark the open row distinctly from the keyboard's place and from rows under the pointer, and SHALL state that a session running in another terminal is observed only.
+The system SHALL show a sidebar session in the terminal pane when chosen; for an inactive session it SHALL show the session with a "Resume Session" button and start its agent on the same conversation only when it is pressed, or offer "Remove from Sidebar" instead when its folder no longer exists. It SHALL mark the open row distinctly from the keyboard's place and from rows under the pointer, and SHALL state that a session running in another terminal is observed only.
 
 #### Scenario: Ended session
 - **WHEN** the owner chooses an inactive session
@@ -12,8 +12,12 @@ The system SHALL show a sidebar session in the terminal pane when chosen; for an
 - **THEN** the pane says "Opening…" and then shows the agent continuing that conversation
 
 #### Scenario: Starting fails
-- **WHEN** the agent cannot be started (for example its folder is gone)
+- **WHEN** the agent cannot be started (for example its executable is missing)
 - **THEN** the session stays inactive and the pane gives the reason above "Resume Session"
+
+#### Scenario: Folder gone
+- **WHEN** the owner opens an inactive session whose folder no longer exists
+- **THEN** the pane says the folder no longer exists and offers "Remove from Sidebar", which asks before removing it, in place of "Resume Session"
 
 #### Scenario: Running elsewhere
 - **WHEN** the owner chooses a session marked "ext"

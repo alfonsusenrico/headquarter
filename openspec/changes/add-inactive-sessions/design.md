@@ -103,6 +103,23 @@ body: "Couldn't start: <reason>"). The pane shows the reason; the host clears it
 successful resume or removal. Rejected: persisting the reason (the index keeps status metadata only; a reason
 that outlives the host would be stale).
 
+### D7. Never-used Claude sessions (owner, 2026-10-24, option A)
+
+Claude Code saves a conversation only after its first message, and `claude --resume
+<id>` exits 1 for one it never saved. Found in the on-screen check: every session opened
+and never typed in would fail to start with the host. When a Claude session's transcript
+(`<claude config>/projects/*/<id>.jsonl`) does not exist, resuming starts it with
+`--session-id <id>` instead: it comes back as empty as it was. Codex and agy keep the
+existing rule for an unknown conversation (their picker, or a new conversation).
+Rejected: never auto-starting never-used sessions (option B; they would come back
+inactive for no reason the owner can see).
+
+### D8. Folder gone
+
+The inactive pane checks the session's folder when drawn; when it is gone, "Resume
+Session" could only fail, so the pane says so and offers "Remove from Sidebar" (the same
+confirmation as the ✕) instead (owner, 2026-10-24).
+
 ## Protocol
 
 `SessionInfo.start_error: Option<StartError { reason, at }>` and `SessionInfo.starting: bool` (both defaulted). `Request::Dismiss` is removed;
