@@ -8,7 +8,7 @@ Expected Result: `cargo test -p hq-cli -p hq-protocol` passes.
 
 ## 2. App
 
-- [ ] 2.1 Split pane with divider, Cmd-T / Ctrl-Shift-T toggle, focus moves, open panels kept per session in `app-state.json`, menu item. Verify with unit tests (shortcut mapping, split sizes, app-state round trip) and on screen.
+- [x] 2.1 Split pane with divider, Cmd-T / Ctrl-Shift-T toggle, focus moves, open panels kept per session in `app-state.json`, menu item. Verify with unit tests (shortcut mapping, split sizes, app-state round trip) and on screen. Done (unit part): `the_shell_panel_takes_cmd_t_or_ctrl_shift_t_only`, `the_divider_keeps_both_parts_usable`, `shell_panels_and_their_share_are_kept_with_the_rest` pass; hq-app 153 tests, clippy clean (2026-10-24). On screen: pending the owner.
 - [ ] 2.2 Resource check: idle memory and CPU with five sessions each with an open shell, versus none. Evidence in `research/evidence/session-shell-panel/`.
 
 Expected Result: the owner uses the panel on screen; resource numbers recorded.

@@ -42,6 +42,8 @@ pub struct TerminalSession {
     pub agent_copies: (u64, String),
     /// When the owner last sent this session input: keys, a paste or a mouse report.
     last_input: Cell<Option<Instant>>,
+    /// Attached to the session's shell rather than its agent (add-session-shell-panel).
+    pub shell: bool,
     _reader: Task<()>,
 }
 
@@ -58,9 +60,18 @@ fn accepts_agent_copy(last_input: Option<Instant>, now: Instant) -> bool {
 
 impl TerminalSession {
     pub fn attach(info: SessionInfo, palette: Palette, cx: &mut Context<Self>) -> Self {
+        Self::connect(info, palette, false, cx)
+    }
+
+    /// Attaches to the session's shell, which the host starts if none runs.
+    pub fn attach_shell(info: SessionInfo, palette: Palette, cx: &mut Context<Self>) -> Self {
+        Self::connect(info, palette, true, cx)
+    }
+
+    fn connect(info: SessionInfo, palette: Palette, shell: bool, cx: &mut Context<Self>) -> Self {
         let (tx, mut rx) = unbounded();
         let session_id = info.id.clone();
-        std::thread::spawn(move || run_connection(&session_id, &tx));
+        std::thread::spawn(move || run_connection(&session_id, shell, &tx));
         let reader = cx.spawn(async move |this, cx| {
             while let Some(incoming) = rx.next().await {
                 if this
@@ -78,6 +89,7 @@ impl TerminalSession {
             ended: None,
             agent_copies: (0, String::new()),
             last_input: Cell::new(None),
+            shell,
             _reader: reader,
         }
     }
@@ -108,7 +120,12 @@ impl TerminalSession {
             }
             Incoming::Ended(code) => {
                 let code = code.map_or_else(|| "unknown".to_owned(), |code| code.to_string());
-                self.ended = Some(format!("{} exited (code {code})", self.info.agent));
+                let program = if self.shell {
+                    "The shell".to_owned()
+                } else {
+                    self.info.agent.to_string()
+                };
+                self.ended = Some(format!("{program} exited (code {code})"));
                 self.writer = None;
             }
             Incoming::Failed(message) => {
@@ -181,7 +198,7 @@ fn clamp(value: usize) -> u16 {
 
 /// Runs on its own thread: connects, attaches, then forwards frames until the session
 /// ends or the connection closes.
-fn run_connection(session_id: &str, tx: &UnboundedSender<Incoming>) {
+fn run_connection(session_id: &str, shell: bool, tx: &UnboundedSender<Incoming>) {
     let fail = |message: String| {
         let _ = tx.unbounded_send(Incoming::Failed(message));
     };
@@ -189,12 +206,13 @@ fn run_connection(session_id: &str, tx: &UnboundedSender<Incoming>) {
         fail("cannot find the home folder".to_owned());
         return;
     };
-    let client = match hq_client::attach(
-        &paths,
-        session_id,
-        clamp(INITIAL_SIZE.columns),
-        clamp(INITIAL_SIZE.rows),
-    ) {
+    let (cols, rows) = (clamp(INITIAL_SIZE.columns), clamp(INITIAL_SIZE.rows));
+    let attached = if shell {
+        hq_client::attach_shell(&paths, session_id, cols, rows)
+    } else {
+        hq_client::attach(&paths, session_id, cols, rows)
+    };
+    let client = match attached {
         Ok(client) => client,
         Err(error) => return fail(format!("{error:#}")),
     };
