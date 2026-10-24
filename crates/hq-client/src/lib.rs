@@ -17,8 +17,10 @@ use hq_protocol::{
 use hq_signals::details::SessionDetails;
 use hq_signals::event::Agent;
 
-/// How long a client waits for a host it just started to accept connections.
-const START_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long a client waits for a host it just started to accept connections. It covers
+/// a host that first waits for a stopping one to exit (fix-host-start-after-stop); the
+/// wait ends as soon as the host answers.
+const START_TIMEOUT: Duration = Duration::from_secs(12);
 
 pub struct Client {
     pub reader: BufReader<UnixStream>,

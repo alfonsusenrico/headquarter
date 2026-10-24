@@ -305,6 +305,41 @@ fn single_instance_with_private_files() {
 }
 
 #[test]
+fn a_new_host_waits_for_a_stopping_one() {
+    let env = TestEnv::new("stopping");
+    std::fs::create_dir_all(env.host_dir()).unwrap();
+    // A stopping host: its socket is gone, its lock still held while agents end.
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(env.host_dir().join("agentd.lock"))
+        .unwrap();
+    held.lock().unwrap();
+    let mut waiting = env
+        .command()
+        .arg("daemon")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    assert!(
+        waiting.try_wait().unwrap().is_none(),
+        "it waits instead of giving up"
+    );
+    held.unlock().unwrap();
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("the new host serves", || {
+        UnixStream::connect(&socket).is_ok()
+    });
+    assert!(env.sessions().is_empty());
+    let mut env = env;
+    env.daemons.push(waiting);
+}
+
+#[test]
 fn hosted_session_survives_detach_and_reports_status() {
     let mut env = TestEnv::new("attach");
     env.stub("agy", INTERACTIVE_STUB);
