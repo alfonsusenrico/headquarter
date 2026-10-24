@@ -42,15 +42,15 @@ is the heaviest case; the existing redraw cap applies to each view.
 ### D6. Keys
 
 Cmd-T on macOS; Ctrl-Shift-T on Linux, because plain Ctrl keys go to agents (Claude Code
-uses Ctrl-T) and shells. A View menu item "Shell" shows it.
+uses Ctrl-T) and shells. A Window menu item "Shell" shows it.
 
 ## Protocol
 
-`OpenShell { session }` answers with the shell's id (starting it if needed);
-`CloseShell { session }` hangs it up. `SessionInfo` gains an optional `shell` (the id
-while one runs, defaulted for older hosts). Attach, input, resize and output use the
-existing frames with the shell's id. Older hosts reject the new requests with their
-usual error; `PROTOCOL_VERSION` stays 9.
+`AttachShell { session, cols, rows }` starts the session's shell if none runs and
+attaches to it, answering `Attached` like `Attach`; `CloseShell { session }` hangs it up.
+Input, resize and output then use the existing frames on that connection. `SessionInfo`
+is unchanged: the app remembers which sessions have their panel open. Older hosts reject
+the new requests with their usual error; `PROTOCOL_VERSION` stays 9.
 
 ## Risks
 

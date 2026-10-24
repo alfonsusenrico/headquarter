@@ -21,8 +21,8 @@ for the shell on screen.
 
 ## What Changes
 
-- `hq-protocol`: requests to open and end a session's shell; the shell's id in session
-  info, so any client can attach to it like a session.
+- `hq-protocol`: requests to attach to a session's shell (starting it if needed) and to
+  end it; the app remembers which panels are open, so session info is unchanged.
 - `hq-daemon`: the host starts the owner's login shell in a PTY in the session's folder,
   keeps it in memory only (never in the index), ends it with the session, and leaves it
   out of status tracking and of the hosted processes the outside scan excludes, so an
