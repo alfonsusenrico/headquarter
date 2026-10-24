@@ -1,6 +1,9 @@
-# Spec Delta
+# shell-panel Specification
 
-## ADDED Requirements
+## Purpose
+Gives each hosted session a shell of its own, under its agent in the pane and in the session's folder, which the host keeps while the owner looks elsewhere and ends with the session; shells carry no status and are never indexed.
+
+## Requirements
 
 ### Requirement: Shell panel per session
 The system SHALL open, on Cmd-T (Ctrl-Shift-T on Linux), a shell panel under the shown session's agent, running the owner's login shell in the session's folder, without changing the sidebar, and SHALL close the panel and end its shell on Cmd-T again.
