@@ -1,4 +1,9 @@
-## ADDED Requirements
+# app-update Specification
+
+## Purpose
+Keeps Headquarter current from this repository's GitHub releases: it notices a newer release by itself, installs it in one click with the release's own verified installer, and restarts onto it, waiting for busy sessions when the owner asks and bringing running sessions back on their conversations.
+
+## Requirements
 
 ### Requirement: Checking for releases
 The system SHALL check for a newer release of Headquarter at app start, every 6 hours while the app is open, and when the owner chooses Check for Updates…, counting only releases newer than the running version, and SHALL stay silent when an automatic check fails but say why when a manual one does.
