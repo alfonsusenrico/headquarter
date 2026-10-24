@@ -21,7 +21,7 @@ The system SHALL open, on Cmd-T (Ctrl-Shift-T on Linux), a shell panel under the
 - **THEN** the agent receives the key and no panel opens; Ctrl-Shift-T opens it
 
 ### Requirement: Shells outlive switching
-The system SHALL keep a session's shell running while the owner switches to other sessions or restarts the app, SHALL show it again when the session is shown, and SHALL end it when it exits or when its session is closed.
+The system SHALL keep a session's shell running while the owner switches to other sessions or restarts the app, SHALL show it again when the session is shown, and SHALL end it when it exits, when its session is closed, or when its session becomes inactive.
 
 #### Scenario: Switching away
 - **WHEN** a build runs in session A's shell and the owner opens session B, then A again
@@ -34,6 +34,10 @@ The system SHALL keep a session's shell running while the owner switches to othe
 #### Scenario: Session closed
 - **WHEN** the owner closes a session whose shell is running
 - **THEN** the shell ends with it, without another question
+
+#### Scenario: Agent quit
+- **WHEN** the owner quits the agent of a session whose shell is running
+- **THEN** the session becomes inactive and its shell ends with the agent
 
 ### Requirement: Shells are not agents
 The system SHALL NOT track status, notify, import history or read usage for shells, and SHALL treat an agent started inside a shell as running in another terminal.

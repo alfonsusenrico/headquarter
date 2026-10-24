@@ -6,7 +6,7 @@ Tells the owner, for each agent session Headquarter launches, whether the agent 
 ## Requirements
 
 ### Requirement: Five session statuses
-The system SHALL report every launched session as exactly one of: working, needs you, idle not read yet, idle (stored as working, needs-you, done-unread, done). A session whose agent is not running is stored as inactive and shown as idle; no "inactive" or "not running" state is shown. When signals conflict, needs you SHALL take precedence over working, working over idle not read yet, and idle not read yet over idle.
+The system SHALL report every launched session as exactly one of: working, needs you, idle not read yet, idle (stored as working, needs-you, done-unread, done). A session whose agent is not running is stored as inactive and shown as inactive, or as starting while it waits to start with the host. When signals conflict, needs you SHALL take precedence over working, working over idle not read yet, and idle not read yet over idle.
 
 #### Scenario: Permission request while working
 - **WHEN** a session is working and the agent reports a permission request
@@ -19,6 +19,10 @@ The system SHALL report every launched session as exactly one of: working, needs
 #### Scenario: Words shown
 - **WHEN** a session's agent finishes a turn the owner has not seen
 - **THEN** the sidebar, the rail tooltip and `hq ls` say "idle, not read yet", and `hq ls --json` still reports `done-unread`
+
+#### Scenario: Agent not running
+- **WHEN** a sidebar session's agent was quit and the host is not about to start it
+- **THEN** the sidebar shows it as inactive and `hq ls` says "inactive"
 
 ### Requirement: Unread completion
 The system SHALL mark a session idle not read yet when its agent completes a turn, and SHALL mark it idle only after the owner has seen it.
@@ -100,21 +104,6 @@ The system SHALL NOT pass options that change how an agent runs beyond its per-l
 - **WHEN** the owner launches a Codex session through the system
 - **THEN** Codex starts with no `-c` option, shows no embedded-mode warning, and its status is reported from OSC 7501
 
-### Requirement: Stopped sessions are idle
-The system SHALL show a session whose agent is not running as idle, SHALL start its agent again on the same conversation when the owner opens it, and SHALL keep a running session idle however long it waits.
-
-#### Scenario: Waiting overnight
-- **WHEN** a hosted session has been idle for twelve hours with its agent still running
-- **THEN** its status is still idle
-
-#### Scenario: Agent crashed
-- **WHEN** a hosted agent exits with a non-zero code without the owner closing it
-- **THEN** the session stays in the sidebar shown as idle
-
-#### Scenario: Host restarted
-- **WHEN** the host stops and starts again
-- **THEN** the sessions it ran are shown as idle, and opening one starts its agent on the same conversation
-
 ### Requirement: Background work counts as working
 The system SHALL show a session as working while its agent runs work for it in the background, including Claude Code background shell commands and Codex sub-agents, even after the agent reports its turn finished.
 
@@ -133,3 +122,18 @@ The system SHALL show a session as working while its agent runs work for it in t
 #### Scenario: Claude Code records "shell"
 - **WHEN** a hosted Claude Code session ends its turn while its background shell command runs, and its session record says "shell"
 - **THEN** the session shows working until the record changes, without waiting for `claude agents --json`
+
+### Requirement: Inactive sessions
+The system SHALL keep a sidebar session whose agent ends without the owner closing it (a quit from inside the agent, or an exit with an error) in the sidebar as inactive, SHALL keep a running session idle however long it waits, and SHALL start an inactive session's agent again only when the owner asks.
+
+#### Scenario: Quit from inside
+- **WHEN** the owner types `/exit` in a Claude Code session
+- **THEN** the session stays in the sidebar as inactive and its agent's memory is freed
+
+#### Scenario: Agent crashed
+- **WHEN** a hosted agent exits with a non-zero code without the owner closing it
+- **THEN** the session stays in the sidebar as inactive and is not restarted
+
+#### Scenario: Waiting overnight
+- **WHEN** a hosted session has been idle for twelve hours with its agent still running
+- **THEN** its status is still idle
