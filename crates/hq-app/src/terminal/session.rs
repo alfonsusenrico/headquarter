@@ -2,9 +2,11 @@
 //! way back for input, replies and size changes. The host keeps the agent running when
 //! this is dropped; only this view's attachment ends.
 
+use std::cell::Cell;
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::term::ClipboardType;
 use futures::StreamExt;
@@ -38,7 +40,20 @@ pub struct TerminalSession {
     /// How many copies the agent has made (OSC 52), and the note for the latest, so
     /// the pane can say "Copied" for them too.
     pub agent_copies: (u64, String),
+    /// When the owner last sent this session input: keys, a paste or a mouse report.
+    last_input: Cell<Option<Instant>>,
     _reader: Task<()>,
+}
+
+/// How long after the owner's input an agent's copy is still theirs.
+const AGENT_COPY_WINDOW: Duration = Duration::from_secs(2);
+
+/// Whether an agent's copy follows the owner's input closely enough to be what they
+/// asked for. Claude Code sends its last selection again whenever it redraws, as when
+/// a session is opened; such a copy must not take the clipboard
+/// (fix-agent-copy-after-input).
+fn accepts_agent_copy(last_input: Option<Instant>, now: Instant) -> bool {
+    last_input.is_some_and(|at| now.saturating_duration_since(at) <= AGENT_COPY_WINDOW)
 }
 
 impl TerminalSession {
@@ -62,6 +77,7 @@ impl TerminalSession {
             writer: None,
             ended: None,
             agent_copies: (0, String::new()),
+            last_input: Cell::new(None),
             _reader: reader,
         }
     }
@@ -82,6 +98,10 @@ impl TerminalSession {
                     self.send(&Frame::Input(replies));
                 }
                 for (target, text) in self.model.take_copies() {
+                    if !accepts_agent_copy(self.last_input.get(), Instant::now()) {
+                        log::debug!("agent copy ignored: no input from the owner just before");
+                        continue;
+                    }
                     self.agent_copies = (self.agent_copies.0 + 1, super::copy::copied_note(&text));
                     store_copy(target, text, cx);
                 }
@@ -115,12 +135,14 @@ impl TerminalSession {
         }
         self.model.scroll_to_bottom();
         self.model.clear_selection();
+        self.last_input.set(Some(Instant::now()));
         self.send(&Frame::Input(bytes.to_vec()));
         cx.notify();
     }
 
     /// Bytes that are not owner input, such as mouse reports.
     pub fn report(&self, bytes: &[u8]) {
+        self.last_input.set(Some(Instant::now()));
         self.send(&Frame::Input(bytes.to_vec()));
     }
 
@@ -221,6 +243,24 @@ fn store_copy(target: ClipboardType, text: String, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_copies_count_only_right_after_the_owners_input() {
+        let now = Instant::now();
+        assert!(
+            !accepts_agent_copy(None, now),
+            "a redraw on opening, with no input"
+        );
+        assert!(
+            accepts_agent_copy(Some(now - Duration::from_millis(300)), now),
+            "drag released"
+        );
+        assert!(accepts_agent_copy(Some(now - AGENT_COPY_WINDOW), now));
+        assert!(
+            !accepts_agent_copy(Some(now - Duration::from_secs(30)), now),
+            "a re-send long after the last input"
+        );
+    }
 
     const SIZE: GridSize = GridSize {
         columns: 80,

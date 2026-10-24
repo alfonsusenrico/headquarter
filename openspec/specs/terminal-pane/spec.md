@@ -50,6 +50,10 @@ The system SHALL copy selected text to the system clipboard, SHALL put text the 
 - **WHEN** an agent sends an OSC 52 request to read the clipboard
 - **THEN** nothing is sent back and the clipboard is unchanged
 
+#### Scenario: Copy re-sent on opening a session
+- **WHEN** the owner copies in session A, then in session B, then opens session A again, and Claude Code in A sends its old selection again as it redraws
+- **THEN** the clipboard keeps B's text and no "Copied" note shows
+
 ### Requirement: Scrollback and mouse
 The system SHALL keep scrollback for the normal screen, SHALL select text when the owner drags with the left button and copy it to the clipboard on release, except that a drag in a full-screen agent that enabled mouse reporting goes to that agent unless Shift is held, SHALL send clicks without a drag and wheel events to an agent that enabled mouse reporting, and SHALL otherwise use clicks to clear the selection and the wheel to scroll.
 
