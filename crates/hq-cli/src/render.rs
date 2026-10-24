@@ -198,12 +198,14 @@ fn status_text(session: &SessionInfo) -> String {
             .map_or_else(String::new, |pid| format!(" {pid}"));
         return format!("{state} · external{pid}");
     }
+    if session.starting {
+        return "starting".to_owned();
+    }
     let base = session.status.label();
     match (session.status, session.needs_reason) {
         (Status::NeedsYou, Some(reason)) if reason != NeedsReason::Unknown => {
             format!("{base} ({})", reason_text(reason))
         }
-        _ if session.interrupted => format!("{base} · interrupted"),
         _ => base.to_owned(),
     }
 }
@@ -255,7 +257,8 @@ mod tests {
             in_sidebar: true,
             group: None,
             owner_named: false,
-            interrupted: false,
+            starting: false,
+            start_error: None,
             offered: true,
         }
     }
@@ -330,12 +333,19 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_sessions_are_marked() {
-        let mut stopped = session("a", "/w/api", "api-fix", Status::Inactive);
-        stopped.in_sidebar = true;
-        stopped.interrupted = true;
-        let text = sidebar_list(&[stopped], &[], 0);
-        assert!(text.contains("idle · interrupted"), "{text}");
+    fn inactive_and_starting_sessions_are_named() {
+        let mut quit = session("a", "/w/api", "api-fix", Status::Inactive);
+        quit.in_sidebar = true;
+        let mut waiting = session("b", "/w/api", "api-docs", Status::Inactive);
+        waiting.in_sidebar = true;
+        waiting.starting = true;
+        let text = sidebar_list(&[quit, waiting], &[], 0);
+        assert!(
+            text.contains("api-fix") && text.contains("inactive"),
+            "{text}"
+        );
+        assert!(text.contains("starting"), "{text}");
+        assert!(!text.contains("idle"), "{text}");
     }
 
     #[test]

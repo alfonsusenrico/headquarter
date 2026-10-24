@@ -53,6 +53,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "group_color",
         sql: include_str!("../migrations/0007_group_color.sql"),
     },
+    Migration {
+        version: 8,
+        name: "start_with_host",
+        sql: include_str!("../migrations/0008_start_with_host.sql"),
+    },
 ];
 
 /// How a session entered the index.
@@ -133,7 +138,8 @@ pub struct SessionRow {
     pub group_id: Option<i64>,
     /// Whether `name` is one the owner gave, shown instead of the agent's title.
     pub owner_named: bool,
-    /// When start-up recovery found the session still running; `None` otherwise.
+    /// When the session was stopped with the host, which starts it again when it next
+    /// starts (add-inactive-sessions); `None` otherwise.
     pub interrupted_at: Option<u64>,
 }
 
@@ -297,8 +303,8 @@ impl Store {
         Ok(())
     }
 
-    /// Start-up recovery: ends every session still marked running and marks it
-    /// interrupted at `at`, since the host before stopped without ending it (a crash, a
+    /// Start-up recovery: ends every session still marked running and marks it to start
+    /// again (at `at`), since the host before stopped without ending it (a crash, a
     /// reboot, a kill). No earlier agent can still be running: the host owns the PTYs.
     /// Returns how many changed.
     pub fn recover_interrupted(&self, at: u64) -> Result<usize> {
@@ -310,28 +316,31 @@ impl Store {
         )?)
     }
 
-    /// Clears the interrupted mark of `ids` without restarting them; an empty list clears
-    /// every mark. Returns how many changed.
-    pub fn dismiss_interrupted(&self, ids: &[String]) -> Result<usize> {
-        if ids.is_empty() {
-            return Ok(self.conn.execute(
-                "UPDATE sessions SET interrupted_at = NULL WHERE interrupted_at IS NOT NULL",
-                [],
-            )?);
-        }
-        let mut changed = 0;
+    /// Marks `ids` to start again when the host next starts: the host is stopping
+    /// with them running.
+    pub fn mark_for_start(&self, ids: &[String], at: u64) -> Result<()> {
         for id in ids {
-            changed += self.conn.execute(
-                "UPDATE sessions SET interrupted_at = NULL WHERE id = ?1",
-                params![id],
+            self.conn.execute(
+                "UPDATE sessions SET interrupted_at = ?2 WHERE id = ?1",
+                params![id, millis(at)],
             )?;
         }
-        Ok(changed)
+        Ok(())
     }
 
-    /// Marks every session not already inactive as ended at `at`, without marking it
-    /// interrupted: the host is stopping on purpose after ending its agents. Returns how
-    /// many changed.
+    /// Clears the mark of a session the host will not start after all: it could not
+    /// start, or its conversation runs in another terminal.
+    pub fn clear_start_mark(&self, id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET interrupted_at = NULL WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Marks every session not already inactive as ended at `at`: the host is stopping
+    /// after ending its agents, which it marked to start again first. Returns how many
+    /// changed.
     pub fn end_all_live(&self, at: u64) -> Result<usize> {
         Ok(self.conn.execute(
             "UPDATE sessions SET status = 'inactive', needs_reason = NULL, ended_at = ?1
@@ -768,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn recovery_marks_what_was_running_and_restarting_or_dismissing_clears_it() {
+    fn what_was_running_is_marked_to_start_and_starting_or_skipping_clears_it() {
         let store = Store::open_in_memory().unwrap();
         store.insert(&row("a", "/w", "claude-1")).unwrap();
         store.insert(&row("b", "/w", "claude-2")).unwrap();
@@ -779,18 +788,58 @@ mod tests {
         assert_eq!(marked("a"), Some(5_000));
         assert_eq!(marked("c"), None, "already ended before the host went away");
         store.reactivate("a").unwrap();
-        assert_eq!(marked("a"), None, "restarting clears the mark");
-        assert_eq!(store.dismiss_interrupted(&["b".to_owned()]).unwrap(), 1);
-        assert_eq!(marked("b"), None);
+        assert_eq!(marked("a"), None, "starting clears the mark");
+        store.clear_start_mark("b").unwrap();
+        assert_eq!(marked("b"), None, "could not start");
 
+        store.mark_for_start(&["a".to_owned()], 9_000).unwrap();
         store.end_all_live(9_000).unwrap();
-        assert_eq!(marked("a"), None, "a graceful stop marks nothing");
-        store.recover_interrupted(9_500).unwrap();
         assert_eq!(
-            store.dismiss_interrupted(&[]).unwrap(),
-            0,
-            "nothing was running"
+            marked("a"),
+            Some(9_000),
+            "a host stop starts it again next time"
         );
+        assert_eq!(marked("b"), None);
+    }
+
+    #[test]
+    fn upgrade_marks_only_what_the_last_stop_ended() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&mut conn, &MIGRATIONS[..7]).unwrap();
+        let insert =
+            |id: &str, sidebar: bool, status: &str, ended: Option<i64>, mark: Option<i64>| {
+                conn.execute(
+                    "INSERT INTO sessions (id, agent, cwd, name, status, created_at,
+                                       last_activity_at, ended_at, sidebar_added_at,
+                                       interrupted_at)
+                 VALUES (?1, 'claude', '/w', ?1, ?2, 0, 0, ?3, ?4, ?5)",
+                    params![id, status, ended, sidebar.then_some(1_i64), mark],
+                )
+                .unwrap();
+            };
+        insert("stopped-last", true, "inactive", Some(100_000), None);
+        insert("stopped-with-it", true, "inactive", Some(98_500), None);
+        insert("quit-earlier", true, "inactive", Some(10_000), Some(10_000));
+        insert("not-in-sidebar", false, "inactive", Some(100_000), None);
+        insert("never-ended", true, "inactive", None, None);
+        migrate(&mut conn, MIGRATIONS).unwrap();
+        let marked = |id: &str| -> Option<i64> {
+            conn.query_row(
+                "SELECT interrupted_at FROM sessions WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(marked("stopped-last"), Some(100_000));
+        assert_eq!(marked("stopped-with-it"), Some(98_500));
+        assert_eq!(
+            marked("quit-earlier"),
+            None,
+            "already stopped: stays inactive"
+        );
+        assert_eq!(marked("not-in-sidebar"), None);
+        assert_eq!(marked("never-ended"), None);
     }
 
     #[test]

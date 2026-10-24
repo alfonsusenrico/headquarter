@@ -85,16 +85,11 @@ enum Command {
     },
     /// Attach to a running session (detach with Ctrl-\ then d).
     Attach { session: String },
-    /// Restart a stopped session's conversation and attach to it; with
-    /// `--interrupted`, restart every sidebar session that was running when Headquarter
-    /// stopped, without attaching.
+    /// Restart an inactive session's conversation and attach to it.
     Resume {
-        #[arg(required_unless_present = "interrupted")]
-        session: Option<String>,
+        session: String,
         #[arg(long, short)]
         detach: bool,
-        #[arg(long, conflicts_with_all = ["session", "detach"])]
-        interrupted: bool,
     },
     /// Rename a session.
     Rename { session: String, name: String },
@@ -226,15 +221,7 @@ fn run(command: Command) -> Result<ExitCode> {
             let info = find(&mut client, &session)?;
             open(client, &info, false)
         }
-        Command::Resume {
-            interrupted: true, ..
-        } => resume_interrupted(&paths),
-        Command::Resume {
-            session, detach, ..
-        } => {
-            let Some(session) = session else {
-                bail!("name a session to resume, or pass --interrupted");
-            };
+        Command::Resume { session, detach } => {
             let mut client = Client::connect_or_start(&paths)?;
             let response = expect_ok(client.request(&Request::Resume {
                 session,
@@ -343,40 +330,6 @@ fn sessions_and_groups(client: &mut Client) -> Result<(Vec<SessionInfo>, Vec<Gro
         Response::Sessions { sessions, groups } => Ok((sessions, groups)),
         _ => bail!("unexpected answer from the host"),
     }
-}
-
-/// Restarts every interrupted sidebar session without attaching and says how each went
-/// (session-restore D5).
-fn resume_interrupted(paths: &HostPaths) -> Result<ExitCode> {
-    let mut client = Client::connect_or_start(paths)?;
-    let sessions = sessions(&mut client)?;
-    let interrupted: Vec<SessionInfo> = sessions
-        .into_iter()
-        .filter(|session| session.in_sidebar && session.interrupted)
-        .collect();
-    if interrupted.is_empty() {
-        println!("No session was interrupted.");
-        return Ok(ExitCode::SUCCESS);
-    }
-    let mut failed = false;
-    for session in interrupted {
-        let answer = client.request(&Request::Resume {
-            session: session.id.clone(),
-            term: std::env::var("TERM").ok(),
-        })?;
-        match expect_ok(answer) {
-            Ok(_) => println!("{}: restarted", session.name),
-            Err(error) => {
-                failed = true;
-                println!("{}: {error:#}", session.name);
-            }
-        }
-    }
-    Ok(if failed {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    })
 }
 
 /// Closing waits for the agent's exit command, then a hang-up, then a kill.

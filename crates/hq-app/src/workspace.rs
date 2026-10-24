@@ -66,8 +66,10 @@ const CLOSE_SLOT: f32 = 22.0;
 const SLIDE: Duration = Duration::from_millis(150);
 /// The agents' marks in the pane while the host starts.
 const STARTING_MARK: f32 = 44.0;
-/// One breath of a working session's "working" word, out and back.
+/// One breath of a working or starting session's word, out and back.
 const BREATH: Duration = Duration::from_secs(2);
+/// How much of an inactive row's age shows, beside its muted title.
+const DIMMED: f32 = 0.6;
 /// A usage ring and the gap between rings.
 const RING_PX: f32 = 36.0;
 const RING_GAP: f32 = 6.0;
@@ -201,9 +203,6 @@ pub struct Workspace {
     window_save: Option<Task<()>>,
     /// The session to show again once the first list arrives (add-session-restore D3).
     pending_shown: Option<String>,
-    /// Sessions "Resume all" could not restart, with why.
-    restart_failures: Vec<String>,
-    restarting_all: bool,
     /// The divider is being dragged.
     resizing: bool,
     /// The shown session's shell panel, while open (add-session-shell-panel).
@@ -226,9 +225,10 @@ pub struct Workspace {
     resuming: Option<String>,
     /// Why starting a session's agent again failed: (session id, reason).
     resume_failed: Option<(String, String)>,
-    /// The shown session whose agent was closed in another terminal; it waits for
-    /// "Open here" (add-sessions-running-elsewhere D2).
-    closed_elsewhere: Option<String>,
+    /// The pane's keyboard while it shows an inactive session: Enter resumes it.
+    pane_focus: FocusHandle,
+    /// The latest start failure already notified (Unix milliseconds).
+    start_failures_told: u64,
     /// The sidebar, drawn as a view GPUI keeps between frames (fix-terminal-redraw-cost).
     sidebar_view: Entity<sidebar_view::SidebarView>,
     /// Steps sidebar motion while any is on screen (fix-sidebar-motion-redraw).
@@ -360,8 +360,6 @@ impl Workspace {
             window_save: None,
             pending_shown: crate::app_state::path()
                 .and_then(|path| crate::app_state::load_shown(&path)),
-            restart_failures: Vec::new(),
-            restarting_all: false,
             details: HashMap::new(),
             feed_control: None,
             followed: None,
@@ -380,7 +378,9 @@ impl Workspace {
             confirm_close: None,
             resuming: None,
             resume_failed: None,
-            closed_elsewhere: None,
+            pane_focus: cx.focus_handle(),
+            start_failures_told: crate::app_state::path()
+                .map_or(0, |path| crate::app_state::load_start_failures_told(&path)),
             motion: None,
             motion_epoch: Instant::now(),
             rename: None,
@@ -474,6 +474,31 @@ impl Workspace {
             body: notice.body.into(),
             actions: Vec::new(),
         });
+    }
+
+    /// Notifies each session the host could not start with itself, once.
+    fn tell_start_failures(&mut self, cx: &mut Context<Self>) {
+        let failures = notifications::start_failures(&self.sessions, self.start_failures_told);
+        if failures.is_empty() {
+            return;
+        }
+        for notice in failures {
+            cx.show_system_notification(SystemNotification {
+                tag: notice.tag.into(),
+                title: notice.title.into(),
+                body: notice.body.into(),
+                actions: Vec::new(),
+            });
+        }
+        self.start_failures_told = self
+            .sessions
+            .iter()
+            .filter_map(|session| session.start_error.as_ref().map(|error| error.at))
+            .fold(self.start_failures_told, u64::max);
+        if let Some(path) = crate::app_state::path() {
+            // A lost write only means a failure may be told again after a restart.
+            let _ = crate::app_state::save_start_failures_told(&path, self.start_failures_told);
+        }
     }
 
     // ---- settings ----------------------------------------------------------------
@@ -659,6 +684,7 @@ impl Workspace {
                 self.message = Some(message);
             }
         }
+        self.tell_start_failures(cx);
         if let Some(Modal::Open { view: window, .. }) = &self.modal {
             let sessions = self.sessions.clone();
             let loaded = self.listed;
@@ -687,11 +713,7 @@ impl Workspace {
         });
         let previous = self.session(&id).cloned();
         self.notify_change(previous.as_ref(), &session, window, cx);
-        if self.shown_id() == Some(id.as_str())
-            && model::closed_elsewhere(previous.as_ref(), &session)
-        {
-            self.closed_elsewhere = Some(id.clone());
-        }
+        let started = live && previous.as_ref().is_some_and(|previous| !previous.live);
         match self.sessions.iter_mut().find(|known| known.id == id) {
             Some(known) => *known = session,
             None => self.sessions.push(session),
@@ -719,6 +741,15 @@ impl Workspace {
                     self.sync_shell(window, cx);
                 }
             }
+            return;
+        }
+        // The shown session's agent started meanwhile (with the host, or from `hq`):
+        // show it, unless this window is starting it and will open it itself.
+        if started
+            && self.resuming.as_deref() != Some(id.as_str())
+            && matches!(&self.pane, Pane::Details(shown) if *shown == id)
+        {
+            self.open(&id, window, cx);
             return;
         }
         if self.shown_id() == Some(id.as_str()) {
@@ -795,20 +826,24 @@ impl Workspace {
             return;
         };
         self.selected = Some(info.id.clone());
-        self.closed_elsewhere = None;
         if let Some(path) = crate::app_state::path() {
             // A lost write only means the next launch shows nothing in particular.
             let _ = crate::app_state::save_shown(&path, &info.id);
         }
         if !info.live {
-            // There is no stopped state to look at: opening a session whose agent is
-            // not running starts it again on the same conversation (owner, 2026-10-21).
-            // One running in another terminal is only observed.
-            let observed = info.external.is_some();
+            // An inactive session waits for "Resume Session"; one still waiting its turn
+            // to start with the host starts now, ahead of the others; one running in
+            // another terminal is only observed (add-inactive-sessions D4).
             self.pane = Pane::Details(info.id.clone());
             self.sync_shell(window, cx);
-            if !observed && self.resuming.is_none() {
-                self.resume(info.id, window, cx);
+            if info.external.is_none() {
+                if info.starting {
+                    if self.resuming.is_none() {
+                        self.resume(info.id, window, cx);
+                    }
+                } else {
+                    window.focus(&self.pane_focus, cx);
+                }
             }
             cx.notify();
             return;
@@ -849,7 +884,8 @@ impl Workspace {
         let Some(info) = model::kept_session(&self.sessions, &id).cloned() else {
             return;
         };
-        if info.live {
+        if info.live || info.starting {
+            // Starting with the host: the session the window shows starts first.
             self.open(&id, window, cx);
         } else {
             self.selected = Some(id.clone());
@@ -879,116 +915,9 @@ impl Workspace {
         }
     }
 
-    fn restart_interrupted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let ids: Vec<(String, String)> = model::interrupted(&self.sessions)
-            .into_iter()
-            .map(|session| {
-                (
-                    session.id.clone(),
-                    hq_protocol::sidebar::display_title(session),
-                )
-            })
-            .collect();
-        self.restarting_all = true;
-        self.restart_failures.clear();
-        self.host_call(
-            window,
-            cx,
-            move |paths| {
-                let mut failures = Vec::new();
-                for (id, title) in ids {
-                    if let Err(error) = hq_client::resume(paths, &id) {
-                        failures.push(format!("{title}: {error:#}"));
-                    }
-                }
-                Ok(failures)
-            },
-            |this, failures, _, _| {
-                this.restarting_all = false;
-                this.restart_failures = failures;
-            },
-        );
-    }
-
-    fn dismiss_interrupted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let ids: Vec<String> = model::interrupted(&self.sessions)
-            .into_iter()
-            .map(|session| session.id.clone())
-            .collect();
-        self.restart_failures.clear();
-        self.host_call(
-            window,
-            cx,
-            move |paths| hq_client::dismiss(paths, &ids),
-            |_, (), _, _| {},
-        );
-    }
-
-    fn render_interrupted_note(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let count = model::interrupted(&self.sessions).len();
-        if count == 0 && self.restart_failures.is_empty() {
-            return None;
-        }
-        let chrome = self.theme.chrome;
-        let headline = model::interrupted_headline(count);
-        let mut note = div()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .mx(px(2.))
-            .mb(px(10.))
-            .p(px(10.))
-            .rounded(px(10.))
-            .border_1()
-            .border_color(hsla(chrome.sidebar_line))
-            .bg(hsla(chrome.selected))
-            .text_size(px(13.))
-            .text_color(hsla(chrome.text))
-            .child(headline);
-        for failure in &self.restart_failures {
-            note = note.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(hsla(chrome.amber))
-                    .child(failure.clone()),
-            );
-        }
-        if count > 0 {
-            note =
-                note.child(
-                    div()
-                        .flex()
-                        .gap(px(6.))
-                        .child(
-                            Button::new("resume-all")
-                                .primary()
-                                .small()
-                                .label(if self.restarting_all {
-                                    "Restarting…"
-                                } else {
-                                    "Resume all"
-                                })
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    if !this.restarting_all {
-                                        this.restart_interrupted(window, cx);
-                                    }
-                                })),
-                        )
-                        .child(Button::new("not-now").small().label("Not now").on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.dismiss_interrupted(window, cx);
-                            }),
-                        )),
-                );
-        }
-        Some(note.into_any_element())
-    }
-
     fn resume(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.resuming = Some(id.clone());
         self.resume_failed = None;
-        self.closed_elsewhere = None;
         let wanted = id.clone();
         self.host_call(
             window,
@@ -1043,7 +972,6 @@ impl Workspace {
         // While the host starts, the pane shows it; the sidebar stays quiet.
         let empty_state = (empty && !rail && self.listed)
             .then(|| self.render_empty_sidebar(cx).into_any_element());
-        let interrupted_note = (!rail).then(|| self.render_interrupted_note(cx)).flatten();
         let usage_strip = if rail {
             self.render_rail_usage(cx)
         } else {
@@ -1092,7 +1020,6 @@ impl Workspace {
                             .track_scroll(&self.rows_scroll)
                             .flex()
                             .flex_col()
-                            .children(interrupted_note)
                             .children(empty_state)
                             .children(rendered),
                     )
@@ -1648,11 +1575,11 @@ impl Workspace {
     fn run_shortcut(&mut self, shortcut: Shortcut, window: &mut Window, cx: &mut Context<Self>) {
         match shortcut {
             Shortcut::FocusSidebar => window.focus(&self.sidebar_focus, cx),
-            Shortcut::FocusTerminal => {
-                if let Pane::Terminal { view, .. } = &self.pane {
-                    window.focus(&view.focus_handle(cx), cx);
-                }
-            }
+            Shortcut::FocusTerminal => match &self.pane {
+                Pane::Terminal { view, .. } => window.focus(&view.focus_handle(cx), cx),
+                Pane::Details(_) => window.focus(&self.pane_focus, cx),
+                Pane::Empty => {}
+            },
             Shortcut::NewSession => self.show_new_session(window, cx),
             Shortcut::OpenSessions => self.show_open_sessions(window, cx),
             Shortcut::NextNeedingYou => self.jump_to_next_needing(window, cx),
@@ -1811,8 +1738,7 @@ impl Workspace {
                         chrome.muted
                     }))
                     .when_some(
-                        self.motion_phase(BREATH)
-                            .filter(|_| row.glyph == model::Glyph::Working),
+                        self.motion_phase(BREATH).filter(|_| row.breathing()),
                         |word, phase| word.opacity(gpui::pulsating_between(0.35, 1.0)(phase)),
                     )
                     .child(word),
@@ -1822,6 +1748,7 @@ impl Workspace {
                     .text_right()
                     .text_size(px(13.))
                     .text_color(hsla(chrome.muted))
+                    .when(row.dimmed(), |age| age.opacity(DIMMED))
                     .child(row.age.clone()),
             })
             .child(glyph::status(row.glyph, chrome))
@@ -1910,7 +1837,11 @@ impl Workspace {
                 .child(Input::new(&rename.input).small())
                 .into_any_element();
         }
-        let title_color = chrome.text;
+        let title_color = if row.dimmed() {
+            chrome.muted
+        } else {
+            chrome.text
+        };
         let mut title = div()
             .min_w_0()
             .truncate()
@@ -2020,7 +1951,11 @@ impl Workspace {
         let id = self.confirm_close.clone()?;
         let session = self.session(&id)?;
         let chrome = self.theme.chrome;
-        let state = if session.external.is_some() || !session.live {
+        let inactive = session.external.is_none() && !session.live && !session.starting;
+        let state = if inactive {
+            "Its conversation stays in the agent's history; Add sessions can bring it back."
+                .to_owned()
+        } else if session.external.is_some() || !session.live {
             "It leaves the sidebar. Its conversation stays in the agent's history.".to_owned()
         } else {
             let now = match session.status {
@@ -2074,7 +2009,11 @@ impl Workspace {
                             div()
                                 .text_size(px(16.))
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child(format!("Close \u{201c}{title}\u{201d}?")),
+                                .child(if inactive {
+                                    format!("Remove \u{201c}{title}\u{201d} from the sidebar?")
+                                } else {
+                                    format!("Close \u{201c}{title}\u{201d}?")
+                                }),
                         )
                         .child(div().text_color(hsla(chrome.muted)).child(state))
                         .child(
@@ -2091,7 +2030,7 @@ impl Workspace {
                                 .child(
                                     Button::new("close-confirm")
                                         .danger()
-                                        .label("Close")
+                                        .label(if inactive { "Remove" } else { "Close" })
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.close_session(id.clone(), window, cx);
                                         })),
@@ -2686,40 +2625,86 @@ impl Workspace {
                         .child(note("Opening…".to_owned()))
                         .into_any_element();
                 }
-                if self.closed_elsewhere.as_deref() == Some(id.as_str()) {
+                if session.starting {
                     return centred
                         .child(heading)
-                        .child(note("Closed in the other terminal.".to_owned()))
-                        .child(
-                            Button::new("pane-open-here")
-                                .primary()
-                                .label("Open here")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.resume(id.clone(), window, cx)
-                                })),
-                        )
+                        .child(note("Starting…".to_owned()))
                         .into_any_element();
                 }
-                // Starting failed, or the agent stopped while shown.
+                // Inactive: the agent starts only when the owner asks (D4). The reason
+                // a start failed comes from this window's try, else from the host's.
                 let reason = self
                     .resume_failed
                     .as_ref()
                     .filter(|(failed, _)| *failed == id)
-                    .map_or_else(
-                        || format!("{} stopped.", session.agent),
-                        |(_, reason)| reason.clone(),
-                    );
+                    .map(|(_, reason)| reason.clone())
+                    .or_else(|| {
+                        session
+                            .start_error
+                            .as_ref()
+                            .map(|error| format!("Couldn't start: {}", error.reason))
+                    });
+                let folder = hq_protocol::sidebar::home_path(&session.cwd, self.home.as_deref());
+                // With its folder gone the agent cannot start there, so the pane offers
+                // to remove the session instead (owner, 2026-10-24).
+                let folder_gone = !std::path::Path::new(&session.cwd).is_dir();
+                let reason = if folder_gone {
+                    Some(format!("The folder {folder} no longer exists."))
+                } else {
+                    reason
+                };
+                let action = if folder_gone {
+                    Button::new("pane-remove")
+                        .danger()
+                        .label("Remove from Sidebar")
+                        .on_click(cx.listener({
+                            let id = id.clone();
+                            move |this, _, _, cx| this.request_close(id.clone(), cx)
+                        }))
+                } else {
+                    Button::new("pane-resume")
+                        .primary()
+                        .label("Resume Session")
+                        .on_click(cx.listener({
+                            let id = id.clone();
+                            move |this, _, window, cx| this.resume(id.clone(), window, cx)
+                        }))
+                };
                 centred
-                    .child(heading)
-                    .child(note(reason))
+                    .id("pane-inactive")
+                    .track_focus(&self.pane_focus)
+                    .on_key_down(cx.listener({
+                        let id = id.clone();
+                        move |this, event: &KeyDownEvent, window, cx| {
+                            if event.keystroke.key == "enter"
+                                && this.resuming.is_none()
+                                && !folder_gone
+                            {
+                                cx.stop_propagation();
+                                this.resume(id.clone(), window, cx);
+                            }
+                        }
+                    }))
                     .child(
-                        Button::new("pane-resume")
-                            .primary()
-                            .label("Open again")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.resume(id.clone(), window, cx)
-                            })),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(self.marks.element(session.agent, 18., chrome.muted))
+                            .child(heading),
                     )
+                    .child(note(folder))
+                    .child(note("Inactive".to_owned()))
+                    .children(reason.map(|reason| {
+                        div()
+                            .w_full()
+                            .max_w(px(PANE_TEXT_WIDTH))
+                            .text_center()
+                            .text_size(px(13.))
+                            .text_color(hsla(chrome.amber))
+                            .child(reason)
+                    }))
+                    .child(action)
                     .into_any_element()
             }
         }
