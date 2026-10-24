@@ -49,6 +49,9 @@ const TICK: Duration = Duration::from_millis(250);
 const OUTPUT_ACTIVITY_MS: u64 = 200;
 /// How long `stop` waits for agents to exit after SIGHUP before leaving.
 const STOP_GRACE: Duration = Duration::from_secs(3);
+/// How long a new host waits for a stopping one to exit: its agents get `STOP_GRACE`,
+/// and ending many of them takes longer.
+const STOPPING_HOST_WAIT: Duration = Duration::from_secs(10);
 /// Shortest id prefix accepted as a session reference.
 const MIN_ID_PREFIX: usize = 4;
 
@@ -98,11 +101,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         .write(true)
         .open(&paths.lock)
         .map_err(|error| HostError::Io("lock file", error))?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => return Err(HostError::AlreadyRunning),
-        Err(std::fs::TryLockError::Error(error)) => return Err(HostError::Io("lock file", error)),
-    }
+    take_lock(&lock, &paths.control_socket)?;
 
     // Leave the launching terminal's session so closing that terminal cannot end us.
     let _ = rustix::process::setsid();
@@ -201,6 +200,28 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         thread::spawn(move || host.serve(stream));
     }
     Ok(())
+}
+
+/// Takes the single-instance lock. A running host keeps its control socket; one that is
+/// stopping removes it first and holds the lock until its agents have ended, so a host
+/// started meanwhile (an update's restart, `hq` right after `hq stop`) waits for it
+/// instead of giving up (fix-host-start-after-stop).
+fn take_lock(lock: &std::fs::File, control_socket: &Path) -> Result<(), HostError> {
+    let deadline = Instant::now() + STOPPING_HOST_WAIT;
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if control_socket.exists() || Instant::now() >= deadline {
+                    return Err(HostError::AlreadyRunning);
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err(HostError::Io("lock file", error));
+            }
+        }
+    }
 }
 
 fn bind_private(path: &Path) -> Result<UnixListener, HostError> {
