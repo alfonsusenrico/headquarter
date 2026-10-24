@@ -28,8 +28,8 @@ impl Status {
             Status::NeedsYou => "needs you",
             Status::DoneUnread => "idle, not read yet",
             Status::Done => "idle",
-            // The agent is not running; opening the session resumes it.
-            Status::Inactive => "idle",
+            // The agent is not running; the owner resumes it (add-inactive-sessions).
+            Status::Inactive => "inactive",
         }
     }
 }

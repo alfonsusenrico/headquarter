@@ -52,6 +52,8 @@ pub struct Hosted {
     closing: AtomicBool,
     /// Whether the agent has reported its status itself (OSC 7501).
     program_status: AtomicBool,
+    /// Whether the agent has reported anything itself, through OSC 7501 or a hook.
+    has_spoken: AtomicBool,
     /// Whether the agent's own conversation id is known.
     pub conversation_known: Mutex<bool>,
 }
@@ -118,6 +120,7 @@ impl Hosted {
             reported: Mutex::new(None),
             closing: AtomicBool::new(false),
             program_status: AtomicBool::new(false),
+            has_spoken: AtomicBool::new(false),
             conversation_known: Mutex::new(parts.conversation_known),
         }
     }
@@ -143,13 +146,21 @@ impl Hosted {
     /// An event the agent reported with OSC 7501, which is trusted first.
     pub fn apply_program_status(&self, event: EventKind, now_ms: u64) {
         self.program_status.store(true, Ordering::SeqCst);
+        self.has_spoken.store(true, Ordering::SeqCst);
         self.apply(event, now_ms);
+    }
+
+    /// Whether the agent has reported anything itself, through OSC 7501 or a hook: it
+    /// is up (add-inactive-sessions D3).
+    pub fn has_reported(&self) -> bool {
+        self.has_spoken.load(Ordering::SeqCst)
     }
 
     /// An event from the agent's hooks. Once the agent reports its own status, tool
     /// hooks only supplement it: Claude Code can deliver a tool hook after its turn has
     /// ended, which must not mark the session working again.
     pub fn apply_hook(&self, event: EventKind, now_ms: u64) {
+        self.has_spoken.store(true, Ordering::SeqCst);
         if event == EventKind::ToolActivity && self.program_status.load(Ordering::SeqCst) {
             return;
         }

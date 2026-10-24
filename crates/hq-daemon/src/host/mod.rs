@@ -7,6 +7,7 @@ mod details;
 mod history;
 mod outside;
 mod remove;
+mod starting;
 mod usage;
 
 use std::collections::{HashMap, HashSet};
@@ -127,6 +128,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         store: Mutex::new(store),
         live: Mutex::new(HashMap::new()),
         shells: Mutex::new(HashMap::new()),
+        starts: starting::Starts::default(),
         subscribers: Mutex::new(Vec::new()),
         usage: Mutex::new(usage::UsageBook::default()),
         usage_settled: Condvar::new(),
@@ -188,6 +190,11 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         let host = Arc::clone(&host);
         thread::spawn(move || host.usage_loop());
     }
+    {
+        let order = host.queue_starts();
+        let host = Arc::clone(&host);
+        thread::spawn(move || host.start_with_host(&order));
+    }
     for stream in control.incoming() {
         let Ok(stream) = stream else { continue };
         let host = Arc::clone(&host);
@@ -236,6 +243,8 @@ struct Host {
     live: Mutex<HashMap<String, Arc<Hosted>>>,
     /// Each session's shell, by session id; in memory only (add-session-shell-panel).
     shells: Mutex<HashMap<String, Arc<Hosted>>>,
+    /// Sessions starting with the host, and why any could not (add-inactive-sessions).
+    starts: starting::Starts,
     subscribers: Mutex<Vec<Subscriber>>,
     usage: Mutex<usage::UsageBook>,
     /// Signalled when a usage read finishes and its result has gone out.
@@ -506,11 +515,6 @@ impl Host {
                                 .map(|()| Response::Done)
                                 .unwrap_or_else(|error| *error),
                         ),
-                        Request::Dismiss { sessions } => send(
-                            self.dismiss(&sessions)
-                                .map(|()| Response::Done)
-                                .unwrap_or_else(|error| *error),
-                        ),
                         Request::Kill { session } => send(
                             self.kill(&session)
                                 .map(|()| Response::Done)
@@ -664,6 +668,8 @@ impl Host {
                 .cloned()
         });
         let external = lock(&self.outside).linked.get(&row.id).cloned();
+        let starting = self.is_starting(&row.id);
+        let start_error = self.start_error(&row.id);
         let offered = match row.origin {
             Origin::Hosted => true,
             Origin::History => row.agent_session_id.as_ref().is_some_and(|conversation| {
@@ -691,7 +697,8 @@ impl Host {
             in_sidebar: row.sidebar_added_at.is_some(),
             group: row.group_id,
             owner_named: row.owner_named,
-            interrupted: row.interrupted_at.is_some(),
+            starting,
+            start_error,
             offered,
         }
     }
@@ -810,6 +817,7 @@ impl Host {
             return Err(storage_error(error));
         }
         self.start(spawned);
+        self.clear_start_error(&row.id);
         self.log.line(&format!(
             "session started id={} agent={} resume=true known_conversation={}",
             row.id,
@@ -977,31 +985,6 @@ impl Host {
         Ok(())
     }
 
-    /// Clears interrupted marks without restarting: of `references`, or of every
-    /// session when there are none (session-restore D1).
-    fn dismiss(&self, references: &[String]) -> OpResult<()> {
-        let ids: Vec<String> = if references.is_empty() {
-            lock(&self.store)
-                .list()
-                .map_err(storage_error)?
-                .into_iter()
-                .filter(|row| row.interrupted_at.is_some())
-                .map(|row| row.id)
-                .collect()
-        } else {
-            self.resolve_all(references, |reference| {
-                self.resolve(reference).map(|row| row.id)
-            })?
-        };
-        lock(&self.store)
-            .dismiss_interrupted(&ids)
-            .map_err(storage_error)?;
-        for id in &ids {
-            self.broadcast(id);
-        }
-        Ok(())
-    }
-
     fn remove_from_sidebar(&self, references: &[String]) -> OpResult<()> {
         let ids = self.resolve_all(references, |reference| {
             self.resolve(reference).map(|row| row.id)
@@ -1011,6 +994,8 @@ impl Host {
             .map_err(storage_error)?;
         for id in &ids {
             self.end_shell(id);
+            self.settle_start(id);
+            self.clear_start_error(id);
             self.broadcast(id);
         }
         Ok(())
@@ -1395,13 +1380,18 @@ impl Host {
                 hosted.id
             ));
         }
-        // The owner quit the agent, here or from inside it: the session leaves the
-        // sidebar. A crash, a signal or a host stop keeps it, as not running.
-        let quit = exit_code == Some(0) && !self.stopping.load(Ordering::SeqCst);
-        if hosted.closing() || quit {
-            self.end_shell(&hosted.id);
+        // Closed with the ✕: the session leaves the sidebar. Any other end keeps it there,
+        // inactive, and a host stop marked it to start again (add-inactive-sessions D2).
+        // Its shell ends either way.
+        self.end_shell(&hosted.id);
+        if self.is_starting(&hosted.id) && !self.stopping.load(Ordering::SeqCst) {
+            let code = exit_code.map_or_else(|| "unknown".to_owned(), |code| code.to_string());
+            self.fail_start(
+                &hosted.id,
+                format!("the agent exited as it started (code {code})"),
+            );
         }
-        if (hosted.closing() || quit)
+        if hosted.closing()
             && let Err(error) =
                 lock(&self.store).remove_from_sidebar(std::slice::from_ref(&hosted.id))
         {
@@ -1531,6 +1521,9 @@ impl Host {
         // A shell has no status to track (add-session-shell-panel D3).
         if hosted.shell {
             return;
+        }
+        if hosted.has_reported() {
+            self.settle_start(&hosted.id);
         }
         let now = now_ms();
         let Some(change) = hosted.status_change() else {
@@ -1723,6 +1716,15 @@ impl Host {
             .chain(lock(&self.shells).values())
             .cloned()
             .collect();
+        // What runs now starts again with the next host (add-inactive-sessions D2).
+        let running: Vec<String> = sessions
+            .iter()
+            .filter(|hosted| !hosted.shell && !hosted.closing())
+            .map(|hosted| hosted.id.clone())
+            .collect();
+        if let Err(error) = lock(&self.store).mark_for_start(&running, now_ms()) {
+            self.log.line(&format!("index update failed error={error}"));
+        }
         for hosted in &sessions {
             hosted.kill();
         }

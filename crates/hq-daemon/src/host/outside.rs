@@ -29,6 +29,8 @@ pub(super) struct OutsideView {
     pub linked: HashMap<String, External>,
     /// Outside agents no known conversation matches, listed while they run.
     pub unlinked: Vec<SessionInfo>,
+    /// Whether a scan has finished since the host started.
+    pub scanned: bool,
     /// Source failures last reported, so the log records changes, not every scan.
     failures: HashSet<String>,
     /// Row id → Codex sub-agents still running for that hosted session.
@@ -213,6 +215,7 @@ impl Host {
             view.linked = linked;
             view.unlinked = unlinked;
             view.failures = failures;
+            view.scanned = true;
             (changed, unlinked_news)
         };
         for id in changed_rows {
@@ -359,7 +362,8 @@ fn unlinked_entry(session: &ExternalSession, external: External) -> SessionInfo 
         in_sidebar: false,
         group: None,
         owner_named: false,
-        interrupted: false,
+        starting: false,
+        start_error: None,
         offered: true,
     }
 }
