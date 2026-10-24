@@ -126,6 +126,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         trash_dir: options.trash_dir,
         store: Mutex::new(store),
         live: Mutex::new(HashMap::new()),
+        shells: Mutex::new(HashMap::new()),
         subscribers: Mutex::new(Vec::new()),
         usage: Mutex::new(usage::UsageBook::default()),
         usage_settled: Condvar::new(),
@@ -233,6 +234,8 @@ struct Host {
     trash_dir: Option<PathBuf>,
     store: Mutex<Store>,
     live: Mutex<HashMap<String, Arc<Hosted>>>,
+    /// Each session's shell, by session id; in memory only (add-session-shell-panel).
+    shells: Mutex<HashMap<String, Arc<Hosted>>>,
     subscribers: Mutex<Vec<Subscriber>>,
     usage: Mutex<usage::UsageBook>,
     /// Signalled when a usage read finishes and its result has gone out.
@@ -445,6 +448,43 @@ impl Host {
                                 Err(error) => send(*error),
                             }
                         }
+                        Request::AttachShell {
+                            session,
+                            cols,
+                            rows,
+                        } => {
+                            if let Some((hosted, viewer)) = attached.take() {
+                                hosted.detach(viewer);
+                            }
+                            match self.shell_for(&session) {
+                                Ok((shell, row_id)) => {
+                                    match self.info(&row_id) {
+                                        Ok(session) => send(Response::Attached { session }),
+                                        Err(error) => {
+                                            send(*error);
+                                            continue;
+                                        }
+                                    }
+                                    let viewer = self.next_viewer.fetch_add(1, Ordering::SeqCst);
+                                    shell.attach(Viewer {
+                                        id: viewer,
+                                        tx: tx.clone(),
+                                        cols,
+                                        rows,
+                                    });
+                                    attached = Some((shell, viewer));
+                                }
+                                Err(error) => send(*error),
+                            }
+                        }
+                        Request::CloseShell { session } => send(
+                            self.resolve(&session)
+                                .map(|row| {
+                                    self.end_shell(&row.id);
+                                    Response::Done
+                                })
+                                .unwrap_or_else(|error| *error),
+                        ),
                         Request::Resize { cols, rows } => {
                             if let Some((hosted, viewer)) = &attached {
                                 hosted.resize(*viewer, cols, rows);
@@ -970,6 +1010,7 @@ impl Host {
             .remove_from_sidebar(&ids)
             .map_err(storage_error)?;
         for id in &ids {
+            self.end_shell(id);
             self.broadcast(id);
         }
         Ok(())
@@ -1281,6 +1322,7 @@ impl Host {
                 Conversation::New { .. } => plan.agent == Agent::Claude,
                 Conversation::Resume(id) => id.is_some(),
             },
+            shell: false,
         }));
         Ok(Spawned {
             hosted,
@@ -1356,6 +1398,9 @@ impl Host {
         // The owner quit the agent, here or from inside it: the session leaves the
         // sidebar. A crash, a signal or a host stop keeps it, as not running.
         let quit = exit_code == Some(0) && !self.stopping.load(Ordering::SeqCst);
+        if hosted.closing() || quit {
+            self.end_shell(&hosted.id);
+        }
         if (hosted.closing() || quit)
             && let Err(error) =
                 lock(&self.store).remove_from_sidebar(std::slice::from_ref(&hosted.id))
@@ -1374,9 +1419,119 @@ impl Host {
         self.broadcast(&hosted.id);
     }
 
+    /// The session's shell, started first when none runs: the owner's login shell in
+    /// the session's folder (add-session-shell-panel D1). Also returns the session's id.
+    fn shell_for(self: &Arc<Self>, reference: &str) -> OpResult<(Arc<Hosted>, String)> {
+        let row = self.resolve(reference)?;
+        if let Some(shell) = lock(&self.shells).get(&row.id) {
+            return Ok((Arc::clone(shell), row.id));
+        }
+        if !Path::new(&row.cwd).is_dir() {
+            return Err(fail(
+                ErrorCode::FolderNotFound,
+                format!("the folder `{}` no longer exists", row.cwd),
+            ));
+        }
+        let failed = |what: &str, error: &dyn std::fmt::Display| {
+            fail(ErrorCode::SpawnFailed, format!("{what}: {error}"))
+        };
+        let program = std::env::var("SHELL")
+            .ok()
+            .filter(|shell| !shell.is_empty())
+            .unwrap_or_else(|| "/bin/sh".to_owned());
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| failed("cannot open a pseudo-terminal", &error))?;
+        let mut command = CommandBuilder::new(&program);
+        command.arg("-l");
+        command.cwd(&row.cwd);
+        for marker in adapters::PARENT_SESSION_MARKERS {
+            command.env_remove(marker);
+        }
+        command.env_remove(SESSION_ENV);
+        command.env("TERM", "xterm-256color");
+        command.env("COLORTERM", "truecolor");
+        let child = pair
+            .slave
+            .spawn_command(command)
+            .map_err(|error| failed(&format!("cannot start {program}"), &error))?;
+        drop(pair.slave);
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|error| failed("pty reader", &error))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|error| failed("pty writer", &error))?;
+        let now = now_ms();
+        let shell = Arc::new(Hosted::new(HostedParts {
+            id: format!("{}:shell", row.id),
+            agent: row.agent,
+            cwd: row.cwd.clone(),
+            started_at_ms: now,
+            writer,
+            master: pair.master,
+            killer: child.clone_killer(),
+            pid: child.process_id(),
+            tracker: SessionTracker::new(false, Thresholds::default(), now),
+            conversation_known: false,
+            shell: true,
+        }));
+        lock(&self.shells).insert(row.id.clone(), Arc::clone(&shell));
+        self.log.line(&format!("shell started session={}", row.id));
+        let pump = Arc::clone(&shell);
+        thread::spawn(move || {
+            let mut reader = reader;
+            let mut buffer = [0u8; 16 * 1024];
+            while let Ok(count) = reader.read(&mut buffer) {
+                if count == 0 {
+                    break;
+                }
+                pump.output(&buffer[..count]);
+            }
+        });
+        let host = Arc::clone(self);
+        let session = row.id.clone();
+        let ended = Arc::clone(&shell);
+        let mut child = child;
+        thread::spawn(move || {
+            let exit_code = child.wait().ok().map(|status| status.exit_code());
+            {
+                let mut shells = lock(&host.shells);
+                if shells
+                    .get(&session)
+                    .is_some_and(|known| Arc::ptr_eq(known, &ended))
+                {
+                    shells.remove(&session);
+                }
+            }
+            ended.end_viewers(exit_code);
+            host.log.line(&format!("shell ended session={session}"));
+        });
+        Ok((shell, row.id))
+    }
+
+    /// Hangs up the session's shell, if one runs.
+    fn end_shell(&self, session: &str) {
+        let shell = lock(&self.shells).get(session).cloned();
+        if let Some(shell) = shell {
+            shell.kill();
+        }
+    }
+
     /// Persists and announces a status change, and looks up the agent's own
     /// conversation id after its first completed turn.
     fn refresh(&self, hosted: &Arc<Hosted>) {
+        // A shell has no status to track (add-session-shell-panel D3).
+        if hosted.shell {
+            return;
+        }
         let now = now_ms();
         let Some(change) = hosted.status_change() else {
             return;
@@ -1563,12 +1718,18 @@ impl Host {
         // New clients reach a fresh host instead of this one while agents wind down.
         let _ = std::fs::remove_file(&self.paths.control_socket);
         let _ = std::fs::remove_file(&self.paths.hook_socket);
-        let sessions: Vec<Arc<Hosted>> = lock(&self.live).values().cloned().collect();
+        let sessions: Vec<Arc<Hosted>> = lock(&self.live)
+            .values()
+            .chain(lock(&self.shells).values())
+            .cloned()
+            .collect();
         for hosted in &sessions {
             hosted.kill();
         }
         let deadline = Instant::now() + STOP_GRACE;
-        while !lock(&self.live).is_empty() && Instant::now() < deadline {
+        while !(lock(&self.live).is_empty() && lock(&self.shells).is_empty())
+            && Instant::now() < deadline
+        {
             thread::sleep(Duration::from_millis(50));
         }
         if let Err(error) = lock(&self.store).end_all_live(now_ms()) {

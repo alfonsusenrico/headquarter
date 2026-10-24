@@ -480,6 +480,30 @@ pub fn attach(paths: &HostPaths, session: &str, cols: u16, rows: u16) -> Result<
     }
 }
 
+/// Attaches to a session's shell, starting it in the session's folder if needed.
+pub fn attach_shell(paths: &HostPaths, session: &str, cols: u16, rows: u16) -> Result<Client> {
+    let mut client = Client::connect_or_start(paths)?;
+    let response = client.request(&Request::AttachShell {
+        session: session.to_owned(),
+        cols,
+        rows,
+    })?;
+    match expect_ok(response)? {
+        Response::Attached { .. } => Ok(client),
+        other => bail!("unexpected answer to attach shell: {other:?}"),
+    }
+}
+
+/// Ends a session's shell, if one runs.
+pub fn close_shell(paths: &HostPaths, session: &str) -> Result<()> {
+    request_done(
+        paths,
+        &Request::CloseShell {
+            session: session.to_owned(),
+        },
+    )
+}
+
 /// Turns an error response into an error for the caller.
 pub fn expect_ok(response: Response) -> Result<Response> {
     match response {

@@ -20,17 +20,19 @@ actions!(
         Minimize,
         NewSession,
         OpenSessions,
+        ToggleShell,
     ]
 );
 
 /// The key each bound action answers to, as `shortcuts::shortcut` reads it.
-const BOUND: [(&str, Shortcut); 6] = [
+const BOUND: [(&str, Shortcut); 7] = [
     ("g", Shortcut::ThemeSwitcher),
     ("h", Shortcut::Hide),
     ("q", Shortcut::Quit),
     ("m", Shortcut::Minimize),
     ("n", Shortcut::NewSession),
     ("o", Shortcut::OpenSessions),
+    ("t", Shortcut::ToggleShell),
 ];
 
 /// Sets the menus and their key bindings, and handles the app-wide actions; the
@@ -73,6 +75,7 @@ pub fn install(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action("New Session", NewSession),
             MenuItem::action("Open Sessions", OpenSessions),
+            MenuItem::action("Shell", ToggleShell),
         ]),
     ]);
 }
@@ -87,6 +90,7 @@ fn binding(key: &str, shortcut: Shortcut) -> Option<KeyBinding> {
         Shortcut::Minimize => KeyBinding::new(&keystroke, Minimize, None),
         Shortcut::NewSession => KeyBinding::new(&keystroke, NewSession, None),
         Shortcut::OpenSessions => KeyBinding::new(&keystroke, OpenSessions, None),
+        Shortcut::ToggleShell => KeyBinding::new(&keystroke, ToggleShell, None),
         _ => return None,
     };
     Some(binding)

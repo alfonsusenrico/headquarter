@@ -49,6 +49,7 @@ use crate::themes::{self, Library, Look, ThemeChoice, Token};
 mod groups;
 mod header;
 mod rail;
+mod shell;
 mod sidebar_view;
 
 use groups::{DraggedSession, GroupRename};
@@ -205,6 +206,12 @@ pub struct Workspace {
     restarting_all: bool,
     /// The divider is being dragged.
     resizing: bool,
+    /// The shown session's shell panel, while open (add-session-shell-panel).
+    shell: Option<shell::ShellPanel>,
+    /// Sessions whose shell panel is open; their shells run in the host.
+    shell_panels: Vec<String>,
+    /// The shell panel's share of the pane's height.
+    shell_share: f32,
     /// The sidebar's width on screen while it is dragged or settling, when that differs
     /// from the kept state.
     live_width: Option<f32>,
@@ -361,6 +368,13 @@ impl Workspace {
             details_open: false,
             copied_at: None,
             resizing: false,
+            shell: None,
+            shell_panels: crate::app_state::path()
+                .map(|path| crate::app_state::load_shell_panels(&path))
+                .unwrap_or_default(),
+            shell_share: crate::app_state::path().map_or(crate::app_state::SHELL_SHARE, |path| {
+                crate::app_state::load_shell_share(&path)
+            }),
             live_width: None,
             width_motion: 0,
             confirm_close: None,
@@ -509,7 +523,13 @@ impl Workspace {
             self.controls_mode = Some(self.theme.mode);
             settings::set_controls_mode(self.theme.mode, window, cx);
         }
-        if let Pane::Terminal { view, .. } = &self.pane {
+        let views = match &self.pane {
+            Pane::Terminal { view, .. } => std::iter::once(view.clone())
+                .chain(self.shell_view().cloned())
+                .collect(),
+            _ => Vec::new(),
+        };
+        for view in &views {
             let options = self.options.clone();
             view.update(cx, |terminal, cx| terminal.set_options(options, cx));
             if palette_changed {
@@ -682,6 +702,7 @@ impl Workspace {
             && *shown == id
         {
             self.pane = Pane::Details(id.clone());
+            self.sync_shell(window, cx);
         }
         if let Some(next) = neighbour {
             if self.rename.as_ref().is_some_and(|rename| rename.id == id) {
@@ -695,6 +716,7 @@ impl Workspace {
                 None => {
                     self.pane = Pane::Empty;
                     self.selected = None;
+                    self.sync_shell(window, cx);
                 }
             }
             return;
@@ -784,6 +806,7 @@ impl Workspace {
             // One running in another terminal is only observed.
             let observed = info.external.is_some();
             self.pane = Pane::Details(info.id.clone());
+            self.sync_shell(window, cx);
             if !observed && self.resuming.is_none() {
                 self.resume(info.id, window, cx);
             }
@@ -812,6 +835,7 @@ impl Workspace {
             view,
             _focus: focus,
         };
+        self.sync_shell(window, cx);
         self.mark_seen_if_watched(window, cx);
         cx.notify();
     }
@@ -830,6 +854,7 @@ impl Workspace {
         } else {
             self.selected = Some(id.clone());
             self.pane = Pane::Details(id);
+            self.sync_shell(window, cx);
         }
     }
 
@@ -1639,6 +1664,7 @@ impl Workspace {
             }
             Shortcut::Minimize => window.minimize_window(),
             Shortcut::Hide => cx.hide(),
+            Shortcut::ToggleShell => self.toggle_shell(window, cx),
         }
     }
 
@@ -2594,10 +2620,13 @@ impl Workspace {
             .bg(background);
         match &self.pane {
             // Cached, so a sidebar frame (a breathing word) does not repaint the terminal.
-            Pane::Terminal { view, .. } => div()
-                .size_full()
-                .child(view.clone().cached(StyleRefinement::default().size_full()))
-                .into_any_element(),
+            Pane::Terminal { view, .. } => match self.shell_view() {
+                Some(shell) => self.render_split(view.clone(), shell.clone(), cx),
+                None => div()
+                    .size_full()
+                    .child(view.clone().cached(StyleRefinement::default().size_full()))
+                    .into_any_element(),
+            },
             Pane::Empty if !self.listed => centred
                 .child(crate::loading::agents_checking_in(
                     "workspace-starting",
@@ -2820,6 +2849,9 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &menus::OpenSessions, window, cx| {
                 this.run_shortcut(Shortcut::OpenSessions, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &menus::ToggleShell, window, cx| {
+                this.run_shortcut(Shortcut::ToggleShell, window, cx);
             }))
             .on_drag_move(cx.listener(
                 |this, event: &gpui::DragMoveEvent<rail::DividerDrag>, _, cx| {

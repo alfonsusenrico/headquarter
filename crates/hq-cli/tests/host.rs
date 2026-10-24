@@ -1849,6 +1849,90 @@ fn clients_hear_outside_agents_come_and_go() {
     assert!(!gone.offered);
 }
 
+#[test]
+fn a_sessions_shell_runs_beside_it_and_ends_with_it() {
+    let mut env = TestEnv::new("shell");
+    env.stub("claude", INTERACTIVE_STUB);
+    let mut daemon = env.command();
+    env.daemons.push(
+        daemon
+            .env("SHELL", "/bin/sh")
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    let session = env.create(Agent::Claude);
+    let attach_shell = |env: &TestEnv| {
+        let mut shell = env.connect();
+        match shell.request(&Request::AttachShell {
+            session: session.id.clone(),
+            cols: 80,
+            rows: 24,
+        }) {
+            Response::Attached { session: info } => assert_eq!(info.id, session.id),
+            other => panic!("unexpected attach-shell answer {other:?}"),
+        }
+        shell
+    };
+    let ended = |shell: &mut Conn| loop {
+        if let Response::Ended { .. } = shell.next_response() {
+            break;
+        }
+    };
+
+    // A shell in the session's folder, beside its agent.
+    let mut shell = attach_shell(&env);
+    shell.send_frame(&Frame::Input(b"echo shell-says-$((6*7)); pwd\n".to_vec()));
+    let seen = shell.output_until("shell-says-42");
+    let folder = env
+        .work()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    if !seen.contains(&folder) {
+        shell.output_until(&folder);
+    }
+    assert_eq!(
+        env.session(&session.id).status,
+        Status::Done,
+        "the shell does not change the session's status"
+    );
+
+    // Attaching again reaches the same shell.
+    shell.send_frame(&Frame::Input(b"export MARK=kept\n".to_vec()));
+    drop(shell);
+    let mut again = attach_shell(&env);
+    again.send_frame(&Frame::Input(b"echo mark-$MARK\n".to_vec()));
+    again.output_until("mark-kept");
+
+    // Closing the shell ends it.
+    assert!(matches!(
+        env.connect().request(&Request::CloseShell {
+            session: session.id.clone()
+        }),
+        Response::Done
+    ));
+    ended(&mut again);
+
+    // Taking the session out of the sidebar ends its shell too.
+    let mut fresh = attach_shell(&env);
+    fresh.send_frame(&Frame::Input(b"echo mark-${MARK:-none}\n".to_vec()));
+    fresh.output_until("mark-none");
+    assert!(matches!(
+        env.connect().request(&Request::Remove {
+            sessions: vec![session.id.clone()]
+        }),
+        Response::Done
+    ));
+    ended(&mut fresh);
+}
+
 impl TestEnv {
     fn settings(&self, text: &str) {
         let path = self.root.join("config/headquarter/config.toml");

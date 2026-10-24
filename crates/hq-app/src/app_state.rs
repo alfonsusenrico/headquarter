@@ -183,6 +183,33 @@ pub fn save_shown(path: &Path, id: &str) -> std::io::Result<()> {
     save_entry(path, "shown_session", json!(id))
 }
 
+/// The sessions whose shell panel is open (add-session-shell-panel).
+pub fn load_shell_panels(path: &Path) -> Vec<String> {
+    read(path)
+        .and_then(|state| state.get("shell_panels").cloned())
+        .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_shell_panels(path: &Path, sessions: &[String]) -> std::io::Result<()> {
+    save_entry(path, "shell_panels", json!(sessions))
+}
+
+/// The shell panel's share of the pane's height, a third until the owner drags it.
+pub const SHELL_SHARE: f32 = 1.0 / 3.0;
+
+pub fn load_shell_share(path: &Path) -> f32 {
+    read(path)
+        .and_then(|state| state.get("shell_share")?.as_f64())
+        .map(|share| share as f32)
+        .filter(|share| (0.1..=0.9).contains(share))
+        .unwrap_or(SHELL_SHARE)
+}
+
+pub fn save_shell_share(path: &Path, share: f32) -> std::io::Result<()> {
+    save_entry(path, "shell_share", json!(share))
+}
+
 fn read(path: &Path) -> Option<Value> {
     serde_json::from_slice::<Value>(&std::fs::read(path).ok()?).ok()
 }
@@ -321,6 +348,29 @@ mod tests {
         assert_eq!(load_sidebar(&path), SidebarState::default());
         std::fs::write(&path, r#"{"theme":7}"#).unwrap();
         assert_eq!(load_theme(&path), None, "an odd value is no choice");
+    }
+
+    #[test]
+    fn shell_panels_and_their_share_are_kept_with_the_rest() {
+        let path = file("shell");
+        assert!(load_shell_panels(&path).is_empty());
+        assert_eq!(load_shell_share(&path), SHELL_SHARE, "a third by default");
+        save_shown(&path, "abc123").unwrap();
+        save_shell_panels(&path, &["abc123".to_owned(), "def456".to_owned()]).unwrap();
+        save_shell_share(&path, 0.5).unwrap();
+        assert_eq!(load_shell_panels(&path), ["abc123", "def456"]);
+        assert!((load_shell_share(&path) - 0.5).abs() < f32::EPSILON);
+        assert_eq!(
+            load_shown(&path).as_deref(),
+            Some("abc123"),
+            "the rest is kept"
+        );
+        save_shell_share(&path, 7.0).unwrap();
+        assert_eq!(
+            load_shell_share(&path),
+            SHELL_SHARE,
+            "an impossible share is ignored"
+        );
     }
 
     #[test]

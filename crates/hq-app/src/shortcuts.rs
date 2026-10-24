@@ -16,6 +16,8 @@ pub enum Shortcut {
     Minimize,
     /// Hides the app; macOS only.
     Hide,
+    /// Opens or closes the shown session's shell panel (add-session-shell-panel).
+    ToggleShell,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -52,6 +54,7 @@ pub fn shortcut(key: &str, keys: Keys, mac: bool) -> Option<Shortcut> {
         "q" => Some(Shortcut::Quit),
         "m" => Some(Shortcut::Minimize),
         "h" if mac => Some(Shortcut::Hide),
+        "t" => Some(Shortcut::ToggleShell),
         _ => None,
     }
 }
@@ -68,6 +71,29 @@ mod tests {
         shift: false,
         platform: false,
     };
+
+    #[test]
+    fn the_shell_panel_takes_cmd_t_or_ctrl_shift_t_only() {
+        let cmd = Keys {
+            platform: true,
+            ..Keys::default()
+        };
+        let ctrl_shift = Keys {
+            shift: true,
+            ..CTRL
+        };
+        assert_eq!(shortcut("t", cmd, true), Some(Shortcut::ToggleShell));
+        assert_eq!(
+            shortcut("t", ctrl_shift, false),
+            Some(Shortcut::ToggleShell)
+        );
+        assert_eq!(
+            shortcut("t", CTRL, false),
+            None,
+            "Ctrl-T stays with the agent"
+        );
+        assert_eq!(shortcut("t", CTRL, true), None);
+    }
 
     #[test]
     fn mac_uses_cmd() {

@@ -37,6 +37,9 @@ pub struct Hosted {
     pub started_at_ms: u64,
     /// The agent process id, so outside-session scans can leave it out.
     pub pid: Option<u32>,
+    /// A session's shell rather than its agent: no status, index row or scans
+    /// (add-session-shell-panel).
+    pub shell: bool,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
@@ -72,6 +75,7 @@ pub struct HostedParts {
     pub pid: Option<u32>,
     pub tracker: SessionTracker,
     pub conversation_known: bool,
+    pub shell: bool,
 }
 
 pub struct StatusChange {
@@ -104,6 +108,7 @@ impl Hosted {
             cwd: parts.cwd,
             started_at_ms: parts.started_at_ms,
             pid: parts.pid,
+            shell: parts.shell,
             writer: Mutex::new(parts.writer),
             master: Mutex::new(parts.master),
             killer: Mutex::new(parts.killer),

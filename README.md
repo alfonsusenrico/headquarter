@@ -48,6 +48,9 @@ which finished while you were away.
   Cmd-J jumps to the next one.
 - **A tap on the shoulder.** Working in another app? A notification tells you when a
   session needs you or has replied, and one click takes you straight to it.
+- **A shell beside every agent.** Cmd-T opens a terminal under the session, in its
+  folder, for the `git status` you were about to switch windows for. It waits while
+  you look at other sessions; Cmd-T again puts it away.
 - **Your groups, your order.** Drag sessions into groups you make; the rest sit under
   Ungrouped. Collapse it all into an icon rail when you want the room.
 - **Sessions that outlive the window.** A small background host owns your sessions:
@@ -162,6 +165,7 @@ hq stop                       # end every session and the background host
 | Cmd-O | Ctrl-Shift-O | Add sessions to the sidebar |
 | Cmd-J | Ctrl-Shift-J | Show the next session that needs you |
 | Cmd-1 / Cmd-2 | Ctrl-Shift-1 / 2 | Move to the sidebar / the terminal |
+| Cmd-T | Ctrl-Shift-T | Open or close the session's shell |
 | Cmd-B | Ctrl-Shift-B | Switch between the sidebar and the icon rail |
 | Cmd-G | Ctrl-Shift-G | Themes |
 | Cmd-C / Cmd-V | Ctrl-Shift-C / V | Copy, paste |
