@@ -420,6 +420,11 @@ fn claude_status_comes_from_its_records_without_starting_claude_each_scan() {
     env.wait_status(&session.id, Status::Working);
     std::fs::write(&state, "idle").unwrap();
     env.wait_status(&session.id, Status::Done);
+    // Claude Code 2.1.310 records "shell" while background commands run after a turn.
+    std::fs::write(&state, "shell").unwrap();
+    env.wait_status(&session.id, Status::Working);
+    std::fs::write(&state, "idle").unwrap();
+    env.wait_status(&session.id, Status::Done);
 
     let runs = std::fs::read_to_string(env.root.join("stub-args.txt.agents"))
         .unwrap_or_default()
