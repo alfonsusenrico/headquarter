@@ -2,6 +2,16 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.13 (2026-10-26)
+
+- Watch an update happen. A log under the steps shows the installer's checksum, each
+  download and its check, what was installed where, and the restart.
+- The steps only move forward. Download no longer jumps back after Verify: the app's
+  check of the installer was shown as Verify before the installer started its own
+  downloads.
+- Both live in the app you update from, so you will see them on the update after this
+  one.
+
 ## 0.1.12 (2026-10-26)
 
 - Links open with a click. Hover a web address in an agent or the shell panel and it
