@@ -30,6 +30,7 @@ workspace = true
 
 [dev-dependencies]
 alacritty_terminal = "=0.26.0"
+hq-mobile = { version = "0.1.13", path = "../hq-mobile" }
 hq-remote = { version = "0.1.13", path = "../hq-remote" }
 iroh = "1.4.1"
 serde_json = "1.0.154"

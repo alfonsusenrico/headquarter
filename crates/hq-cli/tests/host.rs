@@ -2978,6 +2978,8 @@ struct Phone {
     connection: Option<iroh::endpoint::Connection>,
     send: Option<iroh::endpoint::SendStream>,
     recv: Option<iroh::endpoint::RecvStream>,
+    /// The gateway's welcome on the current connection, once received.
+    welcome: Option<Response>,
 }
 
 impl Phone {
@@ -3000,6 +3002,7 @@ impl Phone {
             connection: None,
             send: None,
             recv: None,
+            welcome: None,
         }
     }
 
@@ -3017,6 +3020,7 @@ impl Phone {
         self.connection = Some(connection);
         self.send = Some(send);
         self.recv = Some(recv);
+        self.welcome = None;
     }
 
     fn send(&mut self, frame: &Frame) {
@@ -3042,10 +3046,14 @@ impl Phone {
         })
     }
 
+    /// The next response. The gateway's welcome is kept aside in `welcome`.
     fn next_response(&mut self) -> Option<Response> {
         loop {
             match self.next()? {
-                Frame::Control(bytes) => return Some(Response::parse(&bytes).unwrap()),
+                Frame::Control(bytes) => match Response::parse(&bytes).unwrap() {
+                    welcome @ Response::RemoteWelcome { .. } => self.welcome = Some(welcome),
+                    response => return Some(response),
+                },
                 _ => continue,
             }
         }
@@ -3204,6 +3212,311 @@ fn a_paired_phone_follows_types_and_is_held_to_the_allow_list() {
 }
 
 #[test]
+fn a_phone_is_welcomed_each_time_and_can_unpair_itself() {
+    let mut env = TestEnv::new("welcome");
+    env.start_daemon();
+    let (mut shower, code) = env.remote_on_and_pair();
+    let mut phone = Phone::new();
+    assert!(matches!(
+        phone.pair(&code, "Test Phone"),
+        Some(Response::Paired { .. })
+    ));
+    shower.next_response();
+    let welcomed = |phone: &Phone| match &phone.welcome {
+        Some(Response::RemoteWelcome {
+            host,
+            relay,
+            protocol,
+            version,
+        }) => {
+            assert!(!host.is_empty());
+            // Relays are off in tests.
+            assert_eq!(relay, &None);
+            assert_eq!(*protocol, PROTOCOL_VERSION);
+            assert_eq!(version, env!("CARGO_PKG_VERSION"));
+        }
+        other => panic!("no welcome: {other:?}"),
+    };
+    phone.request(&Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    });
+    assert!(matches!(
+        phone.next_response(),
+        Some(Response::Welcome { .. })
+    ));
+    welcomed(&phone);
+
+    // A paired phone coming back is welcomed before the host answers its hello.
+    let key = phone.endpoint.secret_key().clone();
+    drop(phone);
+    let mut again = Phone::with_key(key);
+    again.connect(&code);
+    again.request(&Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    });
+    assert!(matches!(
+        again.next_response(),
+        Some(Response::Welcome { .. })
+    ));
+    welcomed(&again);
+
+    // A local client cannot unpair anyone.
+    let mut local = env.connect();
+    match local.request(&Request::Unpair {}) {
+        Response::Error { code, .. } => assert_eq!(code, ErrorCode::BadRequest),
+        other => panic!("a local unpair got {other:?}"),
+    }
+    match local.request(&Request::RemoteDevices {}) {
+        Response::RemoteDevices { devices } => assert_eq!(devices.len(), 1),
+        other => panic!("unexpected devices answer {other:?}"),
+    }
+
+    // The phone removes itself: answered, closed, gone from the list.
+    again.request(&Request::Unpair {});
+    assert_eq!(again.next_response(), Some(Response::Unpaired));
+    drop(again);
+    wait_until("the phone forgotten", || {
+        matches!(
+            local.request(&Request::RemoteDevices {}),
+            Response::RemoteDevices { devices } if devices.is_empty()
+        )
+    });
+    let log = env.host_dir().join("agentd.log");
+    wait_until("the unpair logged", || {
+        std::fs::read_to_string(&log)
+            .is_ok_and(|log| log.contains("remote unpaired device=Test Phone"))
+    });
+    local.close();
+    shower.close();
+}
+
+/// The phone core's screen as text, one line per row.
+fn screen_text(screen: &hq_mobile::Screen) -> String {
+    screen
+        .lines
+        .iter()
+        .map(|line| {
+            line.iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn home_ids(home: &hq_mobile::Home) -> Vec<String> {
+    home.alerts
+        .iter()
+        .chain(home.groups.iter().flat_map(|group| &group.rows))
+        .chain(&home.ungrouped)
+        .map(|row| row.id.clone())
+        .collect()
+}
+
+#[test]
+fn the_phone_core_pairs_mirrors_types_reconnects_and_unpairs() {
+    use hq_mobile::{LinkStatus, Phone, RowStatus, new_phone_key};
+
+    let mut env = TestEnv::new("core");
+    env.stub("agy", INTERACTIVE_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    let (mut shower, code) = env.remote_on_and_pair();
+    let folder = env.root.join("phone");
+    std::fs::create_dir_all(&folder).unwrap();
+    let phone = Phone::new(new_phone_key(), folder.to_string_lossy().into_owned()).unwrap();
+    assert_eq!(phone.status(), LinkStatus::NoComputer);
+
+    let computer = phone.pair(code, "Core Phone".into()).unwrap();
+    assert!(computer.selected && !computer.name.is_empty());
+    assert!(matches!(
+        shower.next_response(),
+        Response::RemotePairUsed { device } if device == "Core Phone"
+    ));
+    wait_until("connected", || phone.status() == LinkStatus::Connected);
+    wait_until("the session mirrored", || {
+        home_ids(&phone.home()).contains(&session.id)
+    });
+    // The stub asks for permission: an alert row, as on the desktop.
+    wait_until("the alert", || {
+        phone
+            .home()
+            .alerts
+            .first()
+            .is_some_and(|row| row.id == session.id && row.status == RowStatus::NeedsYou)
+    });
+
+    phone.open_session(session.id.clone(), 54, 40).unwrap();
+    let screen_has = |needle: &str| {
+        phone
+            .screen()
+            .is_some_and(|screen| screen_text(&screen).contains(needle))
+    };
+    wait_until("the agent's output", || screen_has("stub-ready"));
+    phone.type_text("from-the-core".into()).unwrap();
+    wait_until("the typed line", || screen_has("got:from-the-core"));
+    assert_eq!(phone.screen().unwrap().cols, 54);
+
+    // Away and back: home and the open terminal come back by themselves.
+    phone.disconnect();
+    assert_eq!(phone.status(), LinkStatus::Off);
+    // Leaving closes the connection, so the computer hears it at once rather than after
+    // QUIC's idle timeout.
+    wait_until("the computer heard the phone leave", || {
+        env.log().contains("reason=closed by peer: bye")
+    });
+    phone.connect();
+    wait_until("reconnected", || phone.status() == LinkStatus::Connected);
+    wait_until("the terminal reattached", || {
+        screen_has("got:from-the-core")
+    });
+
+    // The computer as the phone saw it is saved for next time.
+    let saved = std::fs::read_to_string(folder.join("computers.json")).unwrap();
+    assert!(saved.contains(&computer.id), "{saved}");
+    assert!(
+        !saved.contains("from-the-core"),
+        "no content is kept: {saved}"
+    );
+
+    // Taken out of the sidebar on the computer, added back from the phone.
+    let mut local = env.connect();
+    assert!(matches!(
+        local.request(&Request::Remove {
+            sessions: vec![session.id.clone()]
+        }),
+        Response::Done
+    ));
+    wait_until("offered to add", || {
+        phone
+            .past_conversations()
+            .iter()
+            .any(|past| past.id == session.id)
+    });
+    phone.add(session.id.clone()).unwrap();
+    wait_until("back in the sidebar", || {
+        home_ids(&phone.home()).contains(&session.id)
+    });
+
+    // Stopped on the computer, resumed from the phone.
+    phone.close_terminal();
+    assert!(matches!(
+        local.request(&Request::Kill {
+            session: session.id.clone()
+        }),
+        Response::Done
+    ));
+    wait_until("inactive on the phone", || {
+        phone
+            .home()
+            .ungrouped
+            .iter()
+            .any(|row| row.id == session.id && row.status == RowStatus::Inactive)
+    });
+    phone.resume(session.id.clone()).unwrap();
+    phone.open_session(session.id.clone(), 54, 40).unwrap();
+    wait_until("the resumed agent's output", || screen_has("stub-ready"));
+    local.close();
+
+    // Unpair removes the phone on the computer too.
+    assert!(phone.unpair(computer.id).unwrap());
+    assert_eq!(phone.status(), LinkStatus::NoComputer);
+    assert!(phone.computers().is_empty());
+    let mut local = env.connect();
+    wait_until("the phone removed on the computer", || {
+        matches!(
+            local.request(&Request::RemoteDevices {}),
+            Response::RemoteDevices { devices } if devices.is_empty()
+        )
+    });
+    // The host closing the connection afterwards does not bring "reconnecting" back.
+    wait_until("the computer closed the connection", || {
+        env.log().contains("remote unpaired")
+    });
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(phone.status(), LinkStatus::NoComputer);
+    local.close();
+    shower.close();
+}
+
+#[test]
+fn a_phone_removed_on_the_computer_hears_so() {
+    use hq_mobile::{LinkStatus, Phone, new_phone_key};
+
+    let mut env = TestEnv::new("removed");
+    env.start_daemon();
+    let (mut shower, code) = env.remote_on_and_pair();
+    let folder = env.root.join("phone");
+    std::fs::create_dir_all(&folder).unwrap();
+    let phone = Phone::new(new_phone_key(), folder.to_string_lossy().into_owned()).unwrap();
+    phone.pair(code, "Removed Phone".into()).unwrap();
+    shower.next_response();
+    wait_until("connected", || phone.status() == LinkStatus::Connected);
+    phone.disconnect();
+    let mut local = env.connect();
+    assert!(matches!(
+        local.request(&Request::RemoteRemove {
+            device: "removed phone".into()
+        }),
+        Response::Done
+    ));
+    phone.connect();
+    wait_until("told it is not known", || {
+        phone.status() == LinkStatus::NotKnown
+    });
+    // A used code does not pair again.
+    let used = phone.pair(code_again(&mut shower), "Removed Phone".into());
+    assert!(used.is_err());
+    local.close();
+}
+
+#[test]
+fn a_known_phone_pairs_again_with_a_new_code() {
+    use hq_mobile::{LinkStatus, Phone, new_phone_key};
+
+    let mut env = TestEnv::new("repair");
+    env.start_daemon();
+    let (mut shower, code) = env.remote_on_and_pair();
+    let folder = env.root.join("phone");
+    std::fs::create_dir_all(&folder).unwrap();
+    let phone = Phone::new(new_phone_key(), folder.to_string_lossy().into_owned()).unwrap();
+    phone.pair(code, "Phone".into()).unwrap();
+    shower.next_response();
+    wait_until("connected", || phone.status() == LinkStatus::Connected);
+
+    // The computer still knows the phone: a new code pairs it again all the same.
+    let again = match shower.request(&Request::RemotePair {}) {
+        Response::RemotePairing { code, .. } => code,
+        other => panic!("no code: {other:?}"),
+    };
+    phone.pair(again, "Phone Again".into()).unwrap();
+    assert_eq!(phone.computers().len(), 1);
+    let mut local = env.connect();
+    match local.request(&Request::RemoteDevices {}) {
+        Response::RemoteDevices { devices } => {
+            assert_eq!(devices.len(), 1, "{devices:?}");
+            assert_eq!(devices[0].name, "Phone Again");
+        }
+        other => panic!("unexpected answer {other:?}"),
+    }
+    local.close();
+}
+
+/// The code `shower` showed, used once already.
+fn code_again(shower: &mut Conn) -> String {
+    match shower.request(&Request::RemotePair {}) {
+        Response::RemotePairing { code, .. } => {
+            // Spoil the secret: the code's form stays, the secret no longer matches.
+            let mut parts: Vec<&str> = code.split('|').collect();
+            let spoiled = "a".repeat(26);
+            *parts.last_mut().unwrap() = &spoiled;
+            parts.join("|")
+        }
+        other => panic!("no code: {other:?}"),
+    }
+}
+
+#[test]
 fn pairing_codes_work_once_and_briefly() {
     let mut env = TestEnv::new("pairing");
     let daemon = env
@@ -3330,6 +3643,24 @@ fn turning_remote_control_off_closes_phones_and_keeps_the_host() {
             ..
         }
     ));
+}
+
+#[test]
+fn stopping_the_host_closes_phones_at_once() {
+    let mut env = TestEnv::new("remotestop");
+    env.start_daemon();
+    let (_shower, code) = env.remote_on_and_pair();
+    let mut phone = Phone::new();
+    assert!(matches!(
+        phone.pair(&code, "Phone"),
+        Some(Response::Paired { .. })
+    ));
+    assert!(matches!(
+        env.connect().request(&Request::Stop {}),
+        Response::Done
+    ));
+    // `next` gives up after WAIT, well before QUIC's idle timeout would end it.
+    while phone.next().is_some() {}
 }
 
 #[test]

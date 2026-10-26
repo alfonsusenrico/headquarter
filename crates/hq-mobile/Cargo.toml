@@ -1,0 +1,35 @@
+[package]
+name = "hq-mobile"
+version = "0.1.13"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The phone's core (add-android-app D1): a library for the Android app, and the binding
+# generator that writes its Kotlin API (`scripts/android-core`).
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+alacritty_terminal = "=0.26.0"
+hq-protocol = { version = "0.1.13", path = "../hq-protocol" }
+hq-remote = { version = "0.1.13", path = "../hq-remote" }
+hq-signals = { version = "0.1.13", path = "../hq-signals" }
+iroh = "1.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "sync", "time"] }
+uniffi = "0.32"
+
+[lints]
+workspace = true

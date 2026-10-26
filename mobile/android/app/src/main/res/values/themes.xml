@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose draws everything. The window theme only sets the first frame's colours. -->
+    <style name="Theme.Headquarter" parent="android:Theme.Material.NoActionBar" />
+</resources>

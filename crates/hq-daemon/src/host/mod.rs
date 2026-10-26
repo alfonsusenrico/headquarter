@@ -674,6 +674,10 @@ impl Host {
                             ErrorCode::BadRequest,
                             "pairing is for phones, through remote control",
                         )),
+                        Request::Unpair {} => send(Response::error(
+                            ErrorCode::BadRequest,
+                            "unpairing is for phones, through remote control",
+                        )),
                         Request::RemoteStatus {} => {
                             send(self.remote_status(self.remote_enabled_setting()));
                         }
@@ -1818,6 +1822,8 @@ impl Host {
         if let Err(error) = lock(&self.store).end_all_live(now_ms()) {
             self.log.line(&format!("index update failed error={error}"));
         }
+        // Phones hear the host go at once instead of waiting out QUIC's idle timeout.
+        self.stop_gateway();
         self.log.line("host stopped");
         std::process::exit(0);
     }
