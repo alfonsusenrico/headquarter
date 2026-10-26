@@ -71,6 +71,7 @@ check "hq and headquarter installed" '[ -x "$home/.local/bin/hq" ] && [ -x "$hom
 check "PATH advice printed" 'grep -q "is not on your PATH" "$home/out"'
 check "version read from the release" 'grep -q "Installed Headquarter 9.8.7" "$home/out"'
 check "no progress lines unless asked" '! grep -q "^progress " "$home/out"'
+check "no notes unless asked" '! grep -q "^note " "$home/out"'
 if [ "$(uname -s)" = Darwin ]; then
   app=$home/Applications/Headquarter.app
   check "bundle assembled" '[ -x "$app/Contents/MacOS/headquarter-app" ] && [ -x "$app/Contents/MacOS/hq" ] && [ -f "$app/Contents/Resources/Headquarter.icns" ]'
@@ -93,6 +94,9 @@ check "manifest lists only home paths" '! grep -v "^$home/" "$home/.local/share/
 # A second run updates in place, as the app's updater runs it, with progress lines.
 check "reinstall succeeds" 'run_with_progress "$home" "$release"'
 check "progress lines in order" '[ "$(grep "^progress " "$home/out" | tr "\n" " ")" = "progress download progress verify progress install progress done 9.8.7 " ]'
+check "notes: downloads, checks, installs" '[ "$(grep -c "^note " "$home/out")" = 6 ] && [ "$(grep "^note " "$home/out" | head -n 1)" = "note Downloading hq-cli-$target.tar.gz" ]'
+check "notes name files from the home folder as ~" 'grep -qx "note ok Installed ~/.local/bin/hq and ~/.local/bin/headquarter" "$home/out"'
+check "a note for each checksum" '[ "$(grep -c "^note ok .* matches its checksum$" "$home/out")" = 2 ]'
 if [ "$(uname -s)" = Darwin ]; then
   check "reinstall keeps the certificate" '[ "$(certificate)" = "$first_certificate" ]'
 fi

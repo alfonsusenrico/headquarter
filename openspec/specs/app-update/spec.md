@@ -32,11 +32,11 @@ The system SHALL keep the update pill in the sidebar until the update is install
 - **THEN** the page names the version and offers the release page instead of Update Now
 
 ### Requirement: Installing an update
-The system SHALL install an update with that release's own installer after checking it against the checksum GitHub publishes for it, SHALL show the steps download, verify, install and restart as they happen, and SHALL leave the installed version unchanged and say why when any step fails.
+The system SHALL install an update with that release's own installer after checking it against the checksum GitHub publishes for it, SHALL show the steps download, verify, install and restart as they happen, moving only forward, and SHALL leave the installed version unchanged and say why when any step fails.
 
 #### Scenario: Steps
 - **WHEN** the owner presses Update Now with no session busy
-- **THEN** the window shows download, verify and install completing in turn, then the restart
+- **THEN** the window shows download, verify and install completing in turn, then the restart, and never returns to an earlier step
 
 #### Scenario: Checksum differs
 - **WHEN** the downloaded installer does not match its published checksum
@@ -81,3 +81,14 @@ The system SHALL list on the What's new page the notes of every published releas
 #### Scenario: Notes unavailable
 - **WHEN** GitHub's release list cannot be read
 - **THEN** the page still offers Update Now and says the notes couldn't be loaded, with a link to the release notes on GitHub
+
+### Requirement: Update log
+The system SHALL show under the update's steps a log of what the update has done, newest line last: the installer fetched and matched to its checksum, each archive the installer fetches and checks, what it installs where, and the restart. It SHALL leave out the installer's advice written for someone at a terminal.
+
+#### Scenario: A whole update
+- **WHEN** an update runs to the restart
+- **THEN** the log names the installer's checksum match, both archives downloaded and matched, the commands and the app installed, and the host being stopped
+
+#### Scenario: Terminal advice left out
+- **WHEN** the installer prints how to open the app or to run `hq stop`
+- **THEN** those lines do not appear in the log

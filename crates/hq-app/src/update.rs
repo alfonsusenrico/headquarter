@@ -263,6 +263,62 @@ pub fn step_in(output: &str) -> Option<Step> {
         })
 }
 
+/// The step to show while the installer runs: its own latest report, and Download until
+/// it reports one. The app's fetch and check of the installer belong to Download too;
+/// showing Verify for that check made the steps jump back to Download as soon as the
+/// installer began its own downloads (fix-update-progress).
+pub fn shown_step(output: &str) -> Step {
+    step_in(output).unwrap_or(Step::Download)
+}
+
+/// A line of the update's log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogLine {
+    pub text: String,
+    /// Something finished, such as a file that matched its checksum.
+    pub done: bool,
+}
+
+impl LogLine {
+    pub fn doing(text: impl Into<String>) -> LogLine {
+        LogLine {
+            text: text.into(),
+            done: false,
+        }
+    }
+
+    pub fn done(text: impl Into<String>) -> LogLine {
+        LogLine {
+            text: text.into(),
+            done: true,
+        }
+    }
+}
+
+/// The installer's notes for the log (`note [ok] <text>`), in order; its other output,
+/// written for someone at a terminal, is left out.
+pub fn notes_in(output: &str) -> Vec<LogLine> {
+    output
+        .lines()
+        .filter_map(|line| line.strip_prefix("note "))
+        .map(|note| match note.strip_prefix("ok ") {
+            Some(text) => LogLine::done(text),
+            None => LogLine::doing(note),
+        })
+        .collect()
+}
+
+/// A digest as its first eight and last four characters.
+pub fn short_digest(digest: &str) -> String {
+    match (
+        digest.get(..8),
+        digest.get(digest.len().saturating_sub(4)..),
+    ) {
+        (Some(head), Some(tail)) if digest.len() > 12 => format!("{head}…{tail}"),
+        _ => digest.to_owned(),
+    }
+}
+
 /// Why the installer failed: its last error line, else its last line.
 pub fn failure_in(output: &str) -> String {
     let lines: Vec<&str> = output
@@ -282,6 +338,8 @@ pub fn failure_in(output: &str) -> String {
 pub struct Run {
     pub log: PathBuf,
     pub child: std::process::Child,
+    /// The installer's SHA-256 as GitHub publishes it, which it matched.
+    pub digest: String,
 }
 
 /// Downloads release `version`'s installer, checks it against the digest GitHub
@@ -334,7 +392,11 @@ fn run_installer(folder: &Path, version: Version, installed: &Installed) -> Resu
         .stderr(errors);
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let child = command.spawn().context("cannot start the installer")?;
-    Ok(Run { log, child })
+    Ok(Run {
+        log,
+        child,
+        digest: expected,
+    })
 }
 
 /// The SHA-256 GitHub publishes for the release's `install.sh`, from the release API's
@@ -573,6 +635,45 @@ mod tests {
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn the_steps_only_move_forward_from_download() {
+        // As the installer's output grows: before its first line, then line by line.
+        let output = "progress download\nnote Downloading hq-cli-x.tar.gz\nprogress verify\nprogress install\nprogress done 0.1.12\n";
+        let mut seen = vec![shown_step("")];
+        for end in output.match_indices('\n').map(|(index, _)| index + 1) {
+            seen.push(shown_step(&output[..end]));
+        }
+        assert_eq!(
+            seen[0],
+            Step::Download,
+            "the app's own check of the installer"
+        );
+        let order = |step: &Step| Step::ALL.iter().position(|each| each == step);
+        assert!(
+            seen.windows(2)
+                .all(|pair| order(&pair[0]) <= order(&pair[1])),
+            "{seen:?}"
+        );
+        assert_eq!(seen.last(), Some(&Step::Restart));
+    }
+
+    #[test]
+    fn notes_are_the_log_and_terminal_advice_is_not() {
+        let output = "progress download\nnote Downloading hq-cli-x.tar.gz\nnote ok hq-cli-x.tar.gz matches its checksum\nInstalled Headquarter 0.1.12.\nIf an older Headquarter is still running, quit it and run: hq stop\n";
+        assert_eq!(
+            notes_in(output),
+            [
+                LogLine::doing("Downloading hq-cli-x.tar.gz"),
+                LogLine::done("hq-cli-x.tar.gz matches its checksum"),
+            ]
+        );
+        assert_eq!(
+            short_digest("03064c5d51b86a83b9e0cceab055ef17b5b192bc73d84ff079ade6705509a91a"),
+            "03064c5d…a91a"
+        );
+        assert_eq!(short_digest("abc"), "abc");
     }
 
     #[test]
