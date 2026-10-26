@@ -91,12 +91,12 @@ On macOS the installer SHALL sign the app bundle with a self-signed code-signing
 - **THEN** the keychain file with the certificate is removed with the rest
 
 ### Requirement: Installer progress
-The installer SHALL, when `HQ_PROGRESS=1` is set, print one line per step (`progress download`, `progress verify`, `progress install`, `progress done <version>`) besides its usual output, and SHALL print nothing new without it.
+The installer SHALL, when `HQ_PROGRESS=1` is set, print one line per step (`progress download`, `progress verify`, `progress install`, `progress done <version>`) and one `note` line per file it fetches, checks or installs (`note ok` once done, with the home folder written as `~`), besides its usual output, and SHALL print nothing new without it.
 
 #### Scenario: Progress asked for
 - **WHEN** the installer runs with `HQ_PROGRESS=1`
-- **THEN** its output holds `progress download`, `progress verify`, `progress install` and `progress done 0.1.9` in that order
+- **THEN** its output holds `progress download`, `progress verify`, `progress install` and `progress done 0.1.9` in that order, and notes such as `note ok Installed ~/.local/bin/hq and ~/.local/bin/headquarter`
 
 #### Scenario: Not asked for
 - **WHEN** the installer runs without `HQ_PROGRESS`
-- **THEN** its output has no progress lines
+- **THEN** its output has no progress lines and no notes
