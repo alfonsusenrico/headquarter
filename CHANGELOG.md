@@ -2,6 +2,12 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.11 (2026-10-26)
+
+- Shift+Tab now reaches your agent, so you can cycle Claude Code between accept edits,
+  plan mode and default. Until now it jumped around the sessions list instead. Elsewhere in
+  the window, Tab still moves between controls.
+
 ## 0.1.10 (2026-10-24)
 
 - Restarting for an update no longer ends with "cannot reach the Headquarter host". The
