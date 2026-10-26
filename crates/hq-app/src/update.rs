@@ -92,6 +92,106 @@ fn tag_in_redirect(location: &str) -> Option<Version> {
     Version::parse(tag)
 }
 
+/// One release's notes, as the What's new page shows them (add-update-notes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseNotes {
+    pub version: Version,
+    /// When it was published, as `26 Oct 2026`.
+    pub date: Option<String>,
+    pub changes: Vec<Change>,
+}
+
+/// One changelog entry: its first sentence, shown as the headline, and the rest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    pub lead: String,
+    pub rest: String,
+}
+
+/// The notes of every release after `installed` up to `latest`, newest first, from
+/// one request for the recent releases.
+pub fn notes_since(installed: Version, latest: Version) -> Result<Vec<ReleaseNotes>> {
+    let releases = curl(&["-fsSL", &format!("{}/releases?per_page=30", api_base())])
+        .context("couldn't read the release notes")?;
+    releases_between(&releases, installed, latest)
+        .ok_or_else(|| anyhow!("GitHub's answer had no releases"))
+}
+
+/// Published releases newer than `installed` and not past `latest`, newest first.
+fn releases_between(json: &[u8], installed: Version, latest: Version) -> Option<Vec<ReleaseNotes>> {
+    let releases: serde_json::Value = serde_json::from_slice(json).ok()?;
+    let mut found: Vec<ReleaseNotes> = releases
+        .as_array()?
+        .iter()
+        .filter(|release| release["draft"] != true && release["prerelease"] != true)
+        .filter_map(|release| {
+            let version = Version::parse(release["tag_name"].as_str()?)?;
+            (installed < version && version <= latest).then(|| ReleaseNotes {
+                version,
+                date: release["published_at"].as_str().and_then(display_date),
+                changes: changes_in(release["body"].as_str().unwrap_or_default()),
+            })
+        })
+        .collect();
+    found.sort_by_key(|release| std::cmp::Reverse(release.version));
+    Some(found)
+}
+
+/// The changelog entries in a release's notes: the "Release Notes" section the
+/// release workflow copies from `CHANGELOG.md`, up to the download tables. Entries are
+/// hard-wrapped with an indent; their lines are joined again.
+fn changes_in(body: &str) -> Vec<Change> {
+    let mut entries: Vec<String> = Vec::new();
+    let mut inside = false;
+    for line in body.lines() {
+        if line.trim() == "## Release Notes" {
+            inside = true;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if line.starts_with("# ") || line.starts_with("## ") {
+            break;
+        }
+        if let Some(entry) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+            entries.push(entry.trim().to_owned());
+        } else if line.starts_with(' ')
+            && !line.trim().is_empty()
+            && let Some(last) = entries.last_mut()
+        {
+            last.push(' ');
+            last.push_str(line.trim());
+        }
+    }
+    entries.iter().map(|entry| split_lead(entry)).collect()
+}
+
+/// The first sentence, ending at a full stop or colon followed by a space, is the
+/// headline; an entry of one sentence is all headline.
+fn split_lead(entry: &str) -> Change {
+    let end = entry
+        .char_indices()
+        .find(|&(index, c)| matches!(c, '.' | ':') && entry[index + 1..].starts_with(' '))
+        .map(|(index, _)| index + 1);
+    match end {
+        Some(end) => Change {
+            lead: entry[..end].to_owned(),
+            rest: entry[end..].trim().to_owned(),
+        },
+        None => Change {
+            lead: entry.to_owned(),
+            rest: String::new(),
+        },
+    }
+}
+
+/// `2026-10-26T01:16:17Z` as `26 Oct 2026`.
+fn display_date(published: &str) -> Option<String> {
+    let date = chrono::NaiveDate::parse_from_str(published.get(..10)?, "%Y-%m-%d").ok()?;
+    Some(date.format("%-d %b %Y").to_string())
+}
+
 /// Where the installer put this copy, when it did: the folder holding `hq`, and what to
 /// open to start the app again (D2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -339,6 +439,68 @@ mod tests {
     use hq_signals::event::Agent;
 
     use super::*;
+
+    const RELEASES: &str = r###"[
+      {"tag_name": "v0.1.12", "draft": false, "prerelease": false, "published_at": "2026-10-26T03:00:00Z",
+       "body": "## Release Notes\n\n- Links open with a click. Hover a web address and it\n  underlines; click and it opens.\n- Working in a session's shell panel counts as watching it: no unread\n  flag.\n\n# hq-app 0.1.12\n\n## Download hq-app 0.1.12\n\n- not a change"},
+      {"tag_name": "v0.1.13", "draft": true, "prerelease": false, "body": ""},
+      {"tag_name": "v0.1.11", "draft": false, "prerelease": false, "published_at": "2026-10-26T01:16:17Z",
+       "body": "## Release Notes\n\n- Shift+Tab now reaches your agent\n"},
+      {"tag_name": "v0.2.0-rc1", "draft": false, "prerelease": true, "body": ""},
+      {"tag_name": "v0.1.10", "draft": false, "prerelease": false, "body": "## Release Notes\n\n- Old.\n"}
+    ]"###;
+
+    #[test]
+    fn notes_list_the_releases_after_the_installed_one_newest_first() {
+        let installed = Version::parse("0.1.10").unwrap();
+        let latest = Version::parse("0.1.12").unwrap();
+        let notes = releases_between(RELEASES.as_bytes(), installed, latest).unwrap();
+        let versions: Vec<String> = notes.iter().map(|n| n.version.to_string()).collect();
+        assert_eq!(
+            versions,
+            ["0.1.12", "0.1.11"],
+            "drafts, pre-releases and older left out"
+        );
+        assert_eq!(notes[0].date.as_deref(), Some("26 Oct 2026"));
+        assert_eq!(
+            notes[0].changes,
+            [
+                Change {
+                    lead: "Links open with a click.".into(),
+                    rest: "Hover a web address and it underlines; click and it opens.".into(),
+                },
+                Change {
+                    lead: "Working in a session's shell panel counts as watching it:".into(),
+                    rest: "no unread flag.".into(),
+                },
+            ],
+            "wrapped lines joined; the download tables left out"
+        );
+        assert_eq!(
+            notes[1].changes,
+            [Change {
+                lead: "Shift+Tab now reaches your agent".into(),
+                rest: String::new(),
+            }],
+            "one sentence is all headline"
+        );
+    }
+
+    #[test]
+    fn notes_without_the_section_have_no_changes() {
+        assert!(changes_in("Some text\n- a bullet").is_empty());
+        assert_eq!(
+            releases_between(b"{}", Version(0, 1, 0), Version(0, 2, 0)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_version_number_does_not_end_the_headline() {
+        let change = split_lead("Restart onto 0.1.12 to finish. Then carry on.");
+        assert_eq!(change.lead, "Restart onto 0.1.12 to finish.");
+        assert_eq!(change.rest, "Then carry on.");
+    }
 
     #[test]
     fn versions_compare_by_number() {
