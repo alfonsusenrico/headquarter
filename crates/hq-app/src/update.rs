@@ -39,9 +39,16 @@ impl Version {
         parts.next().is_none().then_some(version)
     }
 
-    /// This app's own version.
+    /// This app's own version. A pre-release build (0.1.14-rc.1) counts as the release it
+    /// leads to, so it runs, and that release is not offered to it as an update.
     pub fn running() -> Version {
-        Version::parse(env!("CARGO_PKG_VERSION")).expect("the crate version is major.minor.patch")
+        Version::of_build(env!("CARGO_PKG_VERSION"))
+            .expect("the crate version starts with major.minor.patch")
+    }
+
+    /// The release a build's version leads to: `0.1.14` from `0.1.14` or `0.1.14-rc.1`.
+    fn of_build(text: &str) -> Option<Version> {
+        Version::parse(text.split_once('-').map_or(text, |(release, _)| release))
     }
 }
 
@@ -575,6 +582,10 @@ mod tests {
             "pre-releases are skipped"
         );
         assert_eq!(Version::parse("0.2"), None);
+        // A build's own version may be a pre-release: it counts as the release it leads to.
+        assert_eq!(Version::of_build("0.1.14-rc.1"), Some(Version(0, 1, 14)));
+        assert_eq!(Version::of_build("0.1.14"), Some(Version(0, 1, 14)));
+        assert_eq!(Version::of_build("rc.1"), None);
         assert_eq!(Version::parse("0.1.9.1"), None);
         assert_eq!(Version(0, 1, 9).to_string(), "0.1.9");
         assert!(Version::parse(&Version::running().to_string()).is_some());
