@@ -17,7 +17,7 @@ The system SHALL render a session's terminal output with its colours (16, 256, a
 - **THEN** each takes two cells and the following text stays aligned
 
 ### Requirement: Keyboard input
-The system SHALL send the owner's keys to the attached agent in xterm encoding, including Ctrl, Alt, and Shift combinations, arrows, navigation and function keys, and SHALL honour the modes the agent sets (application cursor, bracketed paste).
+The system SHALL send the owner's keys to the attached agent in xterm encoding, including Ctrl, Alt, and Shift combinations, Tab and Shift+Tab, arrows, navigation and function keys, and SHALL honour the modes the agent sets (application cursor, bracketed paste). Keys the terminal sends SHALL take precedence over the window's focus navigation while the terminal is focused.
 
 #### Scenario: Navigating a picker
 - **WHEN** the owner presses the down arrow and Enter in an agent's option picker
@@ -26,6 +26,10 @@ The system SHALL send the owner's keys to the attached agent in xterm encoding, 
 #### Scenario: Composed input
 - **WHEN** the owner types a character composed with a dead key or an input method
 - **THEN** the agent receives that character as UTF-8
+
+#### Scenario: Cycling an agent's mode
+- **WHEN** the owner presses Shift+Tab in a focused terminal running Claude Code
+- **THEN** the agent receives `ESC [ Z` and cycles its mode, and focus stays on the terminal
 
 ### Requirement: Clipboard
 The system SHALL copy selected text to the system clipboard, SHALL put text the agent asks the terminal to copy (OSC 52) on the system clipboard without ever letting the agent read the clipboard, and SHALL paste clipboard text to the agent, wrapped for bracketed paste when the agent enabled it.
