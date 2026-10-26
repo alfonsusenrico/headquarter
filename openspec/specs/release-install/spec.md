@@ -100,3 +100,36 @@ The installer SHALL, when `HQ_PROGRESS=1` is set, print one line per step (`prog
 #### Scenario: Not asked for
 - **WHEN** the installer runs without `HQ_PROGRESS`
 - **THEN** its output has no progress lines and no notes
+
+### Requirement: Android APK in releases
+The system SHALL publish with every version tag a signed Android APK named `headquarter-android.apk`, for arm64-v8a, armeabi-v7a and x86_64, with its SHA-256 in `headquarter-android.apk.sha256`, built and signed by the same release run as the desktop archives, and SHALL publish nothing when the APK cannot be built or signed.
+
+#### Scenario: A release
+- **WHEN** the owner pushes a version tag
+- **THEN** the release carries `headquarter-android.apk` and its `.sha256` beside the desktop archives, and `apksigner verify` accepts the APK
+
+#### Scenario: Installing over the previous release
+- **WHEN** a phone with the previous release's APK installs the new one
+- **THEN** it installs as an update and keeps the paired computers
+
+#### Scenario: The APK fails
+- **WHEN** the Android build or its signing fails in a release run
+- **THEN** no GitHub release is published for that tag
+
+### Requirement: The signing key stays with the release run
+The system SHALL sign release APKs only in release runs from version tags, with a key that the owner created and keeps a backup of, and SHALL never print the key or its passwords.
+
+#### Scenario: A run that is not from a version tag
+- **WHEN** the Android job runs from anything but a version tag
+- **THEN** it cannot read the signing secrets and fails before building
+
+#### Scenario: Local builds
+- **WHEN** the release APK is built without the signing values, as `./scripts/check` does
+- **THEN** it builds unsigned and shrunk, and nothing asks for the key
+
+### Requirement: Debug builds beside the release
+Debug builds of the app SHALL install beside the release build, under their own id and the label "Headquarter (debug)".
+
+#### Scenario: A development phone
+- **WHEN** the release APK and a debug build are installed on one phone
+- **THEN** both appear, as Headquarter and Headquarter (debug), each with its own paired computers

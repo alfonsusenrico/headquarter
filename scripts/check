@@ -1,7 +1,8 @@
 #!/bin/sh
 # The project's CI: Rust format, lint, tests and dependency policy, the Android app
-# (core build, Kotlin format and lint, Android Lint, unit tests, debug APK), then OpenSpec
-# validation. Run it before every push; there is no hosted CI (AGENTS.md, Overrides).
+# (core build, Kotlin format and lint, Android Lint, unit tests, debug APK, unsigned release
+# APK with R8), then OpenSpec validation. Run it before every push; there is no hosted CI
+# (AGENTS.md, Overrides).
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -44,7 +45,7 @@ if [ -d mobile/android ]; then
     fi
     export ANDROID_HOME
     if [ -n "${JAVA_HOME:-}" ]; then export JAVA_HOME; fi
-    (cd mobile/android && ./gradlew --quiet ktlintCheck lintDebug testDebugUnitTest assembleDebug)
+    (cd mobile/android && ./gradlew --quiet ktlintCheck lintDebug testDebugUnitTest assembleDebug assembleRelease)
 fi
 
 if command -v openspec > /dev/null 2>&1; then

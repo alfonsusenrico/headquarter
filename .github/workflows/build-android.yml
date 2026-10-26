@@ -1,0 +1,69 @@
+# The signed Android APK of a release (add-android-release D4). `dist` calls this from
+# release.yml as the global artifact job `custom-build-android`, and publishes the release
+# only when it succeeds. Edit this file by hand: `dist generate` leaves it alone.
+name: Build Android
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    # The signing key lives in this environment, which only version tags may use (D3).
+    environment: android-release
+    env:
+      NDK_VERSION: "30.0.16248370"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Rust toolchain and Android targets
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK packages
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;$NDK_VERSION" > /dev/null
+          # The runner points at its own NDK. The core is built with this one.
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Signed release APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "$(printenv "$name")" ]; then
+              echo "The signing secret $name is missing from the environment android-release." >&2
+              exit 1
+            fi
+          done
+          export HQ_ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$HQ_ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$HQ_ANDROID_KEYSTORE"
+          (cd mobile/android && ./gradlew --no-daemon assembleRelease)
+      - name: Check, name and checksum
+        run: |
+          mkdir -p android-release
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk android-release/headquarter-android.apk
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify android-release/headquarter-android.apk
+          (cd android-release && sha256sum headquarter-android.apk > headquarter-android.apk.sha256)
+      # `dist`'s host job adds every artifact named `artifacts-*` to the release.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-android
+          path: android-release/*

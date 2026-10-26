@@ -121,6 +121,22 @@ Then open the app with the agents you already use: Headquarter finds Claude Code
 and agy where your terminal finds them, and a short first-run setup asks which to use
 and how the app should look.
 
+### On your phone
+
+Headquarter for Android follows your sessions from the couch: the sidebar, who needs you,
+and a terminal you can type into, at your phone's width. It needs Android 10 or later.
+
+1. On the phone, download
+   [`headquarter-android.apk`](https://github.com/alfonsusenrico/headquarter/releases/latest/download/headquarter-android.apk)
+   and open it. Android asks once to let your browser install apps.
+2. On the computer, choose Headquarter ▸ Remote Control… ▸ Pair a Phone (or run
+   `hq remote pair`), and point the app's camera at the code.
+
+Want to check the file first? Its SHA-256 is in `headquarter-android.apk.sha256` beside it
+on the release page. The app connects only while it is on screen and keeps no session content
+on the phone. When a newer release is out it says so, and installing the new APK over it keeps
+your paired computers.
+
 ## How light is it
 
 Short answer: lighter than a terminal window per agent, once you run a few.
