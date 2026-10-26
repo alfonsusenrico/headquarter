@@ -54,6 +54,10 @@ const STOP_GRACE: Duration = Duration::from_secs(3);
 const STOPPING_HOST_WAIT: Duration = Duration::from_secs(10);
 /// Shortest id prefix accepted as a session reference.
 const MIN_ID_PREFIX: usize = 4;
+/// Tells programs that check it (Node's `supports-hyperlinks`, which Claude Code uses)
+/// that the terminal opens links they mark up (OSC 8), so a link an agent wraps over
+/// several lines still opens whole (add-terminal-links).
+const LINKS_ENV: (&str, &str) = ("FORCE_HYPERLINK", "1");
 
 pub struct HostOptions {
     pub paths: HostPaths,
@@ -1321,6 +1325,7 @@ impl Host {
         command.env(SESSION_ENV, plan.id);
         command.env("TERM", plan.term.as_deref().unwrap_or("xterm-256color"));
         command.env("COLORTERM", "truecolor");
+        command.env(LINKS_ENV.0, LINKS_ENV.1);
         command.env("PATH", hq_discovery::shell::agent_path(&plan.program));
         let child = pair
             .slave
@@ -1489,6 +1494,7 @@ impl Host {
         command.env_remove(SESSION_ENV);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        command.env(LINKS_ENV.0, LINKS_ENV.1);
         let child = pair
             .slave
             .spawn_command(command)

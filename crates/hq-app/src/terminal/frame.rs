@@ -5,6 +5,7 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 
+use super::links::Link;
 use super::model::{TerminalModel, palette_color};
 use crate::theme::{Paint, Palette};
 
@@ -77,7 +78,8 @@ pub struct TextRun {
     pub wide: bool,
 }
 
-pub fn build(model: &TerminalModel) -> Frame {
+/// `hovered` is the link under the pointer, underlined wherever it shows.
+pub fn build(model: &TerminalModel, hovered: Option<&Link>) -> Frame {
     let term = model.term();
     let palette = model.palette();
     let size = model.size();
@@ -154,7 +156,14 @@ pub fn build(model: &TerminalModel) -> Frame {
                 color: foreground,
                 bold: flags.contains(Flags::BOLD),
                 italic: flags.contains(Flags::ITALIC),
-                underline: underline(flags),
+                underline: match underline(flags) {
+                    Underline::None
+                        if hovered.is_some_and(|link| link.covers(indexed.point, cell)) =>
+                    {
+                        Underline::Single
+                    }
+                    own => own,
+                },
                 strike: flags.contains(Flags::STRIKEOUT),
             },
             wide: flags.contains(Flags::WIDE_CHAR),
@@ -306,7 +315,38 @@ mod tests {
             palette.clone(),
         );
         model.feed(bytes);
-        (build(&model), palette)
+        (build(&model, None), palette)
+    }
+
+    #[test]
+    fn the_hovered_link_is_underlined_wherever_it_shows() {
+        let mut model = TerminalModel::new(
+            GridSize {
+                columns: 12,
+                rows: 3,
+            },
+            Theme::light().palette,
+        );
+        // An agent closes the link at the end of a row and opens it again after the indent.
+        model.feed(
+            b"\x1b]8;;https://example.com/x\x07docs\x1b]8;;\x07\r\n  \x1b]8;;https://example.com/x\x07page\x1b]8;;\x07 end",
+        );
+        let term = model.term();
+        let point = crate::terminal::links::view_point(term, 0, 1);
+        let link = crate::terminal::links::LinkFinder::new().at(term, point);
+        assert!(link.is_some());
+        let frame = build(&model, link.as_ref());
+        let underlined = |row: usize, column: usize| {
+            frame.rows[row][column].style.underline == Underline::Single
+        };
+        assert!((0..4).all(|column| underlined(0, column)), "docs");
+        assert!((2..6).all(|column| underlined(1, column)), "page");
+        assert!(
+            !underlined(1, 0) && !underlined(1, 7),
+            "the indent and \"end\""
+        );
+        let plain = build(&model, None);
+        assert_eq!(plain.rows[0][0].style.underline, Underline::None);
     }
 
     #[test]
@@ -322,7 +362,7 @@ mod tests {
             palette,
         );
         model.feed(b"\x1b[31mr\x1b[38;2;1;2;3mt\x1b[0md");
-        let frame = build(&model);
+        let frame = build(&model, None);
         let row = &frame.rows[0];
         assert_eq!(row[0].style.color.opacity, 40, "palette red at its opacity");
         assert_eq!(row[1].style.color.opacity, 100, "an exact colour is opaque");
@@ -434,7 +474,7 @@ mod tests {
             alacritty_terminal::selection::SelectionType::Simple,
         );
         model.extend_selection(0, 5, alacritty_terminal::index::Side::Right);
-        let frame = build(&model);
+        let frame = build(&model, None);
         assert_eq!(frame.rows[0][2].background.rgb, palette.selection);
         assert_eq!(
             frame.rows[0][2].style.color.rgb, palette.foreground,
@@ -449,7 +489,7 @@ mod tests {
             b: 0x2E,
         });
         model.set_palette(themed.clone());
-        let frame = build(&model);
+        let frame = build(&model, None);
         assert_eq!(
             frame.rows[0][2].style.color.rgb,
             themed.selection_text.unwrap(),

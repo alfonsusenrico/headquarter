@@ -10,7 +10,7 @@ use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::CursorShape;
 use gpui::{
-    App, Bounds, ClipboardItem, Context, DispatchPhase, ElementInputHandler, Entity,
+    App, Bounds, ClipboardItem, Context, CursorStyle, DispatchPhase, ElementInputHandler, Entity,
     EntityInputHandler, ExternalPaths, FocusHandle, Focusable, Font, FontStyle, FontWeight, Hsla,
     InteractiveElement, IntoElement, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollDelta,
@@ -21,6 +21,7 @@ use gpui::{
 use super::copy;
 use super::frame::{self, Frame, TextStyle, Underline};
 use super::keys::{self, Binding, KeyModes, KeyPress};
+use super::links::{self, Link, LinkFinder};
 use super::model::GridSize;
 use super::session::TerminalSession;
 use crate::shortcuts;
@@ -97,6 +98,16 @@ struct Press {
     shift: bool,
 }
 
+/// A left-button press on a link: it opens on release unless the pointer reaches
+/// another cell first, which makes it an ordinary drag (add-terminal-links).
+#[derive(Debug, Clone)]
+struct LinkPress {
+    row: usize,
+    column: usize,
+    side: Side,
+    link: Link,
+}
+
 /// What releasing the left button does (fix-agent-clipboard-copy D1). Headquarter owns
 /// drags for every agent: a drag selects and its release copies. A click without a drag
 /// goes to an agent that uses the mouse (Shift keeps it here), else clears the selection.
@@ -167,6 +178,12 @@ pub struct TerminalView {
     /// While set, the grid keeps its size, so the agent redraws once when the sidebar's
     /// divider is released rather than on every pixel of the drag.
     size_held: bool,
+    links: LinkFinder,
+    /// The cell under the pointer while no button is down, and the link there, found
+    /// again on each draw as the output changes.
+    hover_cell: Option<(usize, usize)>,
+    hovered: Option<Link>,
+    link_press: Option<LinkPress>,
 }
 
 impl TerminalView {
@@ -206,6 +223,10 @@ impl TerminalView {
             agent_copies_seen: 0,
             forwarding: None,
             size_held: false,
+            links: LinkFinder::new(),
+            hover_cell: None,
+            hovered: None,
+            link_press: None,
         }
     }
 
@@ -408,6 +429,36 @@ impl TerminalView {
         ))
     }
 
+    /// The visible cell at a window position, or `None` outside the grid.
+    fn cell_inside(&self, position: Point<Pixels>) -> Option<(usize, usize)> {
+        let layout = self.layout.get()?;
+        let x = (position.x - layout.origin.x) / layout.cell_width;
+        let y = (position.y - layout.origin.y) / layout.line_height;
+        let inside = x >= 0.0 && y >= 0.0;
+        let (column, row) = (x.floor() as usize, y.floor() as usize);
+        (inside && column < layout.columns && row < layout.rows).then_some((row, column))
+    }
+
+    fn link_at(&mut self, cell: Option<(usize, usize)>, cx: &App) -> Option<Link> {
+        let (row, column) = cell?;
+        let term = self.session.read(cx).model().term();
+        self.links.at(term, links::view_point(term, row, column))
+    }
+
+    /// The pointer moved with no button down, anywhere in the window.
+    fn hover(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let cell = self.cell_inside(position);
+        if cell == self.hover_cell {
+            return;
+        }
+        self.hover_cell = cell;
+        let link = self.link_at(cell, cx);
+        if link != self.hovered {
+            self.hovered = link;
+            cx.notify();
+        }
+    }
+
     fn agent_owns_drags(&self, cx: &App) -> bool {
         agent_owns_drags(self.mode(cx))
     }
@@ -431,6 +482,19 @@ impl TerminalView {
         let Some((row, column)) = self.cell_at(event.position) else {
             return;
         };
+        if event.click_count == 1
+            && !event.modifiers.shift
+            && let Some(link) = self.link_at(self.cell_inside(event.position), cx)
+        {
+            self.clear_selection(cx);
+            self.link_press = Some(LinkPress {
+                row,
+                column,
+                side: self.side_at(event.position),
+                link,
+            });
+            return;
+        }
         // A full-screen agent that uses the mouse keeps its own history, so it selects,
         // scrolls and copies itself; Shift keeps the drag here (D1).
         if self.agent_owns_drags(cx) && !event.modifiers.shift {
@@ -464,6 +528,27 @@ impl TerminalView {
     /// that reaches another cell becomes a selection, which follows the pointer and
     /// scrolls when it goes past the top or bottom (D3).
     fn drag_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(press) = self.link_press.take() {
+            if self.cell_at(position) == Some((press.row, press.column)) {
+                self.link_press = Some(press);
+                return;
+            }
+            // Left the link's cell: a drag from there, as if pressed off a link.
+            let LinkPress {
+                row, column, side, ..
+            } = press;
+            if self.agent_owns_drags(cx) {
+                self.report_mouse(0, row, column, true, cx);
+                self.forwarding = Some((row, column));
+            } else {
+                self.press = Some(Press {
+                    row,
+                    column,
+                    side,
+                    shift: false,
+                });
+            }
+        }
         if let Some(last) = self.forwarding {
             // Reported cell by cell; past an edge it stays on the edge row, where the
             // agent scrolls.
@@ -567,6 +652,10 @@ impl TerminalView {
 
     /// The left button came up, anywhere in the window, after a press in the pane.
     fn finish_press(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(press) = self.link_press.take() {
+            cx.open_url(press.link.address());
+            return;
+        }
         if let Some(last) = self.forwarding.take() {
             let (row, column) = self.cell_at(position).unwrap_or(last);
             self.report_mouse(0, row, column, false, cx);
@@ -659,7 +748,13 @@ pub fn hsla(color: impl Into<Paint>) -> Hsla {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let frame = frame::build(self.session.read(cx).model());
+        self.hovered = self.link_at(self.hover_cell, cx);
+        let frame = frame::build(self.session.read(cx).model(), self.hovered.as_ref());
+        let pointer = if self.hovered.is_some() {
+            CursorStyle::PointingHand
+        } else {
+            CursorStyle::Arrow
+        };
         let focused = self.focus.is_focused(window) && window.is_window_active();
         let ended = self.session.read(cx).ended.clone();
         let view = cx.entity();
@@ -681,6 +776,7 @@ impl Render for TerminalView {
             .size_full()
             .bg(see_through)
             .track_focus(&self.focus)
+            .cursor(pointer)
             .key_context(super::CONTEXT)
             .on_action(cx.listener(|this, _: &crate::menus::Copy, _, cx| this.copy_selection(cx)))
             .on_action(cx.listener(|this, _: &crate::menus::Paste, _, cx| this.paste_clipboard(cx)))
@@ -739,10 +835,15 @@ impl Render for TerminalView {
                         // pointer and the release, not only this element (D3).
                         let mover = view.clone();
                         window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Bubble
-                                && event.pressed_button == Some(MouseButton::Left)
-                            {
-                                mover.update(cx, |this, cx| this.drag_to(event.position, cx));
+                            if phase != DispatchPhase::Bubble {
+                                return;
+                            }
+                            match event.pressed_button {
+                                Some(MouseButton::Left) => {
+                                    mover.update(cx, |this, cx| this.drag_to(event.position, cx));
+                                }
+                                None => mover.update(cx, |this, cx| this.hover(event.position, cx)),
+                                Some(_) => {}
                             }
                         });
                         let releaser = view.clone();
@@ -1126,7 +1227,7 @@ impl EntityInputHandler for TerminalView {
     ) -> Option<Bounds<Pixels>> {
         // Places the input method's candidate window at the cursor.
         let layout = self.layout.get()?;
-        let cursor = frame::build(self.session.read(cx).model()).cursor?;
+        let cursor = frame::build(self.session.read(cx).model(), None).cursor?;
         Some(Bounds::new(
             point(
                 layout.origin.x + layout.cell_width * cursor.column as f32,
