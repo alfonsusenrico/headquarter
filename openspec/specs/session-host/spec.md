@@ -6,7 +6,7 @@ Keeps every Headquarter agent session in one long-lived place the owner can star
 ## Requirements
 
 ### Requirement: Sessions outlive clients
-The system SHALL keep each agent session it hosts running when the client that started or attached to it disconnects, until the agent exits or the owner ends it, and SHALL then have the agent redraw at the size of the latest client still attached.
+The system SHALL keep each agent session it hosts running when the client that started or attached to it disconnects, until the agent exits or the owner ends it, and SHALL then have the agent redraw at the size of the latest client still attached. A client that attaches SHALL receive the terminal modes the agent has in effect before its recent output, however long ago the agent set them.
 
 #### Scenario: Terminal closed while attached
 - **WHEN** the owner closes the terminal that is attached to a working session
@@ -19,6 +19,10 @@ The system SHALL keep each agent session it hosts running when the client that s
 #### Scenario: Second client leaves
 - **WHEN** the app shows a session at 120 columns, `hq attach` joins at 110 columns and then detaches
 - **THEN** the agent redraws at 120 columns and the app's view is drawn correctly
+
+#### Scenario: Modes set long before attaching
+- **WHEN** a full-screen agent set the alternate screen, mouse reporting and bracketed paste at startup and has since printed more output than the host keeps, and the app attaches
+- **THEN** the app's terminal is in those modes, so drags, clicks and the wheel go to the agent and pastes are bracketed
 
 ### Requirement: Native agent interface
 The system SHALL present an attached session with the agent's own terminal interface and pass every key the owner types to the agent, except the documented detach key.
