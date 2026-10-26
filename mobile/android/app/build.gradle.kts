@@ -4,14 +4,22 @@ plugins {
     id("org.jlleitschuh.gradle.ktlint")
 }
 
-// The app ships with the desktop release of the same version (add-android-app D12).
+// The app ships with the desktop release of the same version (add-android-app D12). A
+// pre-release suffix (0.1.14-rc.1) stays in the name, and the code comes from the numbers, so
+// the release installs over its candidate (add-android-release D5).
 val workspaceVersion: String =
-    Regex("""^version = "([0-9]+\.[0-9]+\.[0-9]+)"""", RegexOption.MULTILINE)
+    Regex("""^version = "([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?)"""", RegexOption.MULTILINE)
         .find(rootDir.resolve("../../crates/hq-cli/Cargo.toml").readText())
         ?.groupValues
         ?.get(1)
         ?: error("no version in crates/hq-cli/Cargo.toml")
-val (major, minor, patch) = workspaceVersion.split(".").map(String::toInt)
+val (major, minor, patch) = workspaceVersion.substringBefore("-").split(".").map(String::toInt)
+
+// The release key, present only in release runs from a version tag (add-android-release D3).
+val releaseKey: Map<String, String>? =
+    listOf("HQ_ANDROID_KEYSTORE", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD")
+        .associateWith { System.getenv(it).orEmpty() }
+        .takeIf { values -> values.values.all { it.isNotEmpty() } }
 
 android {
     namespace = "com.alfonsusenrico.headquarter"
@@ -24,6 +32,36 @@ android {
         versionCode = major * 10000 + minor * 100 + patch
         versionName = workspaceVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            // The core is built for these only (scripts/android-core). JNA brings more, which
+            // would install where the core is missing.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+    }
+
+    signingConfigs {
+        if (releaseKey != null) {
+            create("release") {
+                storeFile = file(releaseKey.getValue("HQ_ANDROID_KEYSTORE"))
+                storePassword = releaseKey.getValue("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = releaseKey.getValue("ANDROID_KEY_ALIAS")
+                keyPassword = releaseKey.getValue("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Beside the release app on one phone, as Headquarter (debug) (D6).
+            applicationIdSuffix = ".debug"
+        }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Without the key the release builds unsigned, as `./scripts/check` does (D7).
+            signingConfig = signingConfigs.findByName("release")
+        }
     }
 
     buildFeatures {

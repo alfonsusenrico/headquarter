@@ -15,6 +15,9 @@ installers = []
 # Releases run only on version tags (D5); nothing runs on pull requests.
 pr-run-mode = "skip"
 install-updater = false
+# The signed Android APK, built and signed in the same run (add-android-release D1). The
+# release is published only when it succeeds.
+global-artifacts-jobs = ["./build-android"]
 
 [dist.github-custom-runners]
 aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
