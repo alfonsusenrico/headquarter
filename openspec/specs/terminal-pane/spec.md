@@ -154,3 +154,29 @@ The system SHALL space the pane's lines by the font's ascent plus descent, each 
 #### Scenario: JetBrains Mono at 14
 - **WHEN** the settings file sets JetBrainsMono Nerd Font at size 14
 - **THEN** the pane's lines are 18 points apart, as in Alacritty with the same settings
+
+### Requirement: Links
+The system SHALL underline a web address (`http` or `https`) under the pointer with a hand pointer and open it in the default browser on a plain click, without sending that click to the agent, in the agent pane and the shell panel. It SHALL find links an agent marks up (OSC 8) and plain-text addresses, and SHALL NOT open other kinds of links.
+
+#### Scenario: Plain address
+- **WHEN** the shell prints `see https://example.com/docs.` and the owner clicks the address
+- **THEN** `https://example.com/docs` opens in the browser, without the full stop, and the shell receives nothing
+
+#### Scenario: Wrapped link from an agent
+- **WHEN** Claude Code prints a link it wraps over two rows and the owner hovers the second row
+- **THEN** both rows of the link are underlined and a click opens the full address
+
+#### Scenario: Not a web link
+- **WHEN** an agent marks up a `file:` link and the owner clicks it
+- **THEN** nothing opens and the click goes where a click on plain text goes
+
+#### Scenario: Dragging from a link
+- **WHEN** the owner presses on a link and drags across the text beside it
+- **THEN** the text is selected and copied as with any drag, and the link does not open
+
+### Requirement: Agents told to mark up links
+The system SHALL start agents and session shells with `FORCE_HYPERLINK=1`, so programs that check it mark up their links and a link they wrap over several rows opens whole.
+
+#### Scenario: Claude Code marks up its links
+- **WHEN** a Claude Code session prints a long address that wraps
+- **THEN** its rows carry the marked-up link with the full address
