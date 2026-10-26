@@ -100,7 +100,8 @@ fn paint_status(glyph: Glyph, bounds: Bounds<Pixels>, chrome: Chrome, window: &m
         }
         Glyph::Idle => paint_bubble(bounds, chrome.muted, false, window),
         Glyph::Inactive => paint_moon(bounds, chrome.muted, window),
-        // The slot stays empty, so ages line up with the other rows.
+        // Elsewhere keeps an empty slot, so its age lines up with the other rows;
+        // working and starting rows leave the slot out.
         Glyph::Elsewhere | Glyph::Working | Glyph::Starting => {}
     }
 }
@@ -163,9 +164,9 @@ fn paint_moon(bounds: Bounds<Pixels>, color: impl Into<Paint> + Copy, window: &m
     paint(window, moon, color);
 }
 
-/// The status glyph for a row. Working has none: the row's breathing "working" word
-/// marks it (owner, 2026-10-21; fix-sidebar-motion-redraw), and the empty cell keeps
-/// rows aligned.
+/// The status glyph for a row. Working and starting have none: the row's breathing
+/// word marks them (owner, 2026-10-21; fix-sidebar-motion-redraw) and ends the row in
+/// place of this cell (`Row::glyph_cell`).
 pub fn status(glyph: Glyph, chrome: Chrome) -> AnyElement {
     canvas(
         |_, _, _| (),

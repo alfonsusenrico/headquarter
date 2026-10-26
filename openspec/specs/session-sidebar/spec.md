@@ -100,7 +100,7 @@ The system SHALL mark needs you, idle not read yet, and idle with glyphs that di
 
 #### Scenario: Working
 - **WHEN** a sidebar session is working
-- **THEN** its row shows "working" fading in and out where the age is, and no glyph
+- **THEN** its row shows "working" fading in and out, right-aligned where the other rows' glyphs end, and no glyph
 
 #### Scenario: Inactive
 - **WHEN** a sidebar session's agent was quit
@@ -108,8 +108,15 @@ The system SHALL mark needs you, idle not read yet, and idle with glyphs that di
 
 #### Scenario: Starting with the host
 - **WHEN** the host starts with three sessions to start
-- **THEN** all three rows show "starting" fading in and out where the age is, with no glyph, and each switches to its own status as its agent becomes ready, one after another
+- **THEN** all three rows show "starting" fading in and out, right-aligned where the other rows' glyphs end, with no glyph, and each switches to its own status as its agent becomes ready, one after another
 
+
+### Requirement: Status words end the row
+The system SHALL right-align the breathing "working" and "starting" words at the end of the row, where the other rows' glyphs end, without an empty glyph cell after them.
+
+#### Scenario: Working beside an idle row
+- **WHEN** one sidebar session is working and the next is idle
+- **THEN** "working" ends level with the idle row's speech bubble
 ### Requirement: Opening sessions
 The system SHALL show a sidebar session in the terminal pane when chosen; for an inactive session it SHALL show the session with a "Resume Session" button and start its agent on the same conversation only when it is pressed, or offer "Remove from Sidebar" instead when its folder no longer exists. It SHALL mark the open row distinctly from the keyboard's place and from rows under the pointer, and SHALL state that a session running in another terminal is observed only.
 
