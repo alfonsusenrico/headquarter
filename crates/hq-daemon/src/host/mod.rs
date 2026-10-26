@@ -6,6 +6,7 @@ mod close;
 mod details;
 mod history;
 mod outside;
+mod remote;
 mod remove;
 mod starting;
 mod usage;
@@ -153,6 +154,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
                 .map(|agent| agent.id)
                 .collect(),
         )),
+        remote: remote::Remote::default(),
         platform: hq_discovery::platform::detect(),
         login_path: Mutex::new(None),
         login_path_settled: AtomicBool::new(false),
@@ -192,6 +194,10 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
     {
         let host = Arc::clone(&host);
         thread::spawn(move || host.usage_loop());
+    }
+    {
+        let host = Arc::clone(&host);
+        thread::spawn(move || host.start_remote_if_enabled());
     }
     {
         let order = host.queue_starts();
@@ -307,6 +313,8 @@ struct Host {
     outside_wake: outside::OutsideWake,
     first_import: history::FirstImport,
     settings: Mutex<SettingsWatcher>,
+    /// Remote control's gateway, while it runs (add-remote-gateway).
+    remote: remote::Remote,
     platform: Platform,
     /// The owner's login-shell `PATH`, captured once in the background at startup.
     login_path: Mutex<Option<String>>,
@@ -423,8 +431,8 @@ impl Host {
             };
             match frame {
                 Frame::Input(bytes) => {
-                    if let Some((hosted, _)) = &attached {
-                        hosted.input(&bytes, now_ms());
+                    if let Some((hosted, viewer)) = &attached {
+                        hosted.input_from(*viewer, &bytes, now_ms());
                         self.refresh(hosted);
                     }
                 }
@@ -657,6 +665,24 @@ impl Host {
                             stop_requested = true;
                             break;
                         }
+                        Request::Focus {} => {
+                            if let Some((hosted, viewer)) = &attached {
+                                hosted.focus(*viewer);
+                            }
+                        }
+                        Request::Pair { .. } => send(Response::error(
+                            ErrorCode::BadRequest,
+                            "pairing is for phones, through remote control",
+                        )),
+                        Request::RemoteStatus {} => {
+                            send(self.remote_status(self.remote_enabled_setting()));
+                        }
+                        Request::RemoteSet { enabled } => send(self.remote_set(enabled)),
+                        Request::RemotePair {} => {
+                            send(self.remote_pair(tx.clone(), connection));
+                        }
+                        Request::RemoteDevices {} => send(self.remote_devices()),
+                        Request::RemoteRemove { device } => send(self.remote_remove(&device)),
                     }
                 }
             }
@@ -665,6 +691,8 @@ impl Host {
         if let Some((hosted, viewer)) = attached {
             hosted.detach(viewer);
         }
+        // A pairing code this client showed stops working with it (add-remote-gateway D13).
+        self.remote_client_left(connection);
         // A client that is gone no longer counts as watching, so usage reads stop now
         // rather than after the next failed send.
         lock(&self.subscribers).retain(|subscriber| subscriber.connection != connection);
@@ -1720,7 +1748,11 @@ impl Host {
                 hosted.tick(now);
                 self.refresh(hosted);
             }
-            if sessions.is_empty() && self.clients.load(Ordering::SeqCst) == 0 {
+            // Remote control keeps the host up: a phone has no way to start it.
+            if sessions.is_empty()
+                && self.clients.load(Ordering::SeqCst) == 0
+                && !self.remote.running()
+            {
                 let since = *idle_since.get_or_insert_with(Instant::now);
                 if since.elapsed() >= self.idle_exit {
                     self.shutdown("idle");

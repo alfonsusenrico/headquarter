@@ -4,6 +4,7 @@
 //! Headquarter does not support are warnings, so an Alacritty file can be copied in.
 
 mod appearance;
+pub mod remote;
 mod schema;
 pub mod setup;
 pub mod themes;
@@ -28,10 +29,20 @@ pub struct Settings {
     pub notifications: Notifications,
     /// Whether the app checks for new releases by itself (add-in-app-update D8).
     pub check_updates: bool,
+    pub remote: Remote,
     /// Settings that were read but have no effect, such as unsupported Alacritty keys.
     pub warnings: Vec<SettingsError>,
     /// Imported files, watched for changes like the settings file itself.
     pub imports: Vec<PathBuf>,
+}
+
+/// Remote control from a phone (add-remote-gateway): off by default; n0's public relays
+/// unless the owner lists their own.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Remote {
+    pub enabled: bool,
+    /// The owner's relay URLs, used instead of n0's public relays when not empty.
+    pub relays: Vec<String>,
 }
 
 /// Which system notifications the app shows (add-notifications D4); both on by default.
@@ -66,6 +77,7 @@ impl Default for Settings {
             appearance: Appearance::default(),
             notifications: Notifications::default(),
             check_updates: true,
+            remote: Remote::default(),
             warnings: Vec::new(),
             imports: Vec::new(),
         }
@@ -127,6 +139,8 @@ struct RawSettings {
     #[serde(default)]
     updates: RawUpdates,
     #[serde(default)]
+    remote: RawRemote,
+    #[serde(default)]
     general: appearance::RawGeneral,
     #[serde(default)]
     window: appearance::RawWindow,
@@ -162,6 +176,12 @@ struct RawNotifications {
 #[derive(Deserialize, Default)]
 struct RawUpdates {
     check: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawRemote {
+    enabled: Option<bool>,
+    relays: Option<Vec<toml::Spanned<String>>>,
 }
 
 /// Where the settings file lives: `$XDG_CONFIG_HOME/headquarter/config.toml`, or in
@@ -250,6 +270,18 @@ pub fn parse(
     if let Some(check) = raw.updates.check {
         settings.check_updates = check;
     }
+    if let Some(enabled) = raw.remote.enabled {
+        settings.remote.enabled = enabled;
+    }
+    for relay in raw.remote.relays.unwrap_or_default() {
+        if !is_relay_url(relay.get_ref()) {
+            return Err(error_at(
+                Some(relay.span().start),
+                "a relay must be an https URL, such as \"https://relay.example.com\"".to_owned(),
+            ));
+        }
+        settings.remote.relays.push(relay.into_inner());
+    }
     for (id, agent) in raw.agents {
         if !known_agents.contains(&id.as_str()) {
             let offset = source.find(&format!("[agents.{id}]"));
@@ -279,6 +311,13 @@ pub fn parse(
         );
     }
     Ok(settings)
+}
+
+/// An https URL with a host.
+fn is_relay_url(text: &str) -> bool {
+    text.strip_prefix("https://")
+        .and_then(|rest| rest.split(['/', ':']).next())
+        .is_some_and(|host| !host.is_empty() && !host.contains(char::is_whitespace))
 }
 
 fn expand(path: &str, home: Option<&Path>) -> Option<PathBuf> {
@@ -423,6 +462,24 @@ mod tests {
     #[test]
     fn update_checks_are_on_unless_turned_off() {
         assert!(parse_text("").unwrap().check_updates);
+        let remote = parse_text("").unwrap().remote;
+        assert!(
+            !remote.enabled && remote.relays.is_empty(),
+            "off by default"
+        );
+        let own =
+            parse_text("[remote]\nenabled = true\nrelays = [\"https://relay.example.com\"]\n")
+                .unwrap()
+                .remote;
+        assert!(own.enabled);
+        assert_eq!(own.relays, ["https://relay.example.com"]);
+        let plain = parse_text("[remote]\nrelays = [\"http://relay.example.com\"]\n").unwrap_err();
+        assert_eq!(plain.line, Some(2), "{plain}");
+        assert!(plain.message.contains("https URL"), "{plain}");
+        assert!(
+            parse_text("[remote]\nport = 1\n").is_err(),
+            "unknown remote key"
+        );
         assert!(
             !parse_text("[updates]\ncheck = false\n")
                 .unwrap()

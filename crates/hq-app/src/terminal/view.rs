@@ -479,6 +479,9 @@ impl TerminalView {
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+        // A click in a terminal that already has focus is the owner coming back to it
+        // after a phone, with no focus change to say so (add-remote-gateway D6).
+        self.session.read(cx).focus();
         let Some((row, column)) = self.cell_at(event.position) else {
             return;
         };

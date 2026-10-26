@@ -49,6 +49,7 @@ use crate::themes::{self, Library, Look, ThemeChoice, Token};
 mod groups;
 mod header;
 mod rail;
+mod remote;
 mod shell;
 mod sidebar_view;
 mod update;
@@ -260,6 +261,8 @@ pub struct Workspace {
     usage: Vec<AgentUsage>,
     /// The agent whose usage details are open.
     usage_open: Option<Agent>,
+    /// The Remote Control window, while open (add-remote-gateway D12).
+    remote_window: Option<remote::RemoteWindow>,
     /// The details list every agent: opened from the "+N" chip.
     usage_all: bool,
     /// A refresh asked of the host has not been answered yet.
@@ -299,6 +302,7 @@ impl Workspace {
         .detach();
         cx.observe_window_activation(window, |this, window, cx| {
             this.mark_seen_if_watched(window, cx);
+            this.tell_host_in_use(window, cx);
             cx.notify();
         })
         .detach();
@@ -406,6 +410,7 @@ impl Workspace {
             _clock: clock,
             usage: Vec::new(),
             usage_open: None,
+            remote_window: None,
             usage_all: false,
             usage_refreshing: false,
             usage_dismissed: None,
@@ -820,6 +825,24 @@ impl Workspace {
         shown == id && window.is_window_active() && in_pane
     }
 
+    /// The terminal the owner works in, agent or shell, takes this window's size on the
+    /// host, even when a phone used it meanwhile (add-remote-gateway D6).
+    fn tell_host_in_use(&self, window: &Window, cx: &App) {
+        if !window.is_window_active() {
+            return;
+        }
+        let Pane::Terminal { view, .. } = &self.pane else {
+            return;
+        };
+        let focused = [Some(view), self.shell_view()]
+            .into_iter()
+            .flatten()
+            .find(|view| view.focus_handle(cx).is_focused(window));
+        if let Some(view) = focused {
+            view.read(cx).session().read(cx).focus();
+        }
+    }
+
     /// "Done, not read yet" clears once the owner can see the session.
     fn mark_seen_if_watched(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Pane::Terminal { id, .. } = &self.pane else {
@@ -885,6 +908,7 @@ impl Workspace {
         let view = cx.new(|cx| TerminalView::new(session, options, window, cx));
         let focus = cx.on_focus(&view.focus_handle(cx), window, |this, window, cx| {
             this.mark_seen_if_watched(window, cx);
+            this.tell_host_in_use(window, cx);
         });
         window.focus(&view.focus_handle(cx), cx);
         self.pane = Pane::Terminal {
@@ -2864,6 +2888,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &menus::CheckForUpdates, window, cx| {
                 this.check_for_update(true, window, cx);
             }))
+            .on_action(cx.listener(|this, _: &menus::RemoteControl, window, cx| {
+                this.open_remote_window(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &menus::ToggleShell, window, cx| {
                 this.run_shortcut(Shortcut::ToggleShell, window, cx);
             }))
@@ -2892,6 +2919,7 @@ impl Render for Workspace {
             .children(self.render_confirm_delete(cx))
             .children(self.render_confirm_close(cx))
             .children(self.render_update_window(cx))
+            .children(self.render_remote_window(cx))
     }
 }
 

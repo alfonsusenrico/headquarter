@@ -163,6 +163,12 @@ impl TerminalSession {
         self.send(&Frame::Input(bytes.to_vec()));
     }
 
+    /// The owner brought this session to the front here: the host sizes its terminal for
+    /// this window (add-remote-gateway D6).
+    pub fn focus(&self) {
+        self.send(&Frame::request(&Request::Focus {}));
+    }
+
     pub fn set_size(&mut self, size: GridSize, cx: &mut Context<Self>) {
         let Some(request) = resize_request(self.model.size(), size) else {
             return;

@@ -372,6 +372,25 @@ pub fn set_group(paths: &HostPaths, session: &str, group: Option<i64>) -> Result
     )
 }
 
+/// A remote control request (status, on or off, devices, removal); errors become `Err`.
+pub fn remote(paths: &HostPaths, request: &Request) -> Result<Response> {
+    let mut client = Client::connect_or_start(paths)?;
+    expect_ok(client.request(request)?)
+}
+
+/// Asks the host for a pairing code and its lifetime in seconds. The returned client hears
+/// when the code is used or expires; closing it withdraws the code (add-remote-gateway D13).
+pub fn begin_pairing(paths: &HostPaths) -> Result<(Client, String, u64)> {
+    let mut client = Client::connect_or_start(paths)?;
+    match expect_ok(client.request(&Request::RemotePair {})?)? {
+        Response::RemotePairing {
+            code,
+            expires_in_secs,
+        } => Ok((client, code, expires_in_secs)),
+        other => bail!("unexpected answer from the host: {other:?}"),
+    }
+}
+
 /// Tells the host the owner has seen the session's latest state.
 pub fn mark_seen(paths: &HostPaths, session: &str) -> Result<()> {
     request_done(

@@ -32,6 +32,22 @@ pub struct Viewer {
     pub rows: u16,
 }
 
+/// Which viewer is in use, and the order viewers were used in (add-remote-gateway D6).
+#[derive(Default)]
+struct InUse {
+    active: Option<u64>,
+    /// Viewer ids, most recently used last.
+    order: Vec<u64>,
+}
+
+impl InUse {
+    fn use_viewer(&mut self, id: u64) {
+        self.order.retain(|known| *known != id);
+        self.order.push(id);
+        self.active = Some(id);
+    }
+}
+
 pub struct Hosted {
     pub id: String,
     pub agent: Agent,
@@ -47,6 +63,8 @@ pub struct Hosted {
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     buffer: Mutex<CatchUp>,
     viewers: Mutex<Vec<Viewer>>,
+    /// Lock order: viewers, then in_use.
+    in_use: Mutex<InUse>,
     tracker: Mutex<SessionTracker>,
     reported: Mutex<Option<(Status, Option<NeedsReason>)>>,
     /// Set once a close has started, so a second request does nothing and the session
@@ -128,6 +146,7 @@ impl Hosted {
                 modes: Modes::new(),
             }),
             viewers: Mutex::new(Vec::new()),
+            in_use: Mutex::new(InUse::default()),
             tracker: Mutex::new(parts.tracker),
             reported: Mutex::new(None),
             closing: AtomicBool::new(false),
@@ -144,6 +163,32 @@ impl Hosted {
     }
 
     /// Owner input from an attached client.
+    /// Input from an attached viewer: typing puts that viewer in use; the terminal's own
+    /// replies to the agent's queries do not.
+    pub fn input_from(&self, viewer_id: u64, bytes: &[u8], now_ms: u64) {
+        if !is_terminal_report(bytes) {
+            self.focus(viewer_id);
+        }
+        self.input(bytes, now_ms);
+    }
+
+    /// The viewer brought the session to the front: the terminal takes its size.
+    pub fn focus(&self, viewer_id: u64) {
+        let new_size = {
+            let viewers = lock(&self.viewers);
+            let Some(viewer) = viewers.iter().find(|viewer| viewer.id == viewer_id) else {
+                return;
+            };
+            let mut in_use = lock(&self.in_use);
+            let was = in_use.active;
+            in_use.use_viewer(viewer_id);
+            (was != Some(viewer_id)).then_some((viewer.cols, viewer.rows))
+        };
+        if let Some((cols, rows)) = new_size {
+            let _ = lock(&self.master).resize(size(cols, rows));
+        }
+    }
+
     pub fn input(&self, bytes: &[u8], now_ms: u64) {
         self.write_to_agent(bytes);
         if !is_terminal_report(bytes) {
@@ -254,8 +299,10 @@ impl Hosted {
 
     /// Adds a viewer: sends the catch-up buffer, then resizes the PTY so the agent
     /// redraws at the viewer's size.
+    /// Adds a viewer, which is then in use: the agent redraws at its size.
     pub fn attach(&self, viewer: Viewer) {
         let (cols, rows) = (viewer.cols, viewer.rows);
+        let id = viewer.id;
         {
             // Hold the buffer lock while registering so no output falls between the
             // catch-up copy and live forwarding.
@@ -272,39 +319,59 @@ impl Hosted {
                         .send(Outgoing::Frame(Frame::Output(chunk.to_vec())));
                 }
             }
-            lock(&self.viewers).push(viewer);
+            let viewers = &mut *lock(&self.viewers);
+            viewers.push(viewer);
+            lock(&self.in_use).use_viewer(id);
         }
         self.redraw_at(cols, rows);
         lock(&self.tracker).viewed();
     }
 
-    /// Removes a viewer. The agent then redraws at the size of the latest viewer still
-    /// attached, so a client that attached at another size leaves no misdrawn screen.
+    /// Removes a viewer. When it was in use, the most recently used viewer still attached
+    /// takes over and the agent redraws at its size, so no screen is left misdrawn.
     pub fn detach(&self, viewer_id: u64) {
-        let remaining = {
+        let next = {
             let mut viewers = lock(&self.viewers);
             let before = viewers.len();
             viewers.retain(|viewer| viewer.id != viewer_id);
             let removed = viewers.len() < before;
-            viewers
-                .last()
-                .filter(|_| removed)
-                .map(|viewer| (viewer.cols, viewer.rows))
+            let mut in_use = lock(&self.in_use);
+            in_use.order.retain(|known| *known != viewer_id);
+            if !removed || in_use.active.is_some_and(|active| active != viewer_id) {
+                None
+            } else {
+                let next = in_use
+                    .order
+                    .iter()
+                    .rev()
+                    .find_map(|id| viewers.iter().find(|viewer| viewer.id == *id))
+                    .or_else(|| viewers.last());
+                in_use.active = next.map(|viewer| viewer.id);
+                next.map(|viewer| (viewer.cols, viewer.rows))
+            }
         };
-        if let Some((cols, rows)) = remaining {
+        if let Some((cols, rows)) = next {
             self.redraw_at(cols, rows);
         }
     }
 
+    /// A viewer's new size; it applies now only when that viewer is in use, and is kept
+    /// for when it is (add-remote-gateway D6).
     pub fn resize(&self, viewer_id: u64, cols: u16, rows: u16) {
-        if let Some(viewer) = lock(&self.viewers)
-            .iter_mut()
-            .find(|viewer| viewer.id == viewer_id)
-        {
+        let applies = {
+            let mut viewers = lock(&self.viewers);
+            let Some(viewer) = viewers.iter_mut().find(|viewer| viewer.id == viewer_id) else {
+                return;
+            };
             viewer.cols = cols;
             viewer.rows = rows;
+            lock(&self.in_use)
+                .active
+                .is_none_or(|active| active == viewer_id)
+        };
+        if applies {
+            let _ = lock(&self.master).resize(size(cols, rows));
         }
-        let _ = lock(&self.master).resize(size(cols, rows));
     }
 
     /// A same-size resize sends no SIGWINCH, so step through a different size to make

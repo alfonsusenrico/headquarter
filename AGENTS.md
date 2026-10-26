@@ -22,7 +22,7 @@ usage quota. Targets macOS and Linux.
   beside it) goes to the system Trash, Codex only through its own `archive` and
   `delete`; agy is never changed (`host/remove.rs`).
 
-Capabilities: database
+Capabilities: database, remote access
 Design surface: desktop application (session sidebar, terminal pane, quota footer)
 Language: UI text English; relative ages as `0m`, `1m`, `3h`, `2d`, `5w` (no seconds); times in local 12-hour format.
 
@@ -44,7 +44,8 @@ launched agents inherit it, and Claude Code then installs itself under it and re
 `~/.local/bin/claude`. Tests must not depend on, or run, what the test machine has installed: they run with
 their own `HOME`, config folder and `SHELL`, and with `HQ_SYSTEM_BIN_DIRS` empty, which replaces the
 system-wide folders discovery searches (Homebrew's, `/usr/local/bin`, Linux's); set it to a folder of
-stubs to test those.
+stubs to test those. Remote control tests run with `HQ_REMOTE_RELAYS=none` (direct addresses, no
+public relays); `HQ_REMOTE_PAIR_SECS` shortens the 2-minute pairing code.
 
 ## Architecture map
 
@@ -71,6 +72,12 @@ stubs to test those.
   history every 60 s (`HQ_HISTORY_INTERVAL_SECS` shortens it in tests), `host/outside.rs` links outside agents every 5 s,
   `host/close.rs` closes a session with the agent's own keys, and `host/usage.rs`
   reads usage only while a client shows it (`HQ_USAGE_INTERVAL_SECS` shortens the 5-minute Codex interval in tests).
+  `host/remote.rs` is remote control's gateway: off unless enabled, an iroh endpoint
+  on its own thread that passes each paired phone to `agentd.sock` as an ordinary
+  client through an allow-list (add-remote-gateway).
+- `crates/hq-remote`: remote control's connection, shared by the host's gateway and the
+  phone's core: binding the iroh endpoint (relays), pairing codes, and `hq-protocol`
+  frames over QUIC.
 - `crates/hq-client`: the host connection shared by the CLI and the app; it starts the
   host (`hq` beside the running executable) when none is running.
 - `crates/hq-cli`: the `hq` and `headquarter` executables. They are thin entry points
@@ -103,6 +110,11 @@ stubs to test those.
 - Licence hygiene: do not copy code from AGPL or GPL projects (Warp, Zed's `terminal`
   crate, cmux). Ideas and wire formats only; dependencies must be MIT, Apache-2.0, or
   similarly permissive.
+- Remote access: a phone reaches only what `allowed()` in `host/remote.rs` lists, and
+  the host enforces it; a new request is decided there (the match is exhaustive). The
+  host key (`remote.key`, mode 600), pairing secrets, typed input and terminal output
+  never reach logs. Relays default to n0's public ones; a personal relay is a setting,
+  never a product default (owner, 2026-10-26).
 
 - GPUI comes from the `gpui-pre` snapshot crates, pinned with `=`; upgrade them
   together and re-run the app. `gpui-pre-macos` is patched in `vendor/`
