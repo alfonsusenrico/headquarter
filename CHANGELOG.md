@@ -2,6 +2,11 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.14-rc.1 (2026-10-26)
+
+- A release candidate that checks the new Android release job: this release carries a signed
+  `headquarter-android.apk` and its checksum. The full notes come with 0.1.14.
+
 ## 0.1.13 (2026-10-26)
 
 - Watch an update happen. A log under the steps shows the installer's checksum, each

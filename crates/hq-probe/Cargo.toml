@@ -1,6 +1,6 @@
 [package]
 name = "hq-probe"
-version = "0.1.13"
+version = "0.1.14-rc.1"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ repository.workspace = true
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 crossterm = "0.29.0"
-hq-signals = { version = "0.1.13", path = "../hq-signals" }
+hq-signals = { version = "0.1.14-rc.1", path = "../hq-signals" }
 portable-pty = "0.9.0"
 serde_json = "1.0.154"
 signal-hook = "0.4.5"
