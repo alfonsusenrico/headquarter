@@ -12,6 +12,10 @@ All notable changes to Headquarter. Versions follow [Semantic Versioning](https:
   drags, clicks, the mouse wheel and multi-line pastes stopped going to Claude Code.
 - Working in a session's shell panel counts as watching it: no unread flag and no
   notification for the session you are in.
+- "working" and "starting" in the sidebar now line up on the right with the other rows'
+  status glyphs.
+- See what's new before you update. The pill now reads "Update Headquarter v0.1.12",
+  and clicking it lists the changes in every release since your installed version.
 - Restart with the Update pill: the new host brings the session fixes, and your
   sessions start again on their own.
 
