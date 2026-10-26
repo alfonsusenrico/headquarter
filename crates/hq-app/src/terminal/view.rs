@@ -256,7 +256,6 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
-        let mode = self.mode(cx);
         let press = KeyPress {
             key: &keystroke.key,
             control: modifiers.control,
@@ -264,15 +263,33 @@ impl TerminalView {
             shift: modifiers.shift,
             platform: modifiers.platform,
         };
-        let modes = KeyModes {
-            app_cursor: mode.contains(TermMode::APP_CURSOR),
-            alt_is_meta: self.options.alt_is_meta,
-        };
-        if let Some(bytes) = keys::encode(press, modes, &self.options.bindings) {
-            self.session
-                .update(cx, |session, cx| session.input(&bytes, cx));
+        if self.send_key(press, cx) {
             cx.stop_propagation();
         }
+    }
+
+    /// Tab and Shift-Tab, which arrive as actions (`terminal::bind_keys`).
+    fn send_tab(&mut self, shift: bool, cx: &mut Context<Self>) {
+        let press = KeyPress {
+            key: "tab",
+            shift,
+            ..KeyPress::default()
+        };
+        self.send_key(press, cx);
+    }
+
+    /// Sends what `press` encodes to; false when it is not the terminal's key.
+    fn send_key(&mut self, press: KeyPress<'_>, cx: &mut Context<Self>) -> bool {
+        let modes = KeyModes {
+            app_cursor: self.mode(cx).contains(TermMode::APP_CURSOR),
+            alt_is_meta: self.options.alt_is_meta,
+        };
+        let Some(bytes) = keys::encode(press, modes, &self.options.bindings) else {
+            return false;
+        };
+        self.session
+            .update(cx, |session, cx| session.input(&bytes, cx));
+        true
     }
 
     /// Copy and paste: Cmd-C/Cmd-V on macOS, Ctrl-Shift-C/V elsewhere.
@@ -664,9 +681,11 @@ impl Render for TerminalView {
             .size_full()
             .bg(see_through)
             .track_focus(&self.focus)
-            .key_context("Terminal")
+            .key_context(super::CONTEXT)
             .on_action(cx.listener(|this, _: &crate::menus::Copy, _, cx| this.copy_selection(cx)))
             .on_action(cx.listener(|this, _: &crate::menus::Paste, _, cx| this.paste_clipboard(cx)))
+            .on_action(cx.listener(|this, _: &super::SendTab, _, cx| this.send_tab(false, cx)))
+            .on_action(cx.listener(|this, _: &super::SendShiftTab, _, cx| this.send_tab(true, cx)))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_scroll_wheel(cx.listener(Self::scroll))

@@ -31,6 +31,7 @@ fn main() {
         .with_assets(gpui_kit_assets::Assets)
         .run(move |cx| {
             gpui_component::init(cx);
+            terminal::bind_keys(cx);
             menus::install(cx);
             // A build without a platform text system draws no text and says nothing; make
             // that loud (the `font-kit` feature on macOS).
