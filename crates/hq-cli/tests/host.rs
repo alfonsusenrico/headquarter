@@ -87,6 +87,8 @@ impl TestEnv {
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             // Never run the owner's real login shell from tests.
             .env("SHELL", "/nonexistent/shell")
+            // Nor an agent installed system-wide (Homebrew, /usr/local/bin).
+            .env("HQ_SYSTEM_BIN_DIRS", "")
             .env("HQ_IDLE_EXIT_SECS", "60")
             .env_remove("HQ_SESSION");
         command
@@ -870,21 +872,19 @@ fn failures_are_specific_and_record_nothing() {
     let mut env = TestEnv::new("failures");
     env.start_daemon();
     let mut conn = env.connect();
-    if let Some(missing) = absent_agent(&[Agent::Agy]) {
-        match conn.request(&Request::New {
-            agent: missing,
-            cwd: env.work().to_string_lossy().into_owned(),
-            args: vec![],
-            term: None,
-            name: None,
-            group: None,
-        }) {
-            Response::Error { code, message } => {
-                assert_eq!(code, ErrorCode::AgentNotFound);
-                assert!(message.contains(missing.binary()));
-            }
-            other => panic!("unexpected {other:?}"),
+    match conn.request(&Request::New {
+        agent: Agent::Codex,
+        cwd: env.work().to_string_lossy().into_owned(),
+        args: vec![],
+        term: None,
+        name: None,
+        group: None,
+    }) {
+        Response::Error { code, message } => {
+            assert_eq!(code, ErrorCode::AgentNotFound);
+            assert!(message.contains(Agent::Codex.binary()));
         }
+        other => panic!("unexpected {other:?}"),
     }
     env.stub("agy", INTERACTIVE_STUB);
     match conn.request(&Request::New {
@@ -2201,15 +2201,13 @@ fn agents_are_found_without_the_shell_path() {
         Response::Created { .. }
     ));
 
-    if let Some(missing) = absent_agent(&[Agent::Agy]) {
-        match env.try_create(missing) {
-            Response::Error { code, message } => {
-                assert_eq!(code, ErrorCode::AgentNotFound);
-                assert!(message.contains("Searched:"), "{message}");
-                assert!(message.contains("/usr/bin"), "{message}");
-            }
-            other => panic!("unexpected {other:?}"),
+    match env.try_create(Agent::Codex) {
+        Response::Error { code, message } => {
+            assert_eq!(code, ErrorCode::AgentNotFound);
+            assert!(message.contains("Searched:"), "{message}");
+            assert!(message.contains("/usr/bin"), "{message}");
         }
+        other => panic!("unexpected {other:?}"),
     }
 }
 
@@ -2255,9 +2253,16 @@ fn agents_report_and_retired_window_setting() {
         ".local/bin/claude",
         "if [ \"$1\" = --version ]; then echo '9.9.9 (Claude Code)'; fi\n",
     );
+    // A stand-in for a system-wide folder such as Homebrew's.
+    let system = env.root.join("system");
+    std::fs::create_dir_all(&system).unwrap();
+    let gemini = system.join("gemini");
+    std::fs::write(&gemini, "#!/bin/sh\necho 0.60.0\n").unwrap();
+    std::fs::set_permissions(&gemini, std::fs::Permissions::from_mode(0o755)).unwrap();
     let output = env
         .command()
         .env("PATH", "/usr/bin:/bin")
+        .env("HQ_SYSTEM_BIN_DIRS", &system)
         .args(["agents", "--json"])
         .output()
         .unwrap();
@@ -2283,6 +2288,18 @@ fn agents_report_and_retired_window_setting() {
             .ends_with("home/.local/bin/claude")
     );
     assert_eq!(agent("opencode")["installed"], false);
+    assert_eq!(
+        agent("gemini")["version"],
+        "0.60.0",
+        "found in the system folder"
+    );
+    assert_eq!(agent("codex")["installed"], false);
+    for folder in [".codex", ".gemini"] {
+        assert!(
+            !env.root.join("home").join(folder).exists(),
+            "an agent installed on this machine ran and wrote {folder}"
+        );
+    }
     assert_eq!(report["login_shell_path"], "unavailable");
     assert!(report["platform"]["os"].is_string());
 
@@ -2542,34 +2559,6 @@ fn sidebar_membership_and_groups() {
     let everything = String::from_utf8_lossy(&env.hq(&["ls", "--all"]).stdout).into_owned();
     assert!(everything.contains("  claude-convpast"), "{everything}");
     assert!(everything.contains("* agy-1"), "{everything}");
-}
-
-/// A hostable agent not installed in any system-wide folder discovery searches, so a
-/// "not found" check never starts a real agent. Folders under the owner's home do not
-/// matter: tests run with their own `HOME`. `None` (a machine with every agent
-/// installed system-wide) skips the check.
-fn absent_agent(exclude: &[Agent]) -> Option<Agent> {
-    const SYSTEM_FOLDERS: &[&str] = &[
-        "/usr/local/bin",
-        "/usr/bin",
-        "/bin",
-        "/opt/homebrew/bin",
-        "/home/linuxbrew/.linuxbrew/bin",
-        "/snap/bin",
-        "/var/lib/flatpak/exports/bin",
-    ];
-    let absent = [Agent::Codex, Agent::Claude, Agent::Agy]
-        .into_iter()
-        .filter(|agent| !exclude.contains(agent))
-        .find(|agent| {
-            SYSTEM_FOLDERS
-                .iter()
-                .all(|folder| !Path::new(folder).join(agent.binary()).exists())
-        });
-    if absent.is_none() {
-        eprintln!("every agent is installed system-wide here; skipping the not-found check");
-    }
-    absent
 }
 
 /// Codex usage is read on request and while a client shows usage, never otherwise;

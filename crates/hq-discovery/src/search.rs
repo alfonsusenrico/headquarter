@@ -57,6 +57,10 @@ pub struct SearchContext {
     pub home: Option<PathBuf>,
     pub process_path: Option<OsString>,
     pub login_path: Option<String>,
+    /// Replaces the system-wide folders (Homebrew's, `/usr/local/bin`, Linux's system
+    /// folders) when set, from `HQ_SYSTEM_BIN_DIRS`: tests must not find, or run, what
+    /// the machine has installed. Empty searches none.
+    pub system_folders: Option<Vec<PathBuf>>,
 }
 
 impl SearchContext {
@@ -68,6 +72,11 @@ impl SearchContext {
                 .map(PathBuf::from),
             process_path: std::env::var_os("PATH"),
             login_path,
+            system_folders: std::env::var_os("HQ_SYSTEM_BIN_DIRS").map(|dirs| {
+                std::env::split_paths(&dirs)
+                    .filter(|dir| !dir.as_os_str().is_empty())
+                    .collect()
+            }),
         }
     }
 
@@ -94,6 +103,21 @@ impl SearchContext {
                 folders.push(node);
             }
         }
+        if self.platform.os == Os::Linux
+            && let Some(home) = &self.home
+        {
+            folders.push(home.join(".local/share/flatpak/exports/bin"));
+        }
+        match &self.system_folders {
+            Some(system) => folders.extend(system.iter().cloned()),
+            None => folders.extend(self.platform_folders()),
+        }
+        folders
+    }
+
+    /// The system-wide install folders of this platform.
+    fn platform_folders(&self) -> Vec<PathBuf> {
+        let mut folders = Vec::new();
         if let Some(prefix) = &self.platform.homebrew {
             folders.push(prefix.join("bin"));
         }
@@ -102,9 +126,6 @@ impl SearchContext {
             folders.push(PathBuf::from("/usr/bin"));
             folders.push(PathBuf::from("/snap/bin"));
             folders.push(PathBuf::from("/var/lib/flatpak/exports/bin"));
-            if let Some(home) = &self.home {
-                folders.push(home.join(".local/share/flatpak/exports/bin"));
-            }
         }
         folders
     }
@@ -307,6 +328,7 @@ mod tests {
                 home: Some(self.root.join("home")),
                 process_path: Some(process_path.into()),
                 login_path: login_path.map(str::to_owned),
+                system_folders: Some(vec![self.root.join("system")]),
             }
         }
     }
@@ -376,7 +398,26 @@ mod tests {
                 .searched
                 .contains(&fixture.root.join("home/.local/bin"))
         );
-        assert!(report.searched.contains(&PathBuf::from("/usr/bin")));
+        assert!(report.searched.contains(&fixture.root.join("system")));
+    }
+
+    #[test]
+    fn linux_system_folders_are_searched_unless_replaced() {
+        let fixture = Fixture::new("linux");
+        let context = SearchContext {
+            system_folders: None,
+            ..fixture.context("/nonexistent", None)
+        };
+        let folders = context.known_folders();
+        for system in [
+            "/usr/local/bin",
+            "/usr/bin",
+            "/snap/bin",
+            "/var/lib/flatpak/exports/bin",
+        ] {
+            assert!(folders.contains(&PathBuf::from(system)), "{system}");
+        }
+        assert!(folders.contains(&fixture.root.join("home/.local/share/flatpak/exports/bin")));
     }
 
     #[test]
@@ -434,6 +475,31 @@ mod tests {
         let folders = fixture.context("/x", None).known_folders();
         assert!(folders.contains(&fixture.root.join("home/.nvm/versions/node/v22.1.0/bin")));
         assert!(!folders.contains(&fixture.root.join("home/.nvm/versions/node/v18.20.0/bin")));
+    }
+
+    #[test]
+    fn system_folders_can_be_replaced_and_home_folders_stay() {
+        let fixture = Fixture::new("system");
+        let gemini = fixture.executable("system/gemini", "echo 0.1");
+        let context = fixture.context("/nonexistent", None);
+        let folders = context.known_folders();
+        assert!(folders.contains(&fixture.root.join("home/.local/bin")));
+        assert!(
+            !folders.contains(&PathBuf::from("/usr/local/bin")),
+            "the platform's folders are replaced"
+        );
+        let report = search(&context, agent("gemini"), None);
+        assert_eq!(report.used_path(), Some(gemini.as_path()));
+
+        let none = SearchContext {
+            system_folders: Some(Vec::new()),
+            ..context
+        };
+        assert!(
+            none.known_folders()
+                .iter()
+                .all(|dir| dir.starts_with(&fixture.root))
+        );
     }
 
     #[test]

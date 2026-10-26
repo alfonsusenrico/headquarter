@@ -41,9 +41,10 @@ The Rust toolchain is pinned in `rust-toolchain.toml`. Integration tests start r
 processes with stub agents in `/tmp/hqh-*`; socket paths must stay under about 100 bytes.
 Isolate runs with real agents through `HQ_DATA_DIR` and `HQ_CONFIG_DIR`, never `XDG_DATA_HOME`:
 launched agents inherit it, and Claude Code then installs itself under it and repoints
-`~/.local/bin/claude`. Tests must not depend on what the test machine has installed: they run with their own
-`HOME`, config folder and `SHELL`, and "not found" checks pick an agent absent from
-system folders (`absent_agent`).
+`~/.local/bin/claude`. Tests must not depend on, or run, what the test machine has installed: they run with
+their own `HOME`, config folder and `SHELL`, and with `HQ_SYSTEM_BIN_DIRS` empty, which replaces the
+system-wide folders discovery searches (Homebrew's, `/usr/local/bin`, Linux's); set it to a folder of
+stubs to test those.
 
 ## Architecture map
 
