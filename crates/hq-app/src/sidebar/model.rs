@@ -109,6 +109,12 @@ impl Row {
         matches!(self.glyph, Glyph::Working | Glyph::Starting)
     }
 
+    /// Whether the row ends with a cell for its glyph. A breathing word has no glyph, so
+    /// it ends the row itself, right-aligned where the glyphs end (owner, 2026-10-26).
+    pub fn glyph_cell(&self) -> bool {
+        !self.breathing()
+    }
+
     /// In the pinned "Needs you" section.
     pub fn pinned(&self) -> bool {
         self.section == Section::Pinned
@@ -807,8 +813,10 @@ mod tests {
             assert_eq!(row.glyph, Glyph::Starting, "{id}");
             assert_eq!(row.status_word(), Some("starting"));
             assert!(row.breathing() && !row.dimmed());
+            assert!(!row.glyph_cell(), "the word ends the row");
         }
         assert_eq!(rows(&items, "ready")[0].glyph, Glyph::Idle);
+        assert!(rows(&items, "ready")[0].glyph_cell());
         assert!(in_motion(&items));
     }
 

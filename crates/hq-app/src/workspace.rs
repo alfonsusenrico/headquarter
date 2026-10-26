@@ -1774,7 +1774,9 @@ impl Workspace {
                     .when(row.dimmed(), |age| age.opacity(DIMMED))
                     .child(row.age.clone()),
             })
-            .child(glyph::status(row.glyph, chrome))
+            .when(row.glyph_cell(), |line| {
+                line.child(glyph::status(row.glyph, chrome))
+            })
             .child(self.hover_close(
                 &row_key,
                 ROW_GAP,
