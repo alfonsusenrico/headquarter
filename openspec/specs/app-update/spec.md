@@ -10,7 +10,7 @@ The system SHALL check for a newer release of Headquarter at app start, every 6 
 
 #### Scenario: Newer release
 - **WHEN** the app runs 0.1.8 and the latest release is 0.1.9
-- **THEN** the sidebar shows "Update 0.1.9" at its bottom
+- **THEN** the sidebar shows "Update Headquarter v0.1.9" at its bottom
 
 #### Scenario: Up to date
 - **WHEN** the owner chooses Check for Updates… and the latest release is the running version
@@ -21,15 +21,15 @@ The system SHALL check for a newer release of Headquarter at app start, every 6 
 - **THEN** nothing is shown, and the next check runs as planned
 
 ### Requirement: Update notice
-The system SHALL keep the update pill in the sidebar until the update is installed, and SHALL open from it a window naming the new version with Update Now and Later, where Later only closes the window.
+The system SHALL keep the update pill in the sidebar until the update is installed, and SHALL open from it, and from Check for Updates… when it finds a newer release, a What's new page in the pane naming the installed version and the new one, with Later and Update Now at the same width, where Later returns to the pane shown before.
 
 #### Scenario: Later
-- **WHEN** the owner opens the pill and presses Later
-- **THEN** the window closes and the pill stays
+- **WHEN** the owner opens the pill and presses Later or Escape
+- **THEN** the pane shows the session it showed before, with its focus, and the pill stays
 
 #### Scenario: Not installed by the installer
 - **WHEN** a newer release exists and the running app is not one the installer installed
-- **THEN** the window names the version and offers the release page instead of Update Now
+- **THEN** the page names the version and offers the release page instead of Update Now
 
 ### Requirement: Installing an update
 The system SHALL install an update with that release's own installer after checking it against the checksum GitHub publishes for it, SHALL show the steps download, verify, install and restart as they happen, and SHALL leave the installed version unchanged and say why when any step fails.
@@ -70,3 +70,14 @@ The system SHALL offer the update restart when the host it connects to runs an o
 #### Scenario: Installed with the install line
 - **WHEN** the owner installed a newer version with the install line and reopens the app while the old host still runs
 - **THEN** the sidebar shows "Restart to finish update", which offers the restart
+
+### Requirement: Release notes since the installed version
+The system SHALL list on the What's new page the notes of every published release after the installed version up to the new one, newest first, each with its version and date and each change with its first sentence in bold, and SHALL offer the releases page on GitHub when the notes cannot be loaded.
+
+#### Scenario: A release skipped
+- **WHEN** the app runs 0.1.10 and the latest release is 0.1.12
+- **THEN** the page lists 0.1.12, marked latest, then 0.1.11, each with its changes
+
+#### Scenario: Notes unavailable
+- **WHEN** GitHub's release list cannot be read
+- **THEN** the page still offers Update Now and says the notes couldn't be loaded, with a link to the release notes on GitHub

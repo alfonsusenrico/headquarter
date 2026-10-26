@@ -846,6 +846,7 @@ impl Workspace {
         let Some(info) = self.session(id).cloned() else {
             return;
         };
+        self.leave_whats_new();
         self.selected = Some(info.id.clone());
         if let Some(path) = crate::app_state::path() {
             // A lost write only means the next launch shows nothing in particular.

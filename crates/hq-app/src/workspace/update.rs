@@ -1,20 +1,39 @@
 //! The update pill and window (add-in-app-update): checking for a newer release, the
-//! window that installs it with its steps, the question about busy sessions, and the
-//! restart onto the new version. What talks to GitHub and runs the installer is in
-//! `crate::update`.
+//! What's new page in the pane with every release since the installed one
+//! (add-update-notes), the window that installs it with its steps, the question about
+//! busy sessions, and the restart onto the new version. What talks to GitHub and runs
+//! the installer is in `crate::update`.
 
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
+use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, AsyncWindowContext, Context, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, StatefulInteractiveElement, Styled, Task, WeakEntity, Window, div, px,
+    AnyElement, AsyncWindowContext, Context, Focusable, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, ParentElement, StatefulInteractiveElement, Styled, Task, WeakEntity,
+    Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use hq_client::HostPaths;
 
-use super::{Workspace, overlay};
+use super::{Pane, Workspace, overlay};
 use crate::terminal::view::hsla;
-use crate::update::{self, Installed, Step, Version};
+use crate::update::{self, Installed, ReleaseNotes, Step, Version};
+
+/// Buttons shown together share this width, so a pair reads as one choice (owner,
+/// 2026-10-26).
+const BUTTON_WIDTH: f32 = 112.0;
+/// The What's new page keeps its text to a readable width.
+const NOTES_WIDTH: f32 = 720.0;
+const RELEASES_PAGE: &str = "https://github.com/alfonsusenrico/headquarter/releases";
+
+/// The notes of the releases since the installed one, for the available update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Notes {
+    NotLoaded,
+    Loading,
+    Loaded(Vec<ReleaseNotes>),
+    Unavailable,
+}
 
 /// Where an update stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +58,9 @@ pub(super) struct Updates {
     host_behind: bool,
     /// The update window is open.
     open: bool,
+    /// The What's new page shows in the pane, over the session it covers.
+    page: bool,
+    notes: Notes,
     phase: Phase,
     /// What a manual check found, when it found nothing to update.
     checked: Option<String>,
@@ -55,6 +77,8 @@ impl Updates {
             available: None,
             host_behind: false,
             open: false,
+            page: false,
+            notes: Notes::NotLoaded,
             phase: Phase::Offer,
             checked: None,
             installed: update::installed_copy(),
@@ -98,14 +122,17 @@ impl Workspace {
             .spawn(async move { update::latest() });
         cx.spawn_in(window, async move |this, cx| {
             let found = task.await;
-            let _ = this.update_in(cx, |this, _, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 let running = Version::running();
                 match found {
                     Ok(latest) if latest > running => {
+                        if this.updates.available != Some(latest) {
+                            this.updates.notes = Notes::NotLoaded;
+                        }
                         this.updates.available = Some(latest);
                         this.updates.checked = None;
                         if manual {
-                            this.updates.open = true;
+                            this.show_whats_new(window, cx);
                         }
                     }
                     Ok(_) if manual => {
@@ -154,7 +181,7 @@ impl Workspace {
     ) -> Option<AnyElement> {
         let label = match (&self.updates.phase, self.updates.available) {
             (Phase::Waiting, _) => "Restart to update".to_owned(),
-            (_, Some(version)) => format!("Update {version}"),
+            (_, Some(version)) => format!("Update Headquarter v{version}"),
             (_, None) if self.updates.host_behind => "Restart to finish update".to_owned(),
             _ => return None,
         };
@@ -175,12 +202,276 @@ impl Workspace {
                 .text_color(hsla(chrome.accent))
                 .cursor_pointer()
                 .child(if rail { "↑".to_owned() } else { label })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.updates.open = true;
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.updates.available.is_some() && this.updates.phase == Phase::Offer {
+                        this.show_whats_new(window, cx);
+                    } else {
+                        this.updates.open = true;
+                    }
                     cx.notify();
                 }))
                 .into_any_element(),
         )
+    }
+
+    /// Opens the What's new page over the shown session, loading the notes once.
+    pub(super) fn show_whats_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.updates.page = true;
+        self.updates.open = false;
+        window.focus(&self.pane_focus, cx);
+        if matches!(self.updates.notes, Notes::NotLoaded | Notes::Unavailable) {
+            self.load_notes(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Whether the What's new page covers the pane.
+    pub(super) fn whats_new_shown(&self) -> bool {
+        self.updates.page && self.updates.available.is_some()
+    }
+
+    /// Later: back to the session the page covered, with its focus.
+    pub(super) fn close_whats_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.updates.page = false;
+        match &self.pane {
+            Pane::Terminal { view, .. } => window.focus(&view.focus_handle(cx), cx),
+            Pane::Details(_) => window.focus(&self.pane_focus, cx),
+            Pane::Empty => window.focus(&self.sidebar_focus, cx),
+        }
+        cx.notify();
+    }
+
+    /// Opening a session from the sidebar leaves the page.
+    pub(super) fn leave_whats_new(&mut self) {
+        self.updates.page = false;
+    }
+
+    fn load_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(latest) = self.updates.available else {
+            return;
+        };
+        self.updates.notes = Notes::Loading;
+        let task = cx
+            .background_executor()
+            .spawn(async move { update::notes_since(Version::running(), latest) });
+        cx.spawn_in(window, async move |this, cx| {
+            let found = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.updates.available != Some(latest) {
+                    return;
+                }
+                this.updates.notes = match found {
+                    Ok(notes) if !notes.is_empty() => Notes::Loaded(notes),
+                    Ok(_) => Notes::Unavailable,
+                    Err(error) => {
+                        log::info!("release notes not loaded: {error:#}");
+                        Notes::Unavailable
+                    }
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The What's new page: the releases after the installed one, newest first, with
+    /// Later and Update Now.
+    pub(super) fn render_whats_new(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chrome = self.theme.chrome;
+        let Some(latest) = self.updates.available else {
+            return div().into_any_element();
+        };
+        let background = super::translucent(self.theme.palette.background, self.appearance.opacity);
+        let muted = hsla(chrome.muted);
+        let primary = match &self.updates.installed {
+            Some(_) => Button::new("whats-new-update")
+                .primary()
+                .w(px(BUTTON_WIDTH))
+                .label("Update Now")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.updates.open = true;
+                    this.begin_update(window, cx);
+                })),
+            None => {
+                // Not installed by the installer: the release page only (add-in-app-update D2).
+                let url = update::release_page(latest);
+                Button::new("whats-new-page")
+                    .primary()
+                    .w(px(BUTTON_WIDTH))
+                    .label("Open Release Page")
+                    .on_click(move |_, _, cx| cx.open_url(&url))
+            }
+        };
+        let top = div()
+            .flex_none()
+            .flex()
+            .items_end()
+            .gap(px(12.))
+            .px(px(36.))
+            .pt(px(22.))
+            .pb(px(16.))
+            .border_b_1()
+            .border_color(hsla(chrome.sidebar_line))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().text_size(px(12.5)).text_color(muted).child(format!(
+                        "Update available · Installed version: v{}",
+                        Version::running()
+                    )))
+                    .child(
+                        div()
+                            .text_size(px(22.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(format!("What's new in Headquarter v{latest}")),
+                    ),
+            )
+            .child(
+                Button::new("whats-new-later")
+                    .w(px(BUTTON_WIDTH))
+                    .label("Later")
+                    .on_click(cx.listener(|this, _, window, cx| this.close_whats_new(window, cx))),
+            )
+            .child(primary);
+        let link = |label: &'static str| {
+            div()
+                .id(label)
+                .mt(px(10.))
+                .text_size(px(13.))
+                .text_color(hsla(chrome.accent))
+                .cursor_pointer()
+                .hover(|style| style.underline())
+                .child(label)
+                .on_click(|_, _, cx| cx.open_url(RELEASES_PAGE))
+        };
+        let mut content = div()
+            .w_full()
+            .max_w(px(NOTES_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(26.))
+            .px(px(36.))
+            .pt(px(20.))
+            .pb(px(32.));
+        match &self.updates.notes {
+            Notes::NotLoaded | Notes::Loading => {
+                content =
+                    content.child(div().text_color(muted).child("Loading the release notes…"));
+            }
+            Notes::Unavailable => {
+                content = content
+                    .child(
+                        div()
+                            .text_color(muted)
+                            .child("The release notes couldn't be loaded."),
+                    )
+                    .child(link("Release notes on GitHub ↗"));
+            }
+            Notes::Loaded(releases) => {
+                for (index, release) in releases.iter().enumerate() {
+                    content = content.child(self.render_release(release, index == 0));
+                }
+                content = content.child(link("All releases on GitHub ↗"));
+            }
+        }
+        div()
+            .id("whats-new")
+            .track_focus(&self.pane_focus)
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(background)
+            .text_size(px(14.))
+            .text_color(hsla(chrome.text))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" {
+                    cx.stop_propagation();
+                    this.close_whats_new(window, cx);
+                }
+            }))
+            .child(top)
+            .child(
+                div()
+                    .id("whats-new-notes")
+                    .flex_1()
+                    .min_h(px(0.))
+                    .overflow_y_scroll()
+                    .child(content),
+            )
+            .into_any_element()
+    }
+
+    /// One release: its version and date over its changes, each headline in bold.
+    fn render_release(&self, release: &ReleaseNotes, latest: bool) -> AnyElement {
+        let chrome = self.theme.chrome;
+        let muted = hsla(chrome.muted);
+        let mut heading = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .pb(px(6.))
+            .border_b_1()
+            .border_color(hsla(chrome.sidebar_line))
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(format!("v{}", release.version)),
+            );
+        if latest {
+            heading = heading.child(
+                div()
+                    .px(px(7.))
+                    .rounded(px(999.))
+                    .border_1()
+                    .border_color(hsla(chrome.track))
+                    .text_size(px(11.5))
+                    .text_color(muted)
+                    .child("latest"),
+            );
+        }
+        heading = heading.child(div().flex_1()).children(
+            release
+                .date
+                .clone()
+                .map(|date| div().text_size(px(12.5)).text_color(muted).child(date)),
+        );
+        let changes = release.changes.iter().map(|change| {
+            div()
+                .flex()
+                .gap(px(10.))
+                .child(
+                    div()
+                        .flex_none()
+                        .mt(px(7.))
+                        .size(px(7.))
+                        .rounded(px(999.))
+                        .bg(hsla(chrome.accent)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(change.lead.clone()),
+                        )
+                        .when(!change.rest.is_empty(), |entry| {
+                            entry.child(div().text_color(muted).child(change.rest.clone()))
+                        }),
+                )
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(heading)
+            .children(changes)
+            .into_any_element()
     }
 
     /// Update Now, or Restart Now when only the restart is due: asks first while
@@ -362,6 +653,7 @@ impl Workspace {
         };
         let later = |label: &'static str| {
             Button::new("update-later")
+                .w(px(BUTTON_WIDTH))
                 .label(label)
                 .on_click(cx.listener(|this, _, _, cx| this.close_update_window(cx)))
         };
@@ -382,6 +674,7 @@ impl Workspace {
                     ));
                 buttons = buttons.child(later("Later")).child(
                     Button::new("update-restart")
+                        .w(px(BUTTON_WIDTH))
                         .primary()
                         .label("Restart Now")
                         .on_click(cx.listener(|this, _, window, cx| this.begin_update(window, cx))),
@@ -393,6 +686,7 @@ impl Workspace {
                 buttons = match &self.updates.installed {
                     Some(_) => buttons.child(
                         Button::new("update-now")
+                            .w(px(BUTTON_WIDTH))
                             .primary()
                             .label("Update Now")
                             .on_click(
@@ -408,6 +702,7 @@ impl Workspace {
                         ));
                         buttons.child(
                             Button::new("update-page")
+                                .w(px(BUTTON_WIDTH))
                                 .primary()
                                 .label("Open Release Page")
                                 .on_click(move |_, _, cx| cx.open_url(&url)),
@@ -433,6 +728,7 @@ impl Workspace {
                 buttons = buttons
                     .child(
                         Button::new("update-wait")
+                            .w(px(BUTTON_WIDTH))
                             .label("Wait")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.wait_for_idle(window, cx);
@@ -441,6 +737,7 @@ impl Workspace {
                     )
                     .child(
                         Button::new("update-restart-now")
+                            .w(px(BUTTON_WIDTH))
                             .danger()
                             .label("Restart Now")
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -469,6 +766,7 @@ impl Workspace {
                     )));
                 buttons = buttons.child(later("Close")).child(
                     Button::new("update-restart-waiting")
+                        .w(px(BUTTON_WIDTH))
                         .danger()
                         .label("Restart Now")
                         .on_click(cx.listener(|this, _, window, cx| {

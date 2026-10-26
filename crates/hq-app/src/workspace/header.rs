@@ -40,8 +40,12 @@ impl Workspace {
         }
     }
 
-    /// The pane: the session's header over its terminal or its details.
+    /// The pane: the session's header over its terminal or its details, or the What's
+    /// new page over both.
     pub(super) fn render_pane(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.whats_new_shown() {
+            return self.render_whats_new(cx);
+        }
         let body = self.render_pane_body(cx);
         let Some(session) = self.shown_id().and_then(|id| self.session(id)).cloned() else {
             return body;
