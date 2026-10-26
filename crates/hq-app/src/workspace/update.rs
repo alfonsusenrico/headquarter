@@ -17,7 +17,7 @@ use hq_client::HostPaths;
 
 use super::{Pane, Workspace, overlay};
 use crate::terminal::view::hsla;
-use crate::update::{self, Installed, ReleaseNotes, Step, Version};
+use crate::update::{self, Installed, LogLine, ReleaseNotes, Step, Version};
 
 /// Buttons shown together share this width, so a pair reads as one choice (owner,
 /// 2026-10-26).
@@ -25,6 +25,33 @@ const BUTTON_WIDTH: f32 = 112.0;
 /// The What's new page keeps its text to a readable width.
 const NOTES_WIDTH: f32 = 720.0;
 const RELEASES_PAGE: &str = "https://github.com/alfonsusenrico/headquarter/releases";
+/// The log box under the steps shows this many of the latest lines.
+const LOG_LINES: usize = 6;
+
+/// What the update has done so far, for the log under the steps (fix-update-progress):
+/// the app's own lines around the installer's notes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct UpdateLog {
+    before: Vec<LogLine>,
+    installer: Vec<LogLine>,
+    after: Vec<LogLine>,
+}
+
+impl UpdateLog {
+    fn lines(&self) -> impl Iterator<Item = &LogLine> {
+        self.before.iter().chain(&self.installer).chain(&self.after)
+    }
+}
+
+/// What the installer's thread reports.
+enum News {
+    /// The app fetched the installer and it matched this digest.
+    Checked(String),
+    /// The installer's step and notes so far.
+    Progress(Step, Vec<LogLine>),
+    Finished,
+    Failed(String),
+}
 
 /// The notes of the releases since the installed one, for the available update.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +95,7 @@ pub(super) struct Updates {
     installed: Option<Installed>,
     /// Restart as soon as the install ends, without waiting for busy sessions.
     restart_now: bool,
+    log: UpdateLog,
     _schedule: Option<Task<()>>,
 }
 
@@ -83,6 +111,7 @@ impl Updates {
             checked: None,
             installed: update::installed_copy(),
             restart_now: false,
+            log: UpdateLog::default(),
             _schedule: None,
         }
     }
@@ -502,37 +531,44 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.updates.phase = Phase::Running(Step::Download);
-        let (tx, mut rx) = unbounded::<Result<Option<Step>, String>>();
+        self.updates.log = UpdateLog {
+            before: vec![LogLine::doing(format!(
+                "Downloading the installer for v{version}"
+            ))],
+            ..UpdateLog::default()
+        };
+        let (tx, mut rx) = unbounded::<News>();
         std::thread::spawn(move || {
             let mut run = match update::start_install(version, &installed) {
                 Ok(run) => run,
                 Err(error) => {
-                    let _ = tx.unbounded_send(Err(format!("{error:#}")));
+                    let _ = tx.unbounded_send(News::Failed(format!("{error:#}")));
                     return;
                 }
             };
-            let _ = tx.unbounded_send(Ok(Some(Step::Verify)));
+            let _ = tx.unbounded_send(News::Checked(run.digest.clone()));
             loop {
                 let exited = run.child.try_wait();
                 let output = update::read_log(&run.log);
+                let progress =
+                    News::Progress(update::shown_step(&output), update::notes_in(&output));
+                let _ = tx.unbounded_send(progress);
                 match exited {
                     Ok(Some(status)) if status.success() => {
                         run.clean_up();
-                        let _ = tx.unbounded_send(Ok(None));
+                        let _ = tx.unbounded_send(News::Finished);
                         return;
                     }
                     Ok(Some(_)) => {
                         run.clean_up();
-                        let _ = tx.unbounded_send(Err(update::failure_in(&output)));
+                        let _ = tx.unbounded_send(News::Failed(update::failure_in(&output)));
                         return;
                     }
-                    Ok(None) => {
-                        if let Some(step) = update::step_in(&output) {
-                            let _ = tx.unbounded_send(Ok(Some(step)));
-                        }
-                    }
+                    Ok(None) => {}
                     Err(error) => {
-                        let _ = tx.unbounded_send(Err(format!("the installer was lost: {error}")));
+                        let _ = tx.unbounded_send(News::Failed(format!(
+                            "the installer was lost: {error}"
+                        )));
                         return;
                     }
                 }
@@ -545,9 +581,18 @@ impl Workspace {
                 while let Some(news) = rx.next().await {
                     let alive = this.update_in(cx, |this, window, cx| {
                         match news {
-                            Ok(Some(step)) => this.updates.phase = Phase::Running(step),
-                            Ok(None) => this.installed_update(window, cx),
-                            Err(reason) => this.updates.phase = Phase::Failed(reason),
+                            News::Checked(digest) => {
+                                this.updates.log.before.push(LogLine::done(format!(
+                                    "The installer matches GitHub's checksum (sha256 {})",
+                                    update::short_digest(&digest)
+                                )));
+                            }
+                            News::Progress(step, notes) => {
+                                this.updates.phase = Phase::Running(step);
+                                this.updates.log.installer = notes;
+                            }
+                            News::Finished => this.installed_update(window, cx),
+                            News::Failed(reason) => this.updates.phase = Phase::Failed(reason),
                         }
                         cx.notify();
                     });
@@ -592,6 +637,9 @@ impl Workspace {
     fn restart_for_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.updates.phase = Phase::Restarting;
         self.updates.open = true;
+        self.updates.log.after.push(LogLine::doing(
+            "Stopping the background host and its sessions",
+        ));
         let app = self
             .updates
             .installed
@@ -750,16 +798,18 @@ impl Workspace {
             (Phase::Running(step), version) => {
                 body = body
                     .child(heading(match version {
-                        Some(version) => format!("Updating to {version}"),
+                        Some(version) => format!("Updating to v{version}"),
                         None => "Updating".to_owned(),
                     }))
-                    .child(self.render_steps(*step));
+                    .child(self.render_steps(*step))
+                    .children(self.render_log());
             }
             (Phase::Waiting, _) => {
                 let count = update::busy(&self.sessions).len();
                 body = body
                     .child(heading("Update installed".to_owned()))
                     .child(self.render_steps(Step::Restart))
+                    .children(self.render_log())
                     .child(muted(format!(
                         "Waiting for {count} busy session{} before restarting.",
                         if count == 1 { "" } else { "s" }
@@ -778,12 +828,14 @@ impl Workspace {
             (Phase::Restarting, _) => {
                 body = body
                     .child(heading("Restarting…".to_owned()))
-                    .child(self.render_steps(Step::Restart));
+                    .child(self.render_steps(Step::Restart))
+                    .children(self.render_log());
             }
             (Phase::Failed(reason), _) => {
                 body = body
                     .child(heading("The update did not finish".to_owned()))
                     .child(div().text_color(hsla(chrome.amber)).child(reason.clone()))
+                    .children(self.render_log())
                     .child(muted("The installed version is unchanged.".to_owned()));
                 buttons = buttons.child(later("Close"));
             }
@@ -803,7 +855,7 @@ impl Workspace {
                 .child(
                     div()
                         .id("update-window")
-                        .w(px(400.))
+                        .w(px(480.))
                         .flex()
                         .flex_col()
                         .gap(px(16.))
@@ -824,6 +876,51 @@ impl Workspace {
     }
 
     /// Download, verify, install and restart, each done, running or still to come.
+    /// The latest lines of the update's log, newest at the bottom and brightest; `None`
+    /// before anything happened.
+    fn render_log(&self) -> Option<AnyElement> {
+        let chrome = self.theme.chrome;
+        let lines: Vec<&LogLine> = self.updates.log.lines().collect();
+        let last = lines.len().checked_sub(1)?;
+        let shown = lines
+            .iter()
+            .enumerate()
+            .skip(lines.len().saturating_sub(LOG_LINES));
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .h(px(132.))
+                .overflow_hidden()
+                .justify_end()
+                .px(px(12.))
+                .py(px(10.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(hsla(chrome.sidebar_line))
+                .bg(super::translucent(self.theme.palette.background, 1.0))
+                .font_family(self.options.font_family.clone())
+                .text_size(px(12.))
+                .line_height(px(19.))
+                .children(shown.map(|(index, line)| {
+                    let color = if index == last {
+                        chrome.text
+                    } else {
+                        chrome.muted
+                    };
+                    div()
+                        .flex()
+                        .gap(px(6.))
+                        .text_color(hsla(color))
+                        .when(line.done, |row| {
+                            row.child(div().flex_none().text_color(hsla(chrome.accent)).child("✓"))
+                        })
+                        .child(div().min_w_0().child(line.text.clone()))
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn render_steps(&self, current: Step) -> impl IntoElement {
         let chrome = self.theme.chrome;
         let reached = Step::ALL

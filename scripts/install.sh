@@ -11,7 +11,8 @@
 #   HQ_INSTALL_DIR   where the commands go (default ~/.local/bin)
 #   HQ_VERSION       a release such as 0.1.0 (default: the latest)
 #   HQ_INSTALL_FROM  a folder holding the release archives, instead of downloading
-#   HQ_PROGRESS      1 adds a "progress <step>" line per step, for the app's updater
+#   HQ_PROGRESS      1 adds, for the app's updater, a "progress <step>" line per step and a
+#                    "note [ok] <text>" line per file it fetches, checks or installs
 set -eu
 
 REPO=alfonsusenrico/headquarter
@@ -28,6 +29,17 @@ say() { printf '%s\n' "$*"; }
 fail() { printf 'headquarter install: %s\n' "$*" >&2; exit 1; }
 progress() {
   if [ "${HQ_PROGRESS:-}" = 1 ]; then say "progress $*"; fi
+}
+# A line for the updater's log; "ok" first marks something done.
+note() {
+  if [ "${HQ_PROGRESS:-}" = 1 ]; then say "note $*"; fi
+}
+# $1 with the home folder written as ~.
+home_path() {
+  case $1 in
+    "$HOME"/*) say "~${1#"$HOME"}" ;;
+    *) say "$1" ;;
+  esac
 }
 
 target() {
@@ -55,6 +67,7 @@ sha256() {
 
 # Puts archive $1 and its checksum file into folder $2.
 fetch() {
+  note "Downloading $1"
   if [ -n "${HQ_INSTALL_FROM:-}" ]; then
     cp "$HQ_INSTALL_FROM/$1" "$HQ_INSTALL_FROM/$1.sha256" "$2/" ||
       fail "$1 or its checksum is missing from $HQ_INSTALL_FROM"
@@ -75,6 +88,7 @@ verify() {
   actual=$(sha256 "$1")
   [ "$expected" = "$actual" ] ||
     fail "$(basename "$1") does not match its checksum; nothing was installed"
+  note ok "$(basename "$1") matches its checksum"
 }
 
 # The path of the file named $2 inside the unpacked archive folder $1.
@@ -151,9 +165,11 @@ sign_bundle() {
     security unlock-keychain -p "" "$SIGNING_KEYCHAIN" &&
     codesign --force --deep --keychain "$SIGNING_KEYCHAIN" --sign "$SIGNING_NAME" "$1" >/dev/null 2>&1; then
     record "$SIGNING_KEYCHAIN"
+    signed="signed by this Mac"
     return
   fi
   say "Could not make a signing certificate; the app is signed ad hoc and macOS will not show its notifications."
+  signed="signed ad hoc, so macOS will not show its notifications"
   codesign --force --deep --sign - "$1" >/dev/null 2>&1 || fail "cannot sign the app bundle (codesign)"
 }
 
@@ -189,6 +205,7 @@ EOF
   rm -rf "$BUNDLE"
   mv "$BUNDLE.new" "$BUNDLE"
   record "$BUNDLE"
+  note ok "Installed $(home_path "$BUNDLE"), $signed"
   # Tells Launch Services about this copy now, so Spotlight and the notification
   # centre find its name and icon here. Best effort: macOS also finds the app later.
   "$LSREGISTER" -f "$BUNDLE" >/dev/null 2>&1 ||
@@ -216,6 +233,7 @@ Categories=Development;TerminalEmulator;
 Terminal=false
 EOF
   record "$entry"
+  note ok "Installed $(home_path "$BIN_DIR/headquarter-app") with its icons and menu entry"
 }
 
 # Names the package for each runtime library the app needs and the system lacks.
@@ -276,6 +294,7 @@ install() {
   : >"$MANIFEST.new"
   put "$(find_in "$work/hq-cli" hq)" "$BIN_DIR/hq"
   put "$(find_in "$work/hq-cli" headquarter)" "$BIN_DIR/headquarter"
+  note ok "Installed $(home_path "$BIN_DIR/hq") and $(home_path "$BIN_DIR/headquarter")"
   case $target in
     *apple-darwin) install_mac_app "$version" "$work" ;;
     *) install_linux_app "$work/hq-app" ;;
