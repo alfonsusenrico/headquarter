@@ -80,7 +80,7 @@ The system SHALL offer an Open sessions window (the sidebar's command field, Cmd
 - **THEN** the command fails naming the unknown one and the sidebar is unchanged
 
 ### Requirement: Status by shape
-The system SHALL mark needs you, idle not read yet, and idle with glyphs that differ in shape as well as colour: an amber ring, a filled speech bubble with a dot, and an outlined speech bubble. It SHALL mark working with "working" fading in and out and no glyph. It SHALL mark inactive with a crescent moon and a dimmed title and age, and a session starting with the host with "starting" fading in and out. It SHALL show idle-not-read-yet sessions with a bold title until the owner has seen them.
+The system SHALL mark needs you, idle not read yet, and idle with glyphs that differ in shape as well as colour: an amber ring, a filled speech bubble with a dot, and an outlined speech bubble. It SHALL mark working with "working" fading in and out and no glyph, right-aligned at the end of the row where the glyphs end. It SHALL mark inactive with a crescent moon and a dimmed title and age, and a session starting with the host with "starting" fading in and out, right-aligned like "working". It SHALL show idle-not-read-yet sessions with a bold title until the owner has seen them.
 
 #### Scenario: Finished while away
 - **WHEN** a sidebar session finishes a turn while another session is shown
@@ -100,7 +100,7 @@ The system SHALL mark needs you, idle not read yet, and idle with glyphs that di
 
 #### Scenario: Working
 - **WHEN** a sidebar session is working
-- **THEN** its row shows "working" fading in and out where the age is, and no glyph
+- **THEN** its row shows "working" fading in and out, right-aligned where the other rows' glyphs end, and no glyph
 
 #### Scenario: Inactive
 - **WHEN** a sidebar session's agent was quit
@@ -108,7 +108,7 @@ The system SHALL mark needs you, idle not read yet, and idle with glyphs that di
 
 #### Scenario: Starting with the host
 - **WHEN** the host starts with three sessions to start
-- **THEN** all three rows show "starting" fading in and out where the age is, with no glyph, and each switches to its own status as its agent becomes ready, one after another
+- **THEN** all three rows show "starting" fading in and out, right-aligned where the other rows' glyphs end, with no glyph, and each switches to its own status as its agent becomes ready, one after another
 
 ### Requirement: Opening sessions
 The system SHALL show a sidebar session in the terminal pane when chosen; for an inactive session it SHALL show the session with a "Resume Session" button and start its agent on the same conversation only when it is pressed, or offer "Remove from Sidebar" instead when its folder no longer exists. It SHALL mark the open row distinctly from the keyboard's place and from rows under the pointer, and SHALL state that a session running in another terminal is observed only.
