@@ -2,6 +2,19 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.12 (2026-10-26)
+
+- Links open with a click. Hover a web address in an agent or the shell panel and it
+  underlines; click and it opens in your browser, even when the agent wrapped it over
+  several lines. Only http and https links open.
+- Copying a wrapped line from a long Claude Code session now gives you one clean
+  line. After a session had printed a lot, Headquarter forgot it was in fullscreen, so
+  drags, clicks, the mouse wheel and multi-line pastes stopped going to Claude Code.
+- Working in a session's shell panel counts as watching it: no unread flag and no
+  notification for the session you are in.
+- Restart with the Update pill: the new host brings the session fixes, and your
+  sessions start again on their own.
+
 ## 0.1.11 (2026-10-26)
 
 - Shift+Tab now reaches your agent, so you can cycle Claude Code between accept edits,
