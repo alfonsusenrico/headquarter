@@ -450,7 +450,7 @@ mod tests {
         );
         let started = std::time::Instant::now();
         for _ in 0..1000 {
-            std::hint::black_box(crate::terminal::frame::build(&model));
+            std::hint::black_box(crate::terminal::frame::build(&model, None));
         }
         println!(
             "frame build: 120x40 screen in {:.1} us",

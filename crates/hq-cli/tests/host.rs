@@ -712,6 +712,24 @@ fn details_reach_followers_and_stay_in_memory() {
 }
 
 #[test]
+fn agents_are_told_marked_up_links_open() {
+    let mut env = TestEnv::new("links");
+    env.stub(
+        "claude",
+        r#"if [ "$1" = "agents" ]; then echo '[]'; exit 0; fi
+printf 'links=%s\n' "${FORCE_HYPERLINK-unset}" >> "$STUB_ARGS"
+sleep 30
+"#,
+    );
+    env.start_daemon();
+    env.create(Agent::Claude);
+    wait_until("stub environment", || {
+        std::fs::read_to_string(env.root.join("stub-args.txt"))
+            .is_ok_and(|seen| seen.contains("links=1"))
+    });
+}
+
+#[test]
 fn launched_agents_do_not_inherit_a_parent_agent_session() {
     let mut env = TestEnv::new("markers");
     env.stub(
@@ -2036,6 +2054,10 @@ fn a_sessions_shell_runs_beside_it_and_ends_with_it() {
         Status::Done,
         "the shell does not change the session's status"
     );
+
+    // Programs in the shell are told links they mark up open.
+    shell.send_frame(&Frame::Input(b"echo links-$FORCE_HYPERLINK\n".to_vec()));
+    shell.output_until("links-1");
 
     // Attaching again reaches the same shell.
     shell.send_frame(&Frame::Input(b"export MARK=kept\n".to_vec()));
