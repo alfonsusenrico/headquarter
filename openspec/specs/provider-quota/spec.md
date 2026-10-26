@@ -47,50 +47,28 @@ The system SHALL read quotas only through the providers' documented local interf
 - **THEN** the read stops without answering and counts as a failed update
 
 ### Requirement: Usage strip
-The system SHALL show, under the sidebar, centred usage marks for the enabled agents nearest their limits, as many as fit on one line, each with an outer ring filled to the share used of the agent's longest current window (the week) and an inner ring for its shortest (5 hours) when it has two, per-model windows left to the details, and SHALL fold the rest into a "+N" chip that opens every agent's usage.
+The system SHALL show, under the sidebar, centred usage marks for the enabled agents nearest their limits, as many as fit on one line, and SHALL fold the rest into a "+N" chip that opens every agent's usage.
 
 #### Scenario: Three agents
 - **WHEN** Claude, Codex and agy are enabled and Codex has used 82% of its five-hour window and 30% of its week
 - **THEN** three centred marks are shown, Codex's first with its inner ring at 82% and its outer ring at 30%, agy's dotted, and the label reads "codex 82% · 5h"
 
-#### Scenario: Several agents near their limits
-- **WHEN** Claude has used 91% of its week and Codex 85% of its five hours
-- **THEN** both rings are red and the label reads "2 agents near their limit"
-
-#### Scenario: One agent, both windows near the limit
-- **WHEN** only Claude is near its limit, with 85% of its five hours and 92% of its week used
-- **THEN** both of Claude's rings are red and the label reads "claude 92% · week"
-
-#### Scenario: Equal shares
-- **WHEN** Claude's five hours and week both show 88%
-- **THEN** the label reads "claude 88% · 5h"
-
-#### Scenario: Below the threshold
-- **WHEN** no agent has used 80% of any window
-- **THEN** no label is shown and no ring is red
-
-#### Scenario: One window
-- **WHEN** an agent reports a single current window
-- **THEN** its mark has only the outer ring, filled to that window
-
 #### Scenario: Narrow sidebar
 - **WHEN** the rings do not fit on one line
 - **THEN** the agents furthest from their limits fold into a "+N" chip, and every agent stays reachable from it
 
+### Requirement: Usage rings
+The system SHALL give each usage mark an outer ring filled to the share used of the agent's longest current window (the week) and, when the agent has two, an inner ring for its shortest (5 hours), and SHALL leave per-model windows to the details.
+
+#### Scenario: One window
+- **WHEN** an agent reports a single current window
+- **THEN** its mark has only the outer ring, filled to that window
 ### Requirement: Usage details
-The system SHALL show, when the owner opens an agent's ring, each window with its percentage used and its reset time in local 12-hour time, including per-model windows the agent reports, and SHALL let the owner refresh the reading, keeping the details open and showing that the refresh is under way until the new readings are in. Clicking the ring that opened the panel, pressing Escape, or clicking outside SHALL close it.
+The system SHALL show, when the owner opens an agent's ring, each window with its percentage used and its reset time in local 12-hour time, including per-model windows the agent reports. Clicking the ring that opened the panel, pressing Escape, or clicking outside SHALL close it.
 
 #### Scenario: Codex details
 - **WHEN** the owner opens the Codex ring
 - **THEN** the popover lists the five-hour and weekly windows with bars, percentages and reset times, and a Refresh button, with no reading age
-
-#### Scenario: Refresh
-- **WHEN** the owner presses Refresh
-- **THEN** the popover stays open, the button shows "Refreshing…" with a spinner until the reading is taken again, and the popover then shows the new numbers without being reopened
-
-#### Scenario: Refresh just after a reading
-- **WHEN** the owner presses Refresh within the refresh floor after a reading
-- **THEN** no new reading is taken and the button returns to Refresh at once
 
 #### Scenario: Unavailable agent
 - **WHEN** the owner opens agy's ring
@@ -108,6 +86,16 @@ The system SHALL show, when the owner opens an agent's ring, each window with it
 - **WHEN** agy's details show "week · Gemini" as reset since the last reading, next to "week · Gemini 4 Argon" with a bar
 - **THEN** both names stay on one line, and "reset since this reading" takes the remaining width
 
+### Requirement: Refreshing usage
+The system SHALL let the owner refresh an agent's reading from its details, keeping the details open and showing that the refresh is under way until the new readings are in.
+
+#### Scenario: Refresh
+- **WHEN** the owner presses Refresh
+- **THEN** the popover stays open, the button shows "Refreshing…" with a spinner until the reading is taken again, and the popover then shows the new numbers without being reopened
+
+#### Scenario: Refresh just after a reading
+- **WHEN** the owner presses Refresh within the refresh floor after a reading
+- **THEN** no new reading is taken and the button returns to Refresh at once
 ### Requirement: Reading cadence
 The system SHALL read Codex usage 10 seconds after a hosted Codex session's turn ends, every five minutes while a client shows usage, and on refresh, and SHALL NOT read any agent's usage when no client is showing usage.
 
@@ -208,6 +196,21 @@ The system SHALL draw a ring red when its window has used 80% or more, and SHALL
 - **WHEN** Codex has used exactly 80% of its week and less of its five hours, and no other agent is near its limit
 - **THEN** Codex's outer ring is red and the label reads "codex 80% · week"
 
+#### Scenario: Several agents near their limits
+- **WHEN** Claude has used 91% of its week and Codex 85% of its five hours
+- **THEN** both rings are red and the label reads "2 agents near their limit"
+
+#### Scenario: One agent, both windows near the limit
+- **WHEN** only Claude is near its limit, with 85% of its five hours and 92% of its week used
+- **THEN** both of Claude's rings are red and the label reads "claude 92% · week"
+
+#### Scenario: Equal shares
+- **WHEN** Claude's five hours and week both show 88%
+- **THEN** the label reads "claude 88% · 5h"
+
+#### Scenario: Below the threshold
+- **WHEN** no agent has used 80% of any window
+- **THEN** no label is shown and no ring is red
 ### Requirement: Claude reading cadence
 The system SHALL take Claude usage from each report of a hosted Claude session and with a hidden `/usage` read on refresh, every ten minutes while a client shows usage and no hosted Claude session has reported, and after a Claude session in another terminal finishes a turn, at most every two minutes.
 
