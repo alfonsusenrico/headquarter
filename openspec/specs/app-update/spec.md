@@ -92,3 +92,14 @@ The system SHALL show under the update's steps a log of what the update has done
 #### Scenario: Terminal advice left out
 - **WHEN** the installer prints how to open the app or to run `hq stop`
 - **THEN** those lines do not appear in the log
+
+### Requirement: Pre-release builds
+A build with a pre-release version SHALL run and check for updates as the release it leads to, and SHALL never be offered a pre-release as an update.
+
+#### Scenario: A release candidate checks for updates
+- **WHEN** the app is a `0.1.14-rc.1` build and the latest release is `0.1.14`
+- **THEN** the app starts normally and says it is on the latest version
+
+#### Scenario: A newer release
+- **WHEN** the app is a `0.1.14-rc.1` build and the latest release is `0.1.15`
+- **THEN** the app offers `0.1.15`
