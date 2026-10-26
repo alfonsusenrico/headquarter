@@ -6,7 +6,7 @@ How Headquarter tells the owner, through the system's notifications, that a sess
 ## Requirements
 
 ### Requirement: Notify when needed
-The system SHALL show a system notification when a session in the sidebar starts needing the owner or finishes a turn, SHALL NOT notify about sessions outside the sidebar or about a session running in another terminal, and SHALL NOT notify about the session the owner is watching in the focused app.
+The system SHALL show a system notification when a session in the sidebar starts needing the owner or finishes a turn, SHALL NOT notify about sessions outside the sidebar or about a session running in another terminal, and SHALL NOT notify about the session the owner is watching in the focused app: the shown session, with focus in its agent or its shell panel.
 
 #### Scenario: Permission prompt while away
 - **WHEN** the sidebar session "Fix login" asks for permission while the owner works in another app
@@ -18,6 +18,10 @@ The system SHALL show a system notification when a session in the sidebar starts
 
 #### Scenario: Watching it
 - **WHEN** the session finishes a turn while shown in the focused pane of the active window
+- **THEN** no notification appears
+
+#### Scenario: Watching from its shell panel
+- **WHEN** the session finishes a turn while shown in the active window with focus in its shell panel
 - **THEN** no notification appears
 
 #### Scenario: Not in the sidebar

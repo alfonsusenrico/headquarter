@@ -464,14 +464,7 @@ impl Workspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        let watched = match &self.pane {
-            Pane::Terminal { id, view, .. } => {
-                *id == current.id
-                    && view.focus_handle(cx).is_focused(window)
-                    && window.is_window_active()
-            }
-            _ => false,
-        };
+        let watched = self.watching(&current.id, window, cx);
         let Some(notice) = notifications::notice(previous, current, watched, self.notifications)
         else {
             return;
@@ -813,13 +806,26 @@ impl Workspace {
         .detach();
     }
 
-    /// "Done, not read yet" clears once the owner can see the session: shown in the
-    /// focused pane of the active window.
+    /// Whether the owner is watching session `id`: shown in the active window, with
+    /// focus in its agent or its shell panel, which belong to the same pane.
+    fn watching(&self, id: &str, window: &Window, cx: &App) -> bool {
+        let Pane::Terminal {
+            id: shown, view, ..
+        } = &self.pane
+        else {
+            return false;
+        };
+        let focused = |view: &Entity<TerminalView>| view.focus_handle(cx).is_focused(window);
+        let in_pane = focused(view) || self.shell_view().is_some_and(focused);
+        shown == id && window.is_window_active() && in_pane
+    }
+
+    /// "Done, not read yet" clears once the owner can see the session.
     fn mark_seen_if_watched(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Pane::Terminal { id, view, .. } = &self.pane else {
+        let Pane::Terminal { id, .. } = &self.pane else {
             return;
         };
-        let watched = view.focus_handle(cx).is_focused(window) && window.is_window_active();
+        let watched = self.watching(id, window, cx);
         let unread = self
             .session(id)
             .is_some_and(|session| session.live && session.status == Status::DoneUnread);

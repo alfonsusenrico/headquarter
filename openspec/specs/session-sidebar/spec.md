@@ -94,6 +94,10 @@ The system SHALL mark needs you, idle not read yet, and idle with glyphs that di
 - **WHEN** the session shown in the focused pane finishes a turn
 - **THEN** it becomes idle without passing through idle not read yet
 
+#### Scenario: Watched from its shell panel
+- **WHEN** the owner works in the shown session's shell panel with the app focused and the session finishes a turn, or the owner moves focus into that shell panel while the session is idle not read yet
+- **THEN** it becomes idle, without a bold title
+
 #### Scenario: Working
 - **WHEN** a sidebar session is working
 - **THEN** its row shows "working" fading in and out where the age is, and no glyph

@@ -22,6 +22,7 @@ pub(super) struct ShellPanel {
     session: String,
     view: Entity<TerminalView>,
     _ended: Subscription,
+    _focus: Subscription,
 }
 
 /// The divider between the agent and the shell, while it is dragged.
@@ -96,10 +97,15 @@ impl Workspace {
             let session = id.clone();
             this.close_shell(&session, false, window, cx);
         });
+        // Focus in the shell is watching the session too.
+        let focus = cx.on_focus(&view.focus_handle(cx), window, |this, window, cx| {
+            this.mark_seen_if_watched(window, cx);
+        });
         self.shell = Some(ShellPanel {
             session,
             view,
             _ended: ended,
+            _focus: focus,
         });
     }
 
