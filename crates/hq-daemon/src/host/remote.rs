@@ -127,7 +127,16 @@ fn allowed(request: &Request) -> bool {
         | Request::RemotePair {}
         | Request::RemoteDevices {}
         | Request::RemoteRemove { .. } => false,
+        // The gateway answers it itself, for the calling phone only (`proxy`).
+        Request::Unpair {} => false,
     }
+}
+
+/// How a phone's proxied connection ended.
+enum Ending {
+    Closed,
+    /// The phone removed its own pairing (add-android-app D5).
+    Unpaired,
 }
 
 /// The request's wire name, for the log.
@@ -269,7 +278,7 @@ impl Host {
         Ok(())
     }
 
-    fn stop_gateway(&self) {
+    pub(super) fn stop_gateway(&self) {
         let running = {
             let mut state = lock(&self.remote.state);
             state.problem = None;
@@ -484,22 +493,28 @@ async fn accept_loop(
                 let Some(incoming) = incoming else { break };
                 let host = Arc::clone(&host);
                 let shared = Arc::clone(&shared);
+                let endpoint = endpoint.clone();
                 tokio::spawn(async move {
                     if let Ok(connection) = incoming.await {
-                        serve_phone(host, shared, connection).await;
+                        serve_phone(host, shared, &endpoint, connection).await;
                     }
                 });
             }
         }
     }
     for (_, connection) in lock(&shared.connections).drain() {
-        connection.close(0u32.into(), b"remote control off");
+        connection.close(0u32.into(), b"remote control stopped");
     }
     endpoint.close().await;
 }
 
-/// One phone's connection: pairing if needed, then the proxy.
-async fn serve_phone(host: Arc<Host>, shared: Arc<Shared>, connection: Connection) {
+/// One phone's connection: pairing if needed, the welcome, then the proxy.
+async fn serve_phone(
+    host: Arc<Host>,
+    shared: Arc<Shared>,
+    endpoint: &Endpoint,
+    connection: Connection,
+) {
     let phone = connection.remote_id().to_string();
     let Ok(Ok((mut send, mut recv))) =
         tokio::time::timeout(FIRST_FRAME_WAIT, connection.accept_bi()).await
@@ -512,9 +527,15 @@ async fn serve_phone(host: Arc<Host>, shared: Arc<Shared>, connection: Connectio
         _ => return,
     };
     let known = lock(&host.store).device(&phone).ok().flatten();
+    // A phone this computer already knows may pair again with a shown code (it lost its
+    // list, or scanned the code from its switcher): it keeps its record, renamed.
+    let pairing = matches!(
+        &first,
+        Frame::Control(bytes) if matches!(Request::parse(bytes), Ok(Request::Pair { .. }))
+    );
     let (name, first) = match known {
-        Some(device) => (device.name, Some(first)),
-        None => match pair(&host, &shared, &phone, &first) {
+        Some(device) if !pairing => (device.name, Some(first)),
+        _ => match pair(&host, &shared, &phone, &first) {
             Ok(name) => {
                 let paired = Response::Paired { host: host_name() };
                 if hq_remote::write_frame(&mut send, &Frame::response(&paired))
@@ -536,12 +557,32 @@ async fn serve_phone(host: Arc<Host>, shared: Arc<Shared>, connection: Connectio
             }
         },
     };
+    let welcome = Response::RemoteWelcome {
+        host: host_name(),
+        relay: endpoint.addr().relay_urls().next().map(ToString::to_string),
+        protocol: hq_protocol::PROTOCOL_VERSION,
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    };
+    if hq_remote::write_frame(&mut send, &Frame::response(&welcome))
+        .await
+        .is_err()
+    {
+        return;
+    }
     lock(&shared.connections).insert(phone.clone(), connection.clone());
     let _ = lock(&host.store).touch_device(&phone, hq_signals::now_ms());
     let path = path_kind(&connection);
     host.log
         .line(&format!("remote connected device={name} path={path}"));
-    proxy(&host, first, send, recv).await;
+    if let Ending::Unpaired = proxy(&host, &phone, first, send, recv).await {
+        lock(&shared.connections).remove(&phone);
+        // Closing at once would drop the answer on its way to the phone (D4 of
+        // add-remote-gateway). The phone closes once it has it.
+        let _ = tokio::time::timeout(FIRST_FRAME_WAIT / 5, connection.closed()).await;
+        connection.close(0u32.into(), b"unpaired");
+        host.log.line(&format!("remote unpaired device={name}"));
+        return;
+    }
     let still_ours = {
         let mut connections = lock(&shared.connections);
         let ours = connections
@@ -639,12 +680,13 @@ fn path_kind(connection: &Connection) -> &'static str {
 /// ask for (D1, D5).
 async fn proxy(
     host: &Host,
+    phone: &str,
     first: Option<Frame>,
     mut send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
-) {
+) -> Ending {
     let Ok(local) = tokio::net::UnixStream::connect(&host.paths.control_socket).await else {
-        return;
+        return Ending::Closed;
     };
     let (mut from_host, mut to_host) = local.into_split();
     let (to_phone, mut for_phone) = tokio::sync::mpsc::channel::<Frame>(64);
@@ -667,6 +709,7 @@ async fn proxy(
         })
     };
     let mut pending = first;
+    let mut ending = Ending::Closed;
     loop {
         let frame = match pending.take() {
             Some(frame) => frame,
@@ -679,6 +722,20 @@ async fn proxy(
             Frame::Input(_) => true,
             Frame::Output(_) => break,
             Frame::Control(bytes) => match Request::parse(bytes) {
+                Ok(Request::Unpair {}) => {
+                    let answer = match lock(&host.store).remove_device(phone) {
+                        Ok(_) => {
+                            ending = Ending::Unpaired;
+                            Response::Unpaired
+                        }
+                        Err(error) => Response::error(ErrorCode::Storage, error.to_string()),
+                    };
+                    let _ = to_phone.send(Frame::response(&answer)).await;
+                    if let Ending::Unpaired = ending {
+                        break;
+                    }
+                    false
+                }
                 Ok(request) if allowed(&request) => true,
                 Ok(request) => {
                     let kind = kind(&request);
@@ -704,6 +761,7 @@ async fn proxy(
     from_host_task.abort();
     drop(to_phone);
     let _ = writer.await;
+    ending
 }
 
 #[cfg(test)]

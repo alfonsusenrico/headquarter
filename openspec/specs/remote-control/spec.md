@@ -89,3 +89,39 @@ The system SHALL offer, from the app's menu, a Remote Control window with a swit
 #### Scenario: Terminal too small for the QR code
 - **WHEN** the owner runs `hq remote pair` in a terminal smaller than the QR code
 - **THEN** the command names the size it needs and shows the code as text instead of a broken QR code
+
+### Requirement: Welcome on every phone connection
+The system SHALL send a paired phone, on each connection and before any answer from the host, the computer's name, its current relay, and the host's protocol and version.
+
+#### Scenario: Relay changed
+- **WHEN** the host's home relay changed since a phone paired, and the phone connects
+- **THEN** the phone learns the new relay from the welcome and uses it next time
+
+#### Scenario: Version check
+- **WHEN** a phone connects to a host that speaks an older protocol
+- **THEN** the phone receives the host's protocol and version before the host's answer to its greeting
+
+### Requirement: A phone removes itself
+The system SHALL let a paired phone remove its own pairing, deleting only that phone's record and closing its connection, and SHALL refuse the same request from a local client.
+
+#### Scenario: Unpair from the phone
+- **WHEN** a paired phone sends Unpair
+- **THEN** the host answers, closes that connection, and the phone disappears from `hq remote devices` and the Remote Control window
+
+#### Scenario: Local client
+- **WHEN** a client on the local socket sends Unpair
+- **THEN** the host refuses it as a bad request and removes nothing
+
+### Requirement: Stopping the host closes phones
+The system SHALL close every phone's connection when the host stops, so connected phones learn it at once instead of after the connection's idle timeout.
+
+#### Scenario: `hq stop` with a phone connected
+- **WHEN** the host stops while a phone is connected
+- **THEN** the phone's connection closes within seconds, and the phone shows Reconnecting
+
+### Requirement: A known phone pairs again
+The system SHALL accept a shown pairing code from a phone it already knows, keeping one record for that phone under the name it sends.
+
+#### Scenario: Scanning again
+- **WHEN** a phone the computer still lists scans a new code from Remote Control
+- **THEN** it pairs, and `hq remote devices` lists it once

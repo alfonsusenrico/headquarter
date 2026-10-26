@@ -24,7 +24,7 @@ debug = "line-tables-only"
 debug = false
 
 # GPUI's macOS platform with idle windows stopping their display link
-# (vendor/gpui-pre-macos/README-HEADQUARTER.md); upgrade with the other gpui-pre crates.
+# (vendor/gpui-pre-macos/README-HEADQUARTER.md). Upgrade with the other gpui-pre crates.
 [patch.crates-io]
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 
@@ -32,3 +32,11 @@ gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+# The phone's core for the Android app (`scripts/android-core`): small, stripped. Panics
+# unwind so UniFFI turns them into errors instead of ending the app.
+[profile.mobile]
+inherits = "release"
+opt-level = "s"
+lto = "thin"
+strip = true

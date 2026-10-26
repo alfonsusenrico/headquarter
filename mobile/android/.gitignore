@@ -1,0 +1,8 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+# Built by scripts/android-core from crates/hq-mobile.
+app/src/main/jniLibs/
+app/src/main/java/uniffi/

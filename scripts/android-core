@@ -1,0 +1,68 @@
+#!/bin/sh
+# Builds the phone's Rust core (crates/hq-mobile) for the Android app: the library for
+# each ABI the APK ships, and its Kotlin binding (add-android-app D12). Gradle runs it
+# before every build. It fails naming what is missing rather than building without it.
+set -eu
+
+cd "$(dirname "$0")/.."
+app=mobile/android/app/src/main
+
+sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
+if [ ! -d "$sdk" ]; then
+    echo "android-core: no Android SDK at $sdk. Install it or set ANDROID_HOME." >&2
+    exit 1
+fi
+ndk="${ANDROID_NDK_HOME:-}"
+if [ -z "$ndk" ] && [ -d "$sdk/ndk" ]; then
+    # The newest NDK installed.
+    ndk="$sdk/ndk/$(ls "$sdk/ndk" | sort -V | tail -n 1)"
+fi
+if [ -z "$ndk" ] || [ ! -d "$ndk/toolchains/llvm/prebuilt" ]; then
+    echo "android-core: no Android NDK under $sdk/ndk. Install it with sdkmanager \"ndk;30.0.16248370\"." >&2
+    exit 1
+fi
+case "$(uname -s)" in
+    Darwin) host=darwin-x86_64 ;;
+    Linux) host=linux-x86_64 ;;
+    *) echo "android-core: unsupported build system $(uname -s)." >&2; exit 1 ;;
+esac
+bin="$ndk/toolchains/llvm/prebuilt/$host/bin"
+
+# minSdk 29 (Android 10): the NDK's compilers carry the API level in their names.
+api=29
+targets="aarch64-linux-android:arm64-v8a:aarch64-linux-android
+armv7-linux-androideabi:armeabi-v7a:armv7a-linux-androideabi
+x86_64-linux-android:x86_64:x86_64-linux-android"
+
+installed="$(rustup target list --installed)"
+for entry in $targets; do
+    triple="${entry%%:*}"
+    if ! printf '%s\n' "$installed" | grep -qx "$triple"; then
+        echo "android-core: the Rust target $triple is missing. Run: rustup target add $triple" >&2
+        exit 1
+    fi
+done
+
+for entry in $targets; do
+    triple="${entry%%:*}"
+    rest="${entry#*:}"
+    abi="${rest%%:*}"
+    clang="$bin/${rest#*:}$api-clang"
+    upper="$(printf '%s' "$triple" | tr 'a-z-' 'A-Z_')"
+    lower="$(printf '%s' "$triple" | tr '-' '_')"
+    env "CARGO_TARGET_${upper}_LINKER=$clang" "CC_${lower}=$clang" "AR_${lower}=$bin/llvm-ar" \
+        cargo build --locked --quiet -p hq-mobile --lib --profile mobile --target "$triple"
+    mkdir -p "$app/jniLibs/$abi"
+    cp "target/$triple/mobile/libhq_mobile.so" "$app/jniLibs/$abi/libhq_mobile.so"
+done
+
+# The binding comes from a build for this computer: the Android libraries are stripped,
+# which removes the metadata it is generated from.
+cargo build --locked --quiet -p hq-mobile --lib
+case "$(uname -s)" in
+    Darwin) library=target/debug/libhq_mobile.dylib ;;
+    *) library=target/debug/libhq_mobile.so ;;
+esac
+rm -rf "$app/java/uniffi"
+cargo run --locked --quiet -p hq-mobile --features bindgen --bin uniffi-bindgen -- \
+    generate --library "$library" --language kotlin --no-format --out-dir "$app/java" > /dev/null

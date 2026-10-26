@@ -1,5 +1,6 @@
 #!/bin/sh
-# The project's CI: Rust format, lint, tests and dependency policy, then OpenSpec
+# The project's CI: Rust format, lint, tests and dependency policy, the Android app
+# (core build, Kotlin format and lint, Android Lint, unit tests, debug APK), then OpenSpec
 # validation. Run it before every push; there is no hosted CI (AGENTS.md, Overrides).
 set -eu
 
@@ -17,6 +18,33 @@ if [ -f Cargo.toml ]; then
     fi
 else
     echo "check: no Cargo.toml yet; skipping Rust checks."
+fi
+
+# The Android app (add-android-app D12). It needs JDK 17, the Android SDK and its NDK.
+# Missing ones stop the check by name instead of being skipped.
+if [ -d mobile/android ]; then
+    if [ -z "${JAVA_HOME:-}" ] && [ -x /usr/libexec/java_home ]; then
+        JAVA_HOME="$(/usr/libexec/java_home -v 17 2> /dev/null || true)"
+    fi
+    if [ -z "${JAVA_HOME:-}" ] && [ -d /opt/homebrew/opt/openjdk@17 ]; then
+        JAVA_HOME=/opt/homebrew/opt/openjdk@17
+    fi
+    if [ -z "${JAVA_HOME:-}" ] && ! command -v java > /dev/null 2>&1; then
+        echo "check: JDK 17 is not installed (set JAVA_HOME), so the Android app cannot be checked." >&2
+        exit 1
+    fi
+    if [ -z "${ANDROID_HOME:-}" ]; then
+        for sdk in "$HOME/Library/Android/sdk" "$HOME/Android/Sdk"; do
+            if [ -d "$sdk" ]; then ANDROID_HOME="$sdk"; fi
+        done
+    fi
+    if [ -z "${ANDROID_HOME:-}" ]; then
+        echo "check: the Android SDK is not installed (set ANDROID_HOME), so the Android app cannot be checked." >&2
+        exit 1
+    fi
+    export ANDROID_HOME
+    if [ -n "${JAVA_HOME:-}" ]; then export JAVA_HOME; fi
+    (cd mobile/android && ./gradlew --quiet ktlintCheck lintDebug testDebugUnitTest assembleDebug)
 fi
 
 if command -v openspec > /dev/null 2>&1; then

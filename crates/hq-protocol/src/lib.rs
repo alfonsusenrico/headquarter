@@ -15,7 +15,7 @@ pub use hq_signals::quota::Account;
 use hq_signals::status::Status;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 pub const MAX_PAYLOAD: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,6 +274,9 @@ pub enum Request {
     RemoteRemove {
         device: String,
     },
+    /// A paired phone removes its own pairing. The remote gateway handles it, and the
+    /// local socket refuses it (add-android-app D5).
+    Unpair {},
 }
 
 impl Request {
@@ -361,6 +364,17 @@ pub enum Response {
     Paired {
         host: String,
     },
+    /// The gateway's first frame to a paired phone on every connection: the computer's
+    /// name, its home relay, and the host's protocol and version, so the phone follows a
+    /// relay change and names the side to update (add-android-app D4).
+    RemoteWelcome {
+        host: String,
+        relay: Option<String>,
+        protocol: u32,
+        version: String,
+    },
+    /// The phone's pairing is removed, and the gateway closes the connection.
+    Unpaired,
     RemoteStatus {
         enabled: bool,
         /// The gateway runs (it may have failed after being enabled).
@@ -1005,12 +1019,20 @@ mod tests {
             Request::RemoteRemove {
                 device: "pixel".into(),
             },
+            Request::Unpair {},
         ] {
             let bytes = serde_json::to_vec(&request).unwrap();
             assert_eq!(Request::parse(&bytes).unwrap(), request);
         }
         for response in [
             Response::Paired { host: "mac".into() },
+            Response::RemoteWelcome {
+                host: "mac".into(),
+                relay: Some("https://relay.example.com./".into()),
+                protocol: PROTOCOL_VERSION,
+                version: "0.1.14".into(),
+            },
+            Response::Unpaired,
             Response::RemoteStatus {
                 enabled: true,
                 running: false,

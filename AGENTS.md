@@ -22,8 +22,9 @@ usage quota. Targets macOS and Linux.
   beside it) goes to the system Trash, Codex only through its own `archive` and
   `delete`; agy is never changed (`host/remove.rs`).
 
-Capabilities: database, remote access
-Design surface: desktop application (session sidebar, terminal pane, quota footer)
+Capabilities: database, remote access, mobile app
+Design surface: desktop application (session sidebar, terminal pane, quota footer), and a phone
+app (Android: home mirroring the sidebar, session terminal with a key row, pairing, settings)
 Language: UI text English; relative ages as `0m`, `1m`, `3h`, `2d`, `5w` (no seconds); times in local 12-hour format.
 
 ## Commands
@@ -33,6 +34,8 @@ Language: UI text English; relative ages as `0m`, `1m`, `3h`, `2d`, `5w` (no sec
 cargo fmt --all                 # apply formatting (rustfmt is authoritative)
 cargo run -p hq-cli --bin hq -- ls          # the CLI against your real data folder
 HQ_DATA_DIR=/tmp/hq-dev cargo run -p hq-cli --bin hq -- new claude     # isolated data folder
+./scripts/android-core          # the phone's Rust core and Kotlin binding, also run by Gradle
+(cd mobile/android && ./gradlew assembleDebug)   # the Android app (JDK 17, Android SDK and NDK)
 cargo run -p hq-app --bin headquarter-app -- --quit-after 5   # open the app, quit after 5 s
 openspec list                   # open changes
 ```
@@ -78,6 +81,15 @@ public relays); `HQ_REMOTE_PAIR_SECS` shortens the 2-minute pairing code.
 - `crates/hq-remote`: remote control's connection, shared by the host's gateway and the
   phone's core: binding the iroh endpoint (relays), pairing codes, and `hq-protocol`
   frames over QUIC.
+- `crates/hq-mobile`: the phone's core for the Android app, exposed to Kotlin with UniFFI:
+  pairing, the computers it knows, the connection to the computer on screen, home as
+  `hq_protocol::sidebar` arranges it, and open terminals (`alacritty_terminal`). Calls block,
+  the app waits for changes with `wait_change()`, and nothing calls back into Kotlin (add-android-app).
+- `mobile/android/`: the Android app (Kotlin, Jetpack Compose, minSdk 29, application id
+  `com.alfonsusenrico.headquarter`). `Core.kt` holds the core and the lifecycle (connected
+  only while on screen), `PhoneKey.kt` keeps the phone's key under the Android Keystore,
+  `ui/` holds the screens and `ui/Theme.kt` the desktop's tokens. The core's libraries and
+  binding are generated (`scripts/android-core`) and not committed.
 - `crates/hq-client`: the host connection shared by the CLI and the app; it starts the
   host (`hq` beside the running executable) when none is running.
 - `crates/hq-cli`: the `hq` and `headquarter` executables. They are thin entry points
@@ -115,6 +127,9 @@ public relays); `HQ_REMOTE_PAIR_SECS` shortens the 2-minute pairing code.
   host key (`remote.key`, mode 600), pairing secrets, typed input and terminal output
   never reach logs. Relays default to n0's public ones; a personal relay is a setting,
   never a product default (owner, 2026-10-26).
+- The phone app keeps no session content: only its key (Keystore-wrapped, backups off), the
+  paired computers' names, keys and relays, and its settings. Its logs carry connection
+  events only. Kotlin formats with ktlint, and Android Lint runs with warnings as errors.
 
 - GPUI comes from the `gpui-pre` snapshot crates, pinned with `=`; upgrade them
   together and re-run the app. `gpui-pre-macos` is patched in `vendor/`
