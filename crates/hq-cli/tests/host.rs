@@ -399,6 +399,66 @@ fn hosted_session_survives_detach_and_reports_status() {
     assert!(!env.session(&session.id).live);
 }
 
+/// Switches modes as a full-screen agent does at startup (alternate screen, mouse drags
+/// in SGR, bracketed paste; focus reports on and off again; a synchronized update left
+/// open), then prints more than the catch-up keeps.
+const FULL_SCREEN_STUB: &str = r#"printf '\033[?1049h\033[?1002h\033[?1006h\033[?2004h\033[?1004h\033[?1004l\033[?2026h'
+head -c 1300000 /dev/zero | tr '\0' 'x'
+printf '\033[?2026l\nfiller-done\n'
+sleep 30
+"#;
+
+/// The modes a terminal fed `bytes` ends in, as the app's terminal model reads them.
+fn modes_after(bytes: &[u8]) -> alacritty_terminal::term::TermMode {
+    use alacritty_terminal::event::VoidListener;
+    use alacritty_terminal::term::{Config, Term, test::TermSize};
+    use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+    let mut term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
+    let mut parser: Processor<StdSyncHandler> = Processor::new();
+    parser.advance(&mut term, bytes);
+    *term.mode()
+}
+
+#[test]
+fn a_late_viewer_gets_the_modes_set_before_its_catch_up() {
+    use alacritty_terminal::term::TermMode;
+    let mut env = TestEnv::new("modes");
+    env.stub("agy", FULL_SCREEN_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    let mut first = env.connect();
+    first.request(&Request::Attach {
+        session: session.id.clone(),
+        cols: 80,
+        rows: 24,
+    });
+    first.output_until("filler-done");
+
+    let mut late = env.connect();
+    assert!(matches!(
+        late.request(&Request::Attach {
+            session: session.id.clone(),
+            cols: 80,
+            rows: 24
+        }),
+        Response::Attached { .. }
+    ));
+    let replay = late.output_until("filler-done");
+    let modes = modes_after(replay.as_bytes());
+    for (mode, name) in [
+        (TermMode::ALT_SCREEN, "alternate screen"),
+        (TermMode::MOUSE_DRAG, "mouse drags"),
+        (TermMode::SGR_MOUSE, "SGR mouse"),
+        (TermMode::BRACKETED_PASTE, "bracketed paste"),
+    ] {
+        assert!(modes.contains(mode), "{name} lost in the catch-up");
+    }
+    assert!(
+        !modes.contains(TermMode::FOCUS_IN_OUT),
+        "a mode switched off again stays off"
+    );
+}
+
 /// A Claude Code stub whose `agents --json` reports the hosted stub busy or idle, as
 /// the file `$STUB_ARGS.state` says.
 const CLAUDE_BACKGROUND_STUB: &str = r#"if [ "$1" = "agents" ]; then

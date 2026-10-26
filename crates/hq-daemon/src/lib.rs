@@ -3,6 +3,7 @@
 
 mod host;
 mod log;
+mod modes;
 pub mod paths;
 mod session;
 

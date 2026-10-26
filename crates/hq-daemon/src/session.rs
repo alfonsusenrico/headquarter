@@ -13,6 +13,8 @@ use hq_signals::helpers::is_terminal_report;
 use hq_signals::status::{SessionTracker, Status};
 use portable_pty::{ChildKiller, MasterPty, PtySize};
 
+use crate::modes::Modes;
+
 /// Output kept for clients that attach later.
 pub const CATCH_UP_BYTES: usize = 1024 * 1024;
 const CATCH_UP_CHUNK: usize = 64 * 1024;
@@ -43,7 +45,7 @@ pub struct Hosted {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
-    buffer: Mutex<VecDeque<u8>>,
+    buffer: Mutex<CatchUp>,
     viewers: Mutex<Vec<Viewer>>,
     tracker: Mutex<SessionTracker>,
     reported: Mutex<Option<(Status, Option<NeedsReason>)>>,
@@ -56,6 +58,13 @@ pub struct Hosted {
     has_spoken: AtomicBool,
     /// Whether the agent's own conversation id is known.
     pub conversation_known: Mutex<bool>,
+}
+
+/// The latest output for clients that attach later, and the terminal modes in effect
+/// where it starts.
+struct CatchUp {
+    bytes: VecDeque<u8>,
+    modes: Modes,
 }
 
 /// A poisoned lock only means another thread panicked mid-update; the data is
@@ -114,7 +123,10 @@ impl Hosted {
             writer: Mutex::new(parts.writer),
             master: Mutex::new(parts.master),
             killer: Mutex::new(parts.killer),
-            buffer: Mutex::new(VecDeque::new()),
+            buffer: Mutex::new(CatchUp {
+                bytes: VecDeque::new(),
+                modes: Modes::new(),
+            }),
             viewers: Mutex::new(Vec::new()),
             tracker: Mutex::new(parts.tracker),
             reported: Mutex::new(None),
@@ -222,9 +234,16 @@ impl Hosted {
     /// byte exactly once.
     pub fn output(&self, bytes: &[u8]) {
         let mut buffer = lock(&self.buffer);
-        buffer.extend(bytes);
-        let excess = buffer.len().saturating_sub(CATCH_UP_BYTES);
-        buffer.drain(..excess);
+        let CatchUp { bytes: kept, modes } = &mut *buffer;
+        kept.extend(bytes);
+        let excess = kept.len().saturating_sub(CATCH_UP_BYTES);
+        if excess > 0 {
+            let (front, back) = kept.as_slices();
+            let from_front = excess.min(front.len());
+            modes.observe(&front[..from_front]);
+            modes.observe(&back[..excess - from_front]);
+            kept.drain(..excess);
+        }
         lock(&self.viewers).retain(|viewer| {
             viewer
                 .tx
@@ -241,7 +260,11 @@ impl Hosted {
             // Hold the buffer lock while registering so no output falls between the
             // catch-up copy and live forwarding.
             let buffer = lock(&self.buffer);
-            let (front, back) = buffer.as_slices();
+            let preamble = buffer.modes.preamble();
+            if !preamble.is_empty() {
+                let _ = viewer.tx.send(Outgoing::Frame(Frame::Output(preamble)));
+            }
+            let (front, back) = buffer.bytes.as_slices();
             for part in [front, back] {
                 for chunk in part.chunks(CATCH_UP_CHUNK) {
                     let _ = viewer
