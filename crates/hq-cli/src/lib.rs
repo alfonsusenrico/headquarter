@@ -4,6 +4,7 @@
 
 mod agents;
 mod attach;
+mod remote;
 mod render;
 
 use std::io::{BufRead, IsTerminal, Write};
@@ -98,6 +99,11 @@ enum Command {
     Close { session: String },
     /// Hang up a running session's agent at once; it stays in the sidebar.
     Kill { session: String },
+    /// Control Headquarter from your phone: on, off, status, pair, devices, remove.
+    Remote {
+        #[command(subcommand)]
+        action: remote::RemoteCommand,
+    },
     /// End every session and stop the host.
     Stop {
         /// Do not ask for confirmation.
@@ -244,6 +250,7 @@ fn run(command: Command) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Stop { yes } => stop(&paths, yes),
+        Command::Remote { action } => remote::run(&paths, action),
         Command::Daemon
         | Command::Agents { .. }
         | Command::HookForward { .. }

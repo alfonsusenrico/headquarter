@@ -15,7 +15,7 @@ pub use hq_signals::quota::Account;
 use hq_signals::status::Status;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 pub const MAX_PAYLOAD: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +249,31 @@ pub enum Request {
     },
     /// End every session and the host.
     Stop {},
+    /// The owner brought the attached session to the front on this client: its terminal
+    /// takes this client's size (add-remote-gateway D6).
+    Focus {},
+    /// A phone that is not paired yet presents the pairing code's secret; handled by the
+    /// remote gateway, never forwarded to the host.
+    Pair {
+        secret: String,
+        /// The phone's name, such as its model.
+        name: String,
+    },
+    /// Remote control's state; local clients only.
+    RemoteStatus {},
+    /// Turns remote control on or off; local clients only.
+    RemoteSet {
+        enabled: bool,
+    },
+    /// A one-time pairing code; local clients only. The host answers with the code, then
+    /// on the same connection when it is used or expires.
+    RemotePair {},
+    /// The paired phones; local clients only.
+    RemoteDevices {},
+    /// Removes a paired phone by name or id prefix; local clients only.
+    RemoteRemove {
+        device: String,
+    },
 }
 
 impl Request {
@@ -282,6 +307,10 @@ pub enum ErrorCode {
     NotAddable,
     /// The agent could not remove the conversation; the message says which agent.
     RemoveFailed,
+    /// A phone asked for something remote control does not allow (add-remote-gateway D5).
+    NotAllowed,
+    /// Remote control is off, so there is nothing to pair with.
+    RemoteOff,
 }
 
 /// How a past conversation leaves its agent (remove-conversations, owner 2026-10-23).
@@ -328,6 +357,37 @@ pub enum Response {
     },
     Detached,
     Done,
+    /// The phone is paired; the connection goes on as a paired phone's.
+    Paired {
+        host: String,
+    },
+    RemoteStatus {
+        enabled: bool,
+        /// The gateway runs (it may have failed after being enabled).
+        running: bool,
+        /// The host's endpoint id while running.
+        endpoint: Option<String>,
+        /// The relay the host is reachable through, when connected to one.
+        relay: Option<String>,
+        /// Why the gateway is not running although enabled.
+        problem: Option<String>,
+    },
+    /// A pairing code to show, valid once for `expires_in_secs`.
+    RemotePairing {
+        code: String,
+        expires_in_secs: u64,
+    },
+    /// The shown code paired the named phone.
+    RemotePairUsed {
+        device: String,
+    },
+    /// The shown code expired, or was voided after wrong guesses.
+    RemotePairExpired {
+        reason: String,
+    },
+    RemoteDevices {
+        devices: Vec<RemoteDevice>,
+    },
     SessionChanged {
         session: SessionInfo,
     },
@@ -410,6 +470,18 @@ pub struct UsageWindow {
     /// The model a per-model window counts ("Fable"); `None` for all models.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+}
+
+/// A phone paired for remote control (add-remote-gateway).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemoteDevice {
+    /// The phone's endpoint id (its public key).
+    pub id: String,
+    pub name: String,
+    /// Unix milliseconds.
+    pub paired_at: i64,
+    pub last_seen_at: Option<i64>,
+    pub connected: bool,
 }
 
 /// An agent's last usage reading. `problem` explains a missing reading, or why the
@@ -916,6 +988,59 @@ mod tests {
             serde_json::from_slice::<SessionInfo>(&bytes).unwrap(),
             failed
         );
+    }
+
+    #[test]
+    fn remote_messages_round_trip() {
+        for request in [
+            Request::Focus {},
+            Request::Pair {
+                secret: "s3cret".into(),
+                name: "Pixel 8".into(),
+            },
+            Request::RemoteStatus {},
+            Request::RemoteSet { enabled: true },
+            Request::RemotePair {},
+            Request::RemoteDevices {},
+            Request::RemoteRemove {
+                device: "pixel".into(),
+            },
+        ] {
+            let bytes = serde_json::to_vec(&request).unwrap();
+            assert_eq!(Request::parse(&bytes).unwrap(), request);
+        }
+        for response in [
+            Response::Paired { host: "mac".into() },
+            Response::RemoteStatus {
+                enabled: true,
+                running: false,
+                endpoint: None,
+                relay: None,
+                problem: Some("bind failed".into()),
+            },
+            Response::RemotePairing {
+                code: "hqp2|x".into(),
+                expires_in_secs: 120,
+            },
+            Response::RemotePairUsed {
+                device: "Pixel 8".into(),
+            },
+            Response::RemotePairExpired {
+                reason: "expired".into(),
+            },
+            Response::RemoteDevices {
+                devices: vec![RemoteDevice {
+                    id: "abc".into(),
+                    name: "Pixel 8".into(),
+                    paired_at: 1,
+                    last_seen_at: Some(2),
+                    connected: true,
+                }],
+            },
+        ] {
+            let bytes = serde_json::to_vec(&response).unwrap();
+            assert_eq!(Response::parse(&bytes).unwrap(), response);
+        }
     }
 
     #[test]

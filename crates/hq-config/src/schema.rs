@@ -15,6 +15,8 @@ const SUPPORTED: &[&str] = &[
     "notifications.needs_you",
     "notifications.replied",
     "updates.check",
+    "remote.enabled",
+    "remote.relays",
     "general.import",
     "general.live_config_reload",
     "window.opacity",

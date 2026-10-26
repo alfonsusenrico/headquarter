@@ -26,6 +26,11 @@ allow = [
     "Unicode-3.0",
     "CC0-1.0",
     "0BSD",
+    # iroh's dependencies for remote control (owner, 2026-10-25): the public-domain style
+    # Unlicense (async_io_stream, pharos, ws_stream_wasm) and the Mozilla CA bundle's
+    # permissive data licence (webpki-roots, webpki-root-certs).
+    "Unlicense",
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 # The list is policy, not inventory; allowances may be unused today.

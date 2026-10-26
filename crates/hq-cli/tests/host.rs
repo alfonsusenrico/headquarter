@@ -89,6 +89,8 @@ impl TestEnv {
             .env("SHELL", "/nonexistent/shell")
             // Nor an agent installed system-wide (Homebrew, /usr/local/bin).
             .env("HQ_SYSTEM_BIN_DIRS", "")
+            // Remote control stays on this machine: direct addresses, no public relays.
+            .env("HQ_REMOTE_RELAYS", "none")
             .env("HQ_IDLE_EXIT_SECS", "60")
             .env_remove("HQ_SESSION");
         command
@@ -2966,4 +2968,535 @@ esac
         }
     }
     assert!(!plain_saw_usage, "usage goes only to those who asked");
+}
+
+/// A phone for remote control tests: an iroh endpoint with its own key and no relays,
+/// speaking the host's frames over one stream (add-remote-gateway).
+struct Phone {
+    runtime: tokio::runtime::Runtime,
+    endpoint: iroh::Endpoint,
+    connection: Option<iroh::endpoint::Connection>,
+    send: Option<iroh::endpoint::SendStream>,
+    recv: Option<iroh::endpoint::RecvStream>,
+}
+
+impl Phone {
+    fn new() -> Phone {
+        Phone::with_key(iroh::SecretKey::generate())
+    }
+
+    fn with_key(key: iroh::SecretKey) -> Phone {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let endpoint = runtime
+            .block_on(hq_remote::bind(key, &hq_remote::Relays::Disabled, &[]))
+            .unwrap();
+        Phone {
+            runtime,
+            endpoint,
+            connection: None,
+            send: None,
+            recv: None,
+        }
+    }
+
+    fn connect(&mut self, code: &str) {
+        let code = hq_remote::PairingCode::parse(code).unwrap();
+        let (connection, send, recv) = self.runtime.block_on(async {
+            let connection =
+                tokio::time::timeout(WAIT, self.endpoint.connect(code.addr(), hq_remote::ALPN))
+                    .await
+                    .expect("connected in time")
+                    .expect("connected");
+            let (send, recv) = connection.open_bi().await.unwrap();
+            (connection, send, recv)
+        });
+        self.connection = Some(connection);
+        self.send = Some(send);
+        self.recv = Some(recv);
+    }
+
+    fn send(&mut self, frame: &Frame) {
+        let send = self.send.as_mut().unwrap();
+        self.runtime
+            .block_on(hq_remote::write_frame(send, frame))
+            .unwrap();
+    }
+
+    fn request(&mut self, request: &Request) {
+        self.send(&Frame::request(request));
+    }
+
+    /// The next frame, or `None` once the host closed the connection.
+    fn next(&mut self) -> Option<Frame> {
+        let recv = self.recv.as_mut().unwrap();
+        self.runtime.block_on(async {
+            match tokio::time::timeout(WAIT, hq_remote::read_frame(recv)).await {
+                Ok(Ok(frame)) => frame,
+                Ok(Err(_)) => None,
+                Err(_) => panic!("no frame in time"),
+            }
+        })
+    }
+
+    fn next_response(&mut self) -> Option<Response> {
+        loop {
+            match self.next()? {
+                Frame::Control(bytes) => return Some(Response::parse(&bytes).unwrap()),
+                _ => continue,
+            }
+        }
+    }
+
+    fn output_until(&mut self, needle: &str) -> String {
+        let mut seen = String::new();
+        while !seen.contains(needle) {
+            match self.next() {
+                Some(Frame::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+                Some(_) => {}
+                None => panic!("closed before `{needle}`; got {seen:?}"),
+            }
+        }
+        seen
+    }
+
+    fn pair(&mut self, code: &str, name: &str) -> Option<Response> {
+        self.connect(code);
+        let secret = hq_remote::PairingCode::parse(code).unwrap().secret;
+        self.request(&Request::Pair {
+            secret,
+            name: name.to_owned(),
+        });
+        self.next_response()
+    }
+}
+
+impl TestEnv {
+    /// Turns remote control on and shows a pairing code on a connection kept to hear
+    /// when it is used.
+    fn remote_on_and_pair(&self) -> (Conn, String) {
+        let mut local = self.connect();
+        match local.request(&Request::RemoteSet { enabled: true }) {
+            Response::RemoteStatus { running: true, .. } => {}
+            other => panic!("remote did not start: {other:?}"),
+        }
+        let mut shower = self.connect();
+        let code = match shower.request(&Request::RemotePair {}) {
+            Response::RemotePairing { code, .. } => code,
+            other => panic!("no code: {other:?}"),
+        };
+        (shower, code)
+    }
+}
+
+#[test]
+fn a_paired_phone_follows_types_and_is_held_to_the_allow_list() {
+    let mut env = TestEnv::new("remote");
+    env.stub("agy", INTERACTIVE_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    let (mut shower, code) = env.remote_on_and_pair();
+
+    let mut phone = Phone::new();
+    assert!(matches!(
+        phone.pair(&code, "Test Phone"),
+        Some(Response::Paired { .. })
+    ));
+    assert!(matches!(
+        shower.next_response(),
+        Response::RemotePairUsed { device } if device == "Test Phone"
+    ));
+
+    phone.request(&Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    });
+    assert!(matches!(
+        phone.next_response(),
+        Some(Response::Welcome { .. })
+    ));
+    phone.request(&Request::List {});
+    match phone.next_response() {
+        Some(Response::Sessions { sessions, .. }) => {
+            assert!(sessions.iter().any(|listed| listed.id == session.id));
+        }
+        other => panic!("unexpected list answer {other:?}"),
+    }
+    phone.request(&Request::Attach {
+        session: session.id.clone(),
+        cols: 54,
+        rows: 40,
+    });
+    assert!(matches!(
+        phone.next_response(),
+        Some(Response::Attached { .. })
+    ));
+    phone.output_until("stub-ready");
+    phone.send(&Frame::Input(b"from-the-phone\n".to_vec()));
+    phone.output_until("got:from-the-phone");
+
+    // Refused, and the connection carries on.
+    for refused in [
+        Request::New {
+            agent: Agent::Agy,
+            cwd: "/".into(),
+            args: vec![],
+            term: None,
+            name: None,
+            group: None,
+        },
+        Request::Rename {
+            session: session.id.clone(),
+            name: "renamed".into(),
+        },
+        Request::Stop {},
+        Request::RemotePair {},
+    ] {
+        phone.request(&refused);
+        match phone.next_response() {
+            Some(Response::Error { code, .. }) => assert_eq!(code, ErrorCode::NotAllowed),
+            other => panic!("{refused:?} was not refused: {other:?}"),
+        }
+    }
+    assert_ne!(env.session(&session.id).name, "renamed");
+
+    let mut local = env.connect();
+    match local.request(&Request::RemoteDevices {}) {
+        Response::RemoteDevices { devices } => {
+            assert_eq!(devices.len(), 1);
+            assert_eq!(devices[0].name, "Test Phone");
+            assert!(devices[0].connected && devices[0].last_seen_at.is_some());
+        }
+        other => panic!("unexpected devices answer {other:?}"),
+    }
+
+    // The log names the phone, never what it typed or the code.
+    let log = env.log();
+    assert!(log.contains("remote paired device=Test Phone"), "{log}");
+    assert!(log.contains("remote connected device=Test Phone"), "{log}");
+    assert!(log.contains("remote refused request=new"), "{log}");
+    assert!(!log.contains("from-the-phone"), "{log}");
+    let secret = hq_remote::PairingCode::parse(&code).unwrap().secret;
+    assert!(!log.contains(&secret), "{log}");
+
+    // Removed: cut off at once, refused afterwards.
+    assert!(matches!(
+        local.request(&Request::RemoteRemove {
+            device: "test phone".into()
+        }),
+        Response::Done
+    ));
+    while phone.next().is_some() {}
+    let key = phone.endpoint.secret_key().clone();
+    drop(phone);
+    let mut again = Phone::with_key(key);
+    again.connect(&code);
+    again.request(&Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    });
+    match again.next_response() {
+        Some(Response::Error { code, .. }) => assert_eq!(code, ErrorCode::NotAllowed),
+        other => panic!("a removed phone got {other:?}"),
+    }
+    assert_eq!(again.next(), None, "and is closed");
+}
+
+#[test]
+fn pairing_codes_work_once_and_briefly() {
+    let mut env = TestEnv::new("pairing");
+    let daemon = env
+        .command()
+        .env("HQ_REMOTE_PAIR_SECS", "2")
+        .arg("daemon")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    env.daemons.push(daemon);
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+
+    // An unknown phone without a code learns nothing.
+    let (mut shower, code) = env.remote_on_and_pair();
+    let mut stranger = Phone::new();
+    stranger.connect(&code);
+    stranger.request(&Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    });
+    match stranger.next_response() {
+        Some(Response::Error { code, .. }) => assert_eq!(code, ErrorCode::NotAllowed),
+        other => panic!("a stranger got {other:?}"),
+    }
+    assert_eq!(stranger.next(), None);
+
+    // Used once: a second phone with the same code is refused.
+    assert!(matches!(
+        Phone::new().pair(&code, "First"),
+        Some(Response::Paired { .. })
+    ));
+    assert!(matches!(
+        shower.next_response(),
+        Response::RemotePairUsed { .. }
+    ));
+    assert!(matches!(
+        Phone::new().pair(&code, "Second"),
+        Some(Response::Error { .. })
+    ));
+
+    // Expired after its time.
+    let code = match shower.request(&Request::RemotePair {}) {
+        Response::RemotePairing { code, .. } => code,
+        other => panic!("no code: {other:?}"),
+    };
+    assert!(matches!(
+        shower.next_response(),
+        Response::RemotePairExpired { .. }
+    ));
+    assert!(matches!(
+        Phone::new().pair(&code, "Late"),
+        Some(Response::Error { .. })
+    ));
+
+    // Five wrong codes void the one shown.
+    let code = match shower.request(&Request::RemotePair {}) {
+        Response::RemotePairing { code, .. } => code,
+        other => panic!("no code: {other:?}"),
+    };
+    let wrong = format!("{}{}", &code[..code.len() - 26], "a".repeat(26));
+    for _ in 0..5 {
+        assert!(matches!(
+            Phone::new().pair(&wrong, "Guess"),
+            Some(Response::Error { .. })
+        ));
+    }
+    assert!(matches!(
+        shower.next_response(),
+        Response::RemotePairExpired { reason } if reason.contains("wrong")
+    ));
+    assert!(matches!(
+        Phone::new().pair(&code, "Right but late"),
+        Some(Response::Error { .. })
+    ));
+
+    // Withdrawn when the client showing it leaves.
+    let mut leaving = env.connect();
+    let code = match leaving.request(&Request::RemotePair {}) {
+        Response::RemotePairing { code, .. } => code,
+        other => panic!("no code: {other:?}"),
+    };
+    leaving.close();
+    wait_until("the code withdrawn", || {
+        env.log().contains("remote pairing code withdrawn")
+    });
+    assert!(matches!(
+        Phone::new().pair(&code, "After close"),
+        Some(Response::Error { .. })
+    ));
+
+    let mut local = env.connect();
+    match local.request(&Request::RemoteDevices {}) {
+        Response::RemoteDevices { devices } => {
+            let names: Vec<String> = devices.into_iter().map(|device| device.name).collect();
+            assert_eq!(names, ["First"]);
+        }
+        other => panic!("unexpected devices answer {other:?}"),
+    }
+}
+
+#[test]
+fn turning_remote_control_off_closes_phones_and_keeps_the_host() {
+    let mut env = TestEnv::new("remoteoff");
+    env.start_daemon();
+    let (_shower, code) = env.remote_on_and_pair();
+    let mut phone = Phone::new();
+    assert!(matches!(
+        phone.pair(&code, "Phone"),
+        Some(Response::Paired { .. })
+    ));
+    let mut local = env.connect();
+    match local.request(&Request::RemoteSet { enabled: false }) {
+        Response::RemoteStatus { running, .. } => assert!(!running),
+        other => panic!("unexpected answer {other:?}"),
+    }
+    while phone.next().is_some() {}
+    assert!(env.log().contains("remote disabled"));
+    assert!(matches!(
+        local.request(&Request::RemotePair {}),
+        Response::Error {
+            code: ErrorCode::RemoteOff,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn the_terminal_is_sized_for_the_device_in_use() {
+    let mut env = TestEnv::new("inuse");
+    env.stub("agy", SIZE_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    let attach = |conn: &mut Conn, cols, rows| {
+        assert!(matches!(
+            conn.request(&Request::Attach {
+                session: session.id.clone(),
+                cols,
+                rows
+            }),
+            Response::Attached { .. }
+        ));
+    };
+    let mut desktop = env.connect();
+    attach(&mut desktop, 160, 45);
+    desktop.output_until("stub-ready");
+    let mut phone = env.connect();
+    attach(&mut phone, 54, 40);
+    desktop.output_until("size:40 54");
+
+    // Back on the desktop.
+    desktop.send(&Request::Focus {});
+    desktop.output_until("size:45 160");
+    // The phone types: its size.
+    phone.send_frame(&Frame::Input(b"x".to_vec()));
+    desktop.output_until("size:40 54");
+    // A desktop resize while the phone is in use waits; a terminal reply does not count
+    // as using the desktop.
+    desktop.send(&Request::Resize {
+        cols: 150,
+        rows: 45,
+    });
+    desktop.send_frame(&Frame::Input(b"\x1b[?6c".to_vec()));
+    desktop.send(&Request::Focus {});
+    let seen = desktop.output_until("size:45 150");
+    assert!(!seen.contains("size:45 160"), "{seen}");
+    // The phone leaves while not in use: nothing changes; then the desktop is alone.
+    phone.send_frame(&Frame::Input(b"y".to_vec()));
+    desktop.output_until("size:40 54");
+    assert!(matches!(
+        phone.request(&Request::Detach {}),
+        Response::Detached
+    ));
+    desktop.output_until("size:45 150");
+}
+
+#[test]
+fn hq_remote_turns_on_pairs_lists_and_removes() {
+    let mut env = TestEnv::new("remotecli");
+    env.settings("# kept\n[font]\nsize = 15\n");
+    env.start_daemon();
+    let on = env.hq(&["remote", "on"]);
+    assert!(on.status.success(), "{on:?}");
+    assert!(String::from_utf8_lossy(&on.stdout).contains("Remote control is on."));
+    let settings =
+        std::fs::read_to_string(env.root.join("config/headquarter/config.toml")).unwrap();
+    assert!(
+        settings.starts_with("# kept\n[font]\nsize = 15\n"),
+        "{settings}"
+    );
+    assert!(settings.contains("[remote]\nenabled = true"), "{settings}");
+
+    // `pair` waits for the phone and names it.
+    let mut pair = env
+        .command()
+        .args(["remote", "pair"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut out = BufReader::new(pair.stdout.take().unwrap());
+    let code = loop {
+        let mut line = String::new();
+        assert!(
+            std::io::BufRead::read_line(&mut out, &mut line).unwrap() > 0,
+            "no code printed"
+        );
+        if line.starts_with("hqp2|") {
+            break line.trim().to_owned();
+        }
+    };
+    assert!(matches!(
+        Phone::new().pair(&code, "Pixel Test"),
+        Some(Response::Paired { .. })
+    ));
+    let mut rest = String::new();
+    std::io::Read::read_to_string(&mut out, &mut rest).unwrap();
+    assert!(pair.wait().unwrap().success());
+    assert!(rest.contains("Paired Pixel Test."), "{rest}");
+
+    let devices = env.hq(&["remote", "devices"]);
+    assert!(String::from_utf8_lossy(&devices.stdout).contains("Pixel Test"));
+    let removed = env.hq(&["remote", "remove", "pixel test"]);
+    assert!(removed.status.success(), "{removed:?}");
+    let devices = env.hq(&["remote", "devices"]);
+    assert!(String::from_utf8_lossy(&devices.stdout).contains("No paired phones"));
+
+    let off = env.hq(&["remote", "off"]);
+    assert!(String::from_utf8_lossy(&off.stdout).contains("Remote control is off."));
+    let settings =
+        std::fs::read_to_string(env.root.join("config/headquarter/config.toml")).unwrap();
+    assert!(settings.contains("enabled = false"), "{settings}");
+}
+
+#[test]
+fn a_host_started_with_remote_control_on_runs_the_gateway() {
+    let mut env = TestEnv::new("remotestart");
+    env.settings("[remote]\nenabled = true\n");
+    env.start_daemon();
+    wait_until("the gateway", || {
+        matches!(
+            env.connect().request(&Request::RemoteStatus {}),
+            Response::RemoteStatus {
+                enabled: true,
+                running: true,
+                ..
+            }
+        )
+    });
+    assert!(env.log().contains("remote enabled"), "{}", env.log());
+}
+
+#[test]
+fn remote_control_keeps_an_idle_host_up() {
+    let mut env = TestEnv::new("remoteidle");
+    env.settings("[remote]\nenabled = true\n");
+    let daemon = env
+        .command()
+        .env("HQ_IDLE_EXIT_SECS", "1")
+        .arg("daemon")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    env.daemons.push(daemon);
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    wait_until("the gateway", || env.log().contains("remote enabled"));
+    // Idle for well past the timeout with no client: a phone could not start it again.
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(
+        env.daemons[0].try_wait().unwrap().is_none(),
+        "the host exited"
+    );
+    // Turned off, the host idles out as before.
+    let mut local = env.connect();
+    assert!(matches!(
+        local.request(&Request::RemoteSet { enabled: false }),
+        Response::RemoteStatus { running: false, .. }
+    ));
+    local.close();
+    // Watch the process, not the socket: every connection counts as a client.
+    let deadline = Instant::now() + WAIT;
+    while env.daemons[0].try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "the idle host did not exit:\n{}",
+            env.log()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(env.log().contains("reason=idle"), "{}", env.log());
 }

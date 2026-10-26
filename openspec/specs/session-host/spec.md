@@ -6,7 +6,7 @@ Keeps every Headquarter agent session in one long-lived place the owner can star
 ## Requirements
 
 ### Requirement: Sessions outlive clients
-The system SHALL keep each agent session it hosts running when the client that started or attached to it disconnects, until the agent exits or the owner ends it, and SHALL then have the agent redraw at the size of the latest client still attached. A client that attaches SHALL receive the terminal modes the agent has in effect before its recent output, however long ago the agent set them.
+The system SHALL keep each agent session it hosts running when the client that started or attached to it disconnects, until the agent exits or the owner ends it, and SHALL then have the agent redraw at the size of the client in use among those still attached. A client that attaches SHALL receive the terminal modes the agent has in effect before its recent output, however long ago the agent set them.
 
 #### Scenario: Terminal closed while attached
 - **WHEN** the owner closes the terminal that is attached to a working session
@@ -254,3 +254,18 @@ The system SHALL, when the host starts, start again on its conversation every si
 #### Scenario: Upgrade
 - **WHEN** the first host of this version starts after an older host was stopped with two sessions running and one session already stopped
 - **THEN** the two start, and the one already stopped is inactive
+
+### Requirement: Terminal size follows the device in use
+The system SHALL size a session's terminal for the client in use: the client that most recently attached to it, typed into it, or brought it to the front. A resize from another attached client SHALL be kept for when that client is in use. When the client in use leaves, the most recently used client still attached SHALL take over.
+
+#### Scenario: Typing on the phone
+- **WHEN** the desktop shows a session at 160 columns and a paired phone at 54 columns types into it
+- **THEN** the agent redraws at 54 columns, on both
+
+#### Scenario: Back on the desktop
+- **WHEN** the owner then brings that session to the front on the desktop, or clicks in its terminal
+- **THEN** the agent redraws at the desktop's 160 columns
+
+#### Scenario: Another client resizes in the background
+- **WHEN** the phone is in use and the desktop window is resized
+- **THEN** the terminal keeps the phone's size, and the desktop's new size applies once the desktop is in use

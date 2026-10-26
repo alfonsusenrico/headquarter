@@ -100,6 +100,7 @@ impl Workspace {
         // Focus in the shell is watching the session too.
         let focus = cx.on_focus(&view.focus_handle(cx), window, |this, window, cx| {
             this.mark_seen_if_watched(window, cx);
+            this.tell_host_in_use(window, cx);
         });
         self.shell = Some(ShellPanel {
             session,

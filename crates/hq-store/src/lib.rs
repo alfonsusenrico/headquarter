@@ -58,7 +58,22 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "start_with_host",
         sql: include_str!("../migrations/0008_start_with_host.sql"),
     },
+    Migration {
+        version: 9,
+        name: "remote_devices",
+        sql: include_str!("../migrations/0009_remote_devices.sql"),
+    },
 ];
+
+/// A phone paired for remote control.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceRow {
+    pub endpoint_id: String,
+    pub name: String,
+    /// Unix milliseconds.
+    pub paired_at: i64,
+    pub last_seen_at: Option<i64>,
+}
 
 /// How a session entered the index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -400,6 +415,60 @@ impl Store {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Records a paired phone, or renames one paired again.
+    pub fn add_device(&self, endpoint_id: &str, name: &str, at: u64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO remote_devices (endpoint_id, name, paired_at, last_seen_at)
+             VALUES (?1, ?2, ?3, ?3)
+             ON CONFLICT(endpoint_id) DO UPDATE SET name = ?2, paired_at = ?3, last_seen_at = ?3",
+            params![endpoint_id, name, millis(at)],
+        )?;
+        Ok(())
+    }
+
+    /// Paired phones, most recently paired first.
+    pub fn devices(&self) -> Result<Vec<DeviceRow>> {
+        let mut statement = self.conn.prepare(
+            "SELECT endpoint_id, name, paired_at, last_seen_at FROM remote_devices
+             ORDER BY paired_at DESC, endpoint_id",
+        )?;
+        let devices = statement
+            .query_map([], |row| {
+                Ok(DeviceRow {
+                    endpoint_id: row.get(0)?,
+                    name: row.get(1)?,
+                    paired_at: row.get(2)?,
+                    last_seen_at: row.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<DeviceRow>>>()?;
+        Ok(devices)
+    }
+
+    pub fn device(&self, endpoint_id: &str) -> Result<Option<DeviceRow>> {
+        Ok(self
+            .devices()?
+            .into_iter()
+            .find(|device| device.endpoint_id == endpoint_id))
+    }
+
+    pub fn touch_device(&self, endpoint_id: &str, at: u64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE remote_devices SET last_seen_at = ?2 WHERE endpoint_id = ?1",
+            params![endpoint_id, millis(at)],
+        )?;
+        Ok(())
+    }
+
+    /// Whether a device was removed.
+    pub fn remove_device(&self, endpoint_id: &str) -> Result<bool> {
+        let removed = self.conn.execute(
+            "DELETE FROM remote_devices WHERE endpoint_id = ?1",
+            params![endpoint_id],
+        )?;
+        Ok(removed > 0)
     }
 
     /// The owner's groups, in the owner's order.
@@ -1008,6 +1077,36 @@ mod tests {
         let moved = store.get("h").unwrap().unwrap();
         assert_eq!(moved.last_activity_at, 5_000);
         assert_eq!(moved.status, Status::Inactive);
+    }
+
+    #[test]
+    fn paired_devices_are_kept_touched_and_removed() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.devices().unwrap().is_empty());
+        store.add_device("aa", "Pixel 8", 1_000).unwrap();
+        store.add_device("bb", "Galaxy", 2_000).unwrap();
+        let names: Vec<String> = store
+            .devices()
+            .unwrap()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(names, ["Galaxy", "Pixel 8"], "most recently paired first");
+        store.touch_device("aa", 5_000).unwrap();
+        assert_eq!(
+            store.device("aa").unwrap().unwrap().last_seen_at,
+            Some(5_000)
+        );
+        store.add_device("aa", "Pixel 8 Pro", 6_000).unwrap();
+        let again = store.device("aa").unwrap().unwrap();
+        assert_eq!(
+            (again.name.as_str(), again.paired_at),
+            ("Pixel 8 Pro", 6_000),
+            "paired again"
+        );
+        assert!(store.remove_device("aa").unwrap());
+        assert!(!store.remove_device("aa").unwrap(), "already gone");
+        assert_eq!(store.devices().unwrap().len(), 1);
     }
 
     #[test]

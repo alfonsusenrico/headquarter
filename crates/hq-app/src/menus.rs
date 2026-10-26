@@ -12,6 +12,7 @@ actions!(
     [
         About,
         CheckForUpdates,
+        RemoteControl,
         ThemeSwitcher,
         Hide,
         HideOthers,
@@ -60,6 +61,7 @@ pub fn install(cx: &mut App) {
         Menu::new("Headquarter").items([
             MenuItem::action("About Headquarter", About),
             MenuItem::action("Check for Updates…", CheckForUpdates),
+            MenuItem::action("Remote Control…", RemoteControl),
             MenuItem::separator(),
             MenuItem::action("Themes…", ThemeSwitcher),
             MenuItem::separator(),
