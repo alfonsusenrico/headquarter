@@ -805,6 +805,156 @@ fn hooks_route_to_their_own_session_and_stay_out_of_the_log() {
     assert!(!log.contains("recording-stub"));
 }
 
+/// Sends a hook event as the forwarder of the agent launched for `session` would, from
+/// Claude Code `conversation`. Each hook is its own connection, served on its own thread,
+/// so events are spaced as an agent's are to arrive in order.
+fn send_hook(env: &TestEnv, session: &str, conversation: &str, fields: &str) {
+    let payload = ForwardedPayload {
+        agent: "claude".into(),
+        raw: format!(r#"{{"session_id":"{conversation}",{fields}}}"#),
+        session: Some(session.to_owned()),
+    };
+    let mut hooks = UnixStream::connect(env.host_dir().join("hooks.sock")).unwrap();
+    writeln!(hooks, "{}", serde_json::to_string(&payload).unwrap()).unwrap();
+    drop(hooks);
+    std::thread::sleep(Duration::from_millis(100));
+}
+
+/// Claude Code's own daemon runs other conversations with the launch environment of the
+/// session that started it, so they report under that session (fix-hook-session-match).
+#[test]
+fn a_report_from_another_claude_conversation_leaves_the_session_alone() {
+    let mut env = TestEnv::new("foreign");
+    env.stub("claude", RECORDING_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Claude);
+    let own = session.id.clone();
+    send_hook(
+        &env,
+        &own,
+        &own,
+        r#""hook_event_name":"SessionStart","source":"startup""#,
+    );
+    send_hook(&env, &own, &own, r#""hook_event_name":"UserPromptSubmit""#);
+    env.wait_status(&own, Status::Working);
+
+    send_hook(
+        &env,
+        &own,
+        "daemon-conversation",
+        r#""hook_event_name":"SessionStart","source":"startup""#,
+    );
+    send_hook(
+        &env,
+        &own,
+        "daemon-conversation",
+        r#""hook_event_name":"Notification","notification_type":"permission_prompt""#,
+    );
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(env.session(&own).status, Status::Working);
+    assert_eq!(
+        env.log().matches("hook from another conversation").count(),
+        1,
+        "logged once a minute"
+    );
+
+    let mut follower = env.connect();
+    assert!(matches!(
+        follower.request(&Request::Subscribe { usage: false }),
+        Response::Done
+    ));
+    follower.send(&Request::FollowDetails {
+        session: Some(own.clone()),
+    });
+    for (conversation, model) in [
+        ("daemon-conversation", "FOREIGN-MODEL"),
+        (own.as_str(), "OWN-MODEL"),
+    ] {
+        let payload = ForwardedPayload {
+            agent: "details".into(),
+            raw: format!(r#"{{"model":"{model}","session_id":"{conversation}"}}"#),
+            session: Some(own.clone()),
+        };
+        let mut hooks = UnixStream::connect(env.host_dir().join("hooks.sock")).unwrap();
+        writeln!(hooks, "{}", serde_json::to_string(&payload).unwrap()).unwrap();
+    }
+    let reported = loop {
+        match follower.next_response() {
+            Response::DetailsChanged { details, .. } if details.model.is_some() => break details,
+            _ => continue,
+        }
+    };
+    assert_eq!(reported.model.as_deref(), Some("OWN-MODEL"));
+
+    send_hook(
+        &env,
+        &own,
+        &own,
+        r#""hook_event_name":"PermissionRequest","tool_name":"Bash""#,
+    );
+    env.wait_status(&own, Status::NeedsYou);
+}
+
+/// A resume can give the conversation a new id, and `/clear` starts a new one in place; the
+/// session follows its agent's own starts.
+#[test]
+fn a_claude_session_follows_the_conversation_its_agent_starts() {
+    let mut env = TestEnv::new("follows");
+    env.stub("claude", RECORDING_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Claude);
+    let id = session.id.clone();
+
+    send_hook(
+        &env,
+        &id,
+        "resumed-as",
+        r#""hook_event_name":"SessionStart","source":"resume""#,
+    );
+    send_hook(
+        &env,
+        &id,
+        "resumed-as",
+        r#""hook_event_name":"UserPromptSubmit""#,
+    );
+    env.wait_status(&id, Status::Working);
+    assert_eq!(
+        env.session(&id).agent_session_id.as_deref(),
+        Some("resumed-as")
+    );
+
+    send_hook(
+        &env,
+        &id,
+        "cleared-to",
+        r#""hook_event_name":"SessionStart","source":"clear""#,
+    );
+    send_hook(
+        &env,
+        &id,
+        "cleared-to",
+        r#""hook_event_name":"PermissionRequest","tool_name":"Bash""#,
+    );
+    env.wait_status(&id, Status::NeedsYou);
+    assert_eq!(
+        env.session(&id).agent_session_id.as_deref(),
+        Some("cleared-to")
+    );
+
+    send_hook(
+        &env,
+        &id,
+        "resumed-as",
+        r#""hook_event_name":"UserPromptSubmit""#,
+    );
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(
+        env.session(&id).status,
+        Status::NeedsYou,
+        "the old conversation is no longer its own"
+    );
+}
+
 /// Reports a turn with OSC 7501, then waits.
 const PROGRAM_STATUS_STUB: &str = r#"printf '\033]7501;state=working\007'
 sleep 1

@@ -73,7 +73,15 @@ fn forward_details(socket: &Path, input: &[u8]) {
         return;
     };
     let details = crate::details::from_claude_status_line(&value);
-    let Ok(raw) = serde_json::to_string(&details) else {
+    let Ok(serde_json::Value::Object(mut report)) = serde_json::to_value(&details) else {
+        return;
+    };
+    // The conversation lets the host tell this session's figures from those of another
+    // Claude Code conversation started with the same environment (fix-hook-session-match).
+    if let Some(conversation) = value.get("session_id").and_then(serde_json::Value::as_str) {
+        report.insert("session_id".to_owned(), conversation.into());
+    }
+    let Ok(raw) = serde_json::to_string(&report) else {
         return;
     };
     let session = std::env::var(SESSION_ENV).ok();
