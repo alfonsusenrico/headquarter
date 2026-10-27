@@ -2,12 +2,12 @@
 
 ## 1. App
 
-- [ ] 1.1 Attach on the first layout at the pane's size, 80 x 24 after 500 ms without one, for the session and the shell panel (D1). Evidence: unit test that no attach starts before a size and that the first size is used, the dev app attaching (host log shows no 80 x 24 resize).
+- [ ] 1.1 Attach on the first layout at the pane's size, 80 x 24 after 500 ms without one, for the session and the shell panel (D1). Evidence: the dev app attaching to a stub agent that logs every size it sees: no 80 x 24 among them. Built 2026-10-27 (`TerminalSession::start`, `set_size`). The on-screen part waits for task 3.1.
 
 ## 2. Host
 
-- [ ] 2.1 Redraw: shrink, restore after the agent's next output or 500 ms, off the request path, a newer redraw replacing a pending one (D2). Evidence: host tests with a stub agent that records the sizes it sees (SIGWINCH): one row fewer, then the full size, as two separate changes, a silent agent restored after 500 ms, two quick attaches ending at the latest size.
-- [ ] 2.2 The harness against Claude Code: attach at the real size gets a full repaint. Evidence: `research/prototypes/attach-repro` run, repaint counts.
+- [x] 2.1 Redraw: shrink, restore after the agent's repaint (erase screen) or 500 ms, off the request path, a newer size change replacing a pending restore (D2). Evidence: host tests with a stub agent that records the sizes it sees (SIGWINCH): one row fewer, then the full size, as two separate changes, a silent agent restored after 500 ms, two quick attaches ending at the latest size. Done 2026-10-27: `attaching_at_the_agents_own_size_still_makes_it_repaint` (the stub logs `29 100` then `30 100`, twice), `a_silent_agent_gets_its_size_back_after_a_redraw`, `quick_attaches_end_at_the_latest_size`. The first two fail on the old host.
+- [x] 2.2 The harness against Claude Code: attach at the real size gets a full repaint. Evidence: `research/prototypes/attach-repro` run, repaint counts. Done 2026-10-27: Claude Code 2.1.311, 5 of 5 attaches at its own size repainted twice (at 11 ms and 28 ms), against 0 of 5 before (`research/evidence/fix-reattach-redraw/claude-attach-after-fix.log`).
 
 ## 3. On screen
 

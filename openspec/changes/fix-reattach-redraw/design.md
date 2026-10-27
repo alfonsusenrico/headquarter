@@ -20,17 +20,20 @@ frame into the catch-up buffer and the viewer on every attach.
 
 ### D2. A redraw the agent notices
 
-`redraw_at` shrinks the terminal by one row, then restores it once the agent has written output
-after the shrink (it handled the size) or after 500 ms, whichever comes first. It runs on a
-short-lived thread per session. A newer redraw for the same session cancels a pending restore
-and starts again, so the final size is always the latest viewer's.
+`redraw_at` shrinks the terminal by one row, then restores it once the agent erases its screen
+(`ESC [2J`, how the full repaint a size change asks for starts) or after 500 ms, whichever comes
+first. A short-lived thread per redraw waits for that. Any other size change (a viewer's
+resize, a viewer taking the session over, a newer redraw) cancels a pending restore, so the
+final size is always the latest. A viewer's resize to the size it already has changes nothing,
+so the app's resize right after attaching cannot cut a redraw short.
 
 Measured: restoring at once gave no repaint, restoring 5 ms or more later gave two (the smaller
-size and the restored one). Waiting for the agent's output rather than a fixed delay covers a
-busy agent that handles signals late.
+size and the restored one). Any output is not enough of a signal: a working agent writes
+output it had queued before it handled the size change.
 
 Rejected:
 - A fixed delay alone: a busy agent can miss it.
+- Any output as the signal: see above.
 - Sending the agent a redraw key (Ctrl-L): agent-specific, and it reaches the agent as typed
   input.
 
@@ -38,5 +41,5 @@ Rejected:
 
 - The agent shows one row fewer for up to 500 ms after an attach. The viewer sees the agent's
   repaint at the smaller size, then at the full size.
-- An agent that writes nothing after a resize (a plain shell prompt) costs the full 500 ms
+- An agent that repaints without erasing the screen, or a plain shell, costs the full 500 ms
   before its size is restored. Nothing is drawn wrongly meanwhile.

@@ -1,6 +1,6 @@
 # A correct screen when coming back to a session
 
-Status: awaiting the owner's approval.
+Status: approved by the owner on 2026-10-27 ("ok do both").
 
 ## Why
 
@@ -29,9 +29,10 @@ Two causes together:
 
 - `hq-app`: a terminal attaches only once its pane has a size, at that size (the session and
   the shell panel). If the pane has no size after 500 ms it attaches at 80 x 24 as today.
-- `hq-daemon`: the redraw shrinks the terminal by one row, waits until the agent has drawn at
-  that size (its next output) or 500 ms, then restores the size. It runs off the request path,
-  and a newer redraw of the same session replaces a pending one.
+- `hq-daemon`: the redraw shrinks the terminal by one row, waits until the agent repaints at
+  that size (it erases the screen) or 500 ms, then restores the size. It runs off the request
+  path, and any newer size change replaces a pending restore. A resize to the size a viewer
+  already has is ignored.
 
 ## Non-goals
 

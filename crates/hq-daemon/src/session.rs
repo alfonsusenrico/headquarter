@@ -5,7 +5,8 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use hq_protocol::{Frame, Response};
 use hq_signals::event::{Agent, EventKind, NeedsReason};
@@ -18,6 +19,19 @@ use crate::modes::Modes;
 /// Output kept for clients that attach later.
 pub const CATCH_UP_BYTES: usize = 1024 * 1024;
 const CATCH_UP_CHUNK: usize = 64 * 1024;
+/// The longest a redraw keeps the agent's terminal one row short (fix-reattach-redraw).
+const REDRAW_WAIT: Duration = Duration::from_millis(500);
+/// Erase the screen: how agents start the full repaint a size change asks for.
+const ERASE_SCREEN: &[u8] = b"\x1b[2J";
+
+/// A redraw in progress (fix-reattach-redraw): the size to restore once the agent has
+/// repainted at one row fewer. Any later size change replaces it (`generation`).
+#[derive(Default)]
+struct Redraw {
+    generation: u64,
+    restore: Option<(u16, u16)>,
+    repainted: bool,
+}
 
 /// What a connection's writer thread sends to its client.
 pub enum Outgoing {
@@ -65,6 +79,8 @@ pub struct Hosted {
     viewers: Mutex<Vec<Viewer>>,
     /// Lock order: viewers, then in_use.
     in_use: Mutex<InUse>,
+    redraw: Mutex<Redraw>,
+    repainted: Condvar,
     tracker: Mutex<SessionTracker>,
     reported: Mutex<Option<(Status, Option<NeedsReason>)>>,
     /// Set once a close has started, so a second request does nothing and the session
@@ -147,6 +163,8 @@ impl Hosted {
             }),
             viewers: Mutex::new(Vec::new()),
             in_use: Mutex::new(InUse::default()),
+            redraw: Mutex::new(Redraw::default()),
+            repainted: Condvar::new(),
             tracker: Mutex::new(parts.tracker),
             reported: Mutex::new(None),
             closing: AtomicBool::new(false),
@@ -185,7 +203,7 @@ impl Hosted {
             (was != Some(viewer_id)).then_some((viewer.cols, viewer.rows))
         };
         if let Some((cols, rows)) = new_size {
-            let _ = lock(&self.master).resize(size(cols, rows));
+            self.set_size(cols, rows);
         }
     }
 
@@ -295,12 +313,28 @@ impl Hosted {
                 .send(Outgoing::Frame(Frame::Output(bytes.to_vec())))
                 .is_ok()
         });
+        drop(buffer);
+        self.note_repaint(bytes);
+    }
+
+    /// While a redraw waits, the agent erasing its screen is its repaint at the smaller size.
+    fn note_repaint(&self, bytes: &[u8]) {
+        let mut redraw = lock(&self.redraw);
+        if redraw.restore.is_some()
+            && !redraw.repainted
+            && bytes
+                .windows(ERASE_SCREEN.len())
+                .any(|window| window == ERASE_SCREEN)
+        {
+            redraw.repainted = true;
+            self.repainted.notify_all();
+        }
     }
 
     /// Adds a viewer: sends the catch-up buffer, then resizes the PTY so the agent
     /// redraws at the viewer's size.
     /// Adds a viewer, which is then in use: the agent redraws at its size.
-    pub fn attach(&self, viewer: Viewer) {
+    pub fn attach(self: &Arc<Self>, viewer: Viewer) {
         let (cols, rows) = (viewer.cols, viewer.rows);
         let id = viewer.id;
         {
@@ -329,7 +363,7 @@ impl Hosted {
 
     /// Removes a viewer. When it was in use, the most recently used viewer still attached
     /// takes over and the agent redraws at its size, so no screen is left misdrawn.
-    pub fn detach(&self, viewer_id: u64) {
+    pub fn detach(self: &Arc<Self>, viewer_id: u64) {
         let next = {
             let mut viewers = lock(&self.viewers);
             let before = viewers.len();
@@ -363,6 +397,10 @@ impl Hosted {
             let Some(viewer) = viewers.iter_mut().find(|viewer| viewer.id == viewer_id) else {
                 return;
             };
+            // The same size again changes nothing, and must not cut a redraw short.
+            if (viewer.cols, viewer.rows) == (cols, rows) {
+                return;
+            }
             viewer.cols = cols;
             viewer.rows = rows;
             lock(&self.in_use)
@@ -370,16 +408,55 @@ impl Hosted {
                 .is_none_or(|active| active == viewer_id)
         };
         if applies {
-            let _ = lock(&self.master).resize(size(cols, rows));
+            self.set_size(cols, rows);
         }
     }
 
-    /// A same-size resize sends no SIGWINCH, so step through a different size to make
-    /// full-screen agents repaint.
-    fn redraw_at(&self, cols: u16, rows: u16) {
-        let master = lock(&self.master);
-        let _ = master.resize(size(cols, rows.saturating_sub(1).max(1)));
-        let _ = master.resize(size(cols, rows));
+    /// Sizes the agent's terminal now, replacing any redraw in progress.
+    fn set_size(&self, cols: u16, rows: u16) {
+        let mut redraw = lock(&self.redraw);
+        redraw.generation += 1;
+        redraw.restore = None;
+        let _ = lock(&self.master).resize(size(cols, rows));
+    }
+
+    /// Makes the agent repaint at `cols` x `rows`, even when that is the size it has: one row
+    /// fewer first, then the size again once the agent has repainted at the smaller size, or
+    /// after `REDRAW_WAIT`. Both steps at once can reach a busy agent as no change at all,
+    /// and it then never repaints (fix-reattach-redraw).
+    fn redraw_at(self: &Arc<Self>, cols: u16, rows: u16) {
+        let generation = {
+            let mut redraw = lock(&self.redraw);
+            redraw.generation += 1;
+            redraw.restore = Some((cols, rows));
+            redraw.repainted = false;
+            let _ = lock(&self.master).resize(size(cols, rows.saturating_sub(1).max(1)));
+            redraw.generation
+        };
+        let hosted = Arc::clone(self);
+        std::thread::spawn(move || hosted.finish_redraw(generation));
+    }
+
+    fn finish_redraw(&self, generation: u64) {
+        let deadline = Instant::now() + REDRAW_WAIT;
+        let mut redraw = lock(&self.redraw);
+        while redraw.generation == generation && !redraw.repainted {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            redraw = self
+                .repainted
+                .wait_timeout(redraw, left)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+        if redraw.generation != generation {
+            return;
+        }
+        if let Some((cols, rows)) = redraw.restore.take() {
+            let _ = lock(&self.master).resize(size(cols, rows));
+        }
     }
 
     /// Tells viewers the agent ended and closes their attach.
