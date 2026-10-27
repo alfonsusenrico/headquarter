@@ -108,6 +108,7 @@ fn allowed(request: &Request) -> bool {
         Request::New { .. }
         | Request::Rename { .. }
         | Request::Kill { .. }
+        | Request::BringIn { .. }
         | Request::Close { .. }
         | Request::Remove { .. }
         | Request::RemoveConversation { .. }

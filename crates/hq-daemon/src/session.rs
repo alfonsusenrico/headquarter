@@ -34,6 +34,7 @@ struct Redraw {
 }
 
 const FOREIGN_LOG_EVERY_MS: u64 = 60_000;
+const CONTINUATION_CHECK_EVERY_MS: u64 = 5_000;
 
 /// The conversation a Claude Code session reports for, and whether its agent has said so
 /// itself yet with a `SessionStart`.
@@ -117,6 +118,8 @@ pub struct Hosted {
     conversation: Mutex<Conversation>,
     /// When a report from another conversation was last logged.
     foreign_logged_ms: Mutex<Option<u64>>,
+    /// When the transcript was last read for a continuation (fix-claude-conversations D1).
+    continuation_checked_ms: Mutex<Option<u64>>,
 }
 
 /// The latest output for clients that attach later, and the terminal modes in effect
@@ -203,6 +206,7 @@ impl Hosted {
                 started: false,
             }),
             foreign_logged_ms: Mutex::new(None),
+            continuation_checked_ms: Mutex::new(None),
         }
     }
 
@@ -232,6 +236,27 @@ impl Hosted {
                 Report::Adopted
             }
         }
+    }
+
+    /// The Claude Code conversation this session reports for, when known.
+    pub fn conversation_id(&self) -> Option<String> {
+        lock(&self.conversation).id.clone()
+    }
+
+    /// Claude Code carried this session's conversation on under `conversation`.
+    pub fn continue_in(&self, conversation: &str) {
+        lock(&self.conversation).id = Some(conversation.to_owned());
+    }
+
+    /// Whether to read the transcript for a continuation now: at most every few seconds,
+    /// since a chatty other conversation would otherwise read it on every report.
+    pub fn check_continuation_now(&self, now_ms: u64) -> bool {
+        let mut last = lock(&self.continuation_checked_ms);
+        if last.is_some_and(|at| now_ms.saturating_sub(at) < CONTINUATION_CHECK_EVERY_MS) {
+            return false;
+        }
+        *last = Some(now_ms);
+        true
     }
 
     /// Whether to log a report from another conversation now: at most once a minute, so a

@@ -161,6 +161,7 @@ mod tests {
         asking.external = Some(External {
             pid: Some(7),
             status: Some(Status::NeedsYou),
+            background: false,
         });
         let posted = notice(
             Some(&session(Status::Working)),

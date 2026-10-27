@@ -265,6 +265,7 @@ mod tests {
         outside.external = Some(External {
             pid: Some(9),
             status: Some(Status::NeedsYou),
+            background: false,
         });
         let mut not_added = session("not-added", "/u/api", Status::NeedsYou, 1);
         not_added.in_sidebar = false;

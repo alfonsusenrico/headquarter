@@ -514,6 +514,7 @@ mod tests {
         elsewhere.external = Some(External {
             pid: Some(5),
             status: None,
+            background: false,
         });
         assert_eq!(Glyph::of(&elsewhere), Glyph::Elsewhere);
         let mut closed = elsewhere.clone();
@@ -560,6 +561,7 @@ mod tests {
         outside.external = Some(External {
             pid: Some(4),
             status: Some(Status::Working),
+            background: false,
         });
         let mut not_added = session("loose", "/u/api", Status::Done, 1);
         not_added.in_sidebar = false;

@@ -180,6 +180,7 @@ impl Host {
             let external = External {
                 pid: session.pid,
                 status: session.status,
+                background: session.background,
             };
             match row {
                 Some(row) => {
@@ -381,6 +382,8 @@ mod tests {
             started_at: Some(1),
             last_activity_at: None,
             status: None,
+            background: false,
+            background_id: None,
         }
     }
 
@@ -455,6 +458,7 @@ mod tests {
         let external = |status| External {
             pid: Some(7),
             status,
+            background: false,
         };
         let waiting = unlinked_entry(
             &session(Agent::Claude, "/w", None),
@@ -494,6 +498,7 @@ mod tests {
             External {
                 pid: Some(42),
                 status: None,
+                background: false,
             },
         );
         assert_eq!(entry.origin, Origin::External);

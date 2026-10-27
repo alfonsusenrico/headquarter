@@ -162,6 +162,20 @@ The system SHALL show, until the host answers with its first session list, the a
 - **WHEN** the owner opens Add sessions before the first list has arrived
 - **THEN** it shows the marks lighting up in turn above "Loading your sessions…" rather than "No sessions match."
 
+### Requirement: Bring a background conversation into Headquarter
+When a session's conversation runs in Claude Code's background, the app SHALL say so on the session pane and offer to bring it into Headquarter, which stops it there and resumes it in the app.
+
+#### Scenario: Opening a session that runs in the background
+- **WHEN** the owner opens a session whose conversation runs in Claude Code's background
+- **THEN** the pane says so, and Bring into Headquarter resumes it in the app
+
+### Requirement: One entry per conversation chain
+Add sessions SHALL show a chain of conversations linked by Claude Code's continuations once, as its newest conversation.
+
+#### Scenario: A conversation continued twice
+- **WHEN** a conversation was continued under two later ids
+- **THEN** Add sessions shows one entry, which opens the newest
+
 ### Requirement: Quitting stops the host
 Quitting the app, by its shortcut, its menu, or the window's close button, SHALL ask whether to stop the host and its sessions (Quit), quit the app only and leave them running (Keep Running), or stay (Cancel). Quit SHALL stop the host before the app ends, and the sessions that were running SHALL resume the next time the app opens.
 

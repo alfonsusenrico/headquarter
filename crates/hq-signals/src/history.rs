@@ -271,11 +271,25 @@ fn read_claude(path: &Path) -> Option<Conversation> {
     let mut agent_name = None;
     let mut entrypoint = None;
     let mut has_message = false;
+    let mut continued = false;
+    let projects = path.parent().and_then(Path::parent);
     for line in BufReader::new(File::open(path).ok()?)
         .lines()
         .map_while(Result::ok)
     {
         has_message = has_message || claude_message(&line);
+        // Carried on under a new id that Claude Code saved: the chain is offered once, as its
+        // newest conversation (fix-claude-conversations D4).
+        if !continued && line.contains("\"continued-in\"") {
+            continued = serde_json::from_str::<Value>(&line)
+                .ok()
+                .filter(|record| record.get("type").and_then(Value::as_str) == Some("continued-in"))
+                .and_then(|record| text(&record, "continuedInSessionId"))
+                .filter(|next| is_conversation_id(next))
+                .zip(projects)
+                .is_some_and(|(next, projects)| claude_transcript(projects, &next).is_some());
+            continue;
+        }
         // Check cheaply before parsing; most lines are messages we never need.
         let wants_cwd = cwd.is_none() && line.contains("\"cwd\"");
         let wants_title = line.contains("ai-title") || line.contains("agent-name");
@@ -308,7 +322,9 @@ fn read_claude(path: &Path) -> Option<Conversation> {
         // `sdk-cli`, `sdk-ts`, …: started through `claude -p` or the Agent SDK. A
         // transcript without a prompt or reply was opened and left, or is the stub Claude
         // Code leaves when a conversation continues under a new id (`continued-in`).
-        offered: has_message && !entrypoint.is_some_and(|entrypoint| entrypoint.starts_with("sdk")),
+        offered: has_message
+            && !continued
+            && !entrypoint.is_some_and(|entrypoint| entrypoint.starts_with("sdk")),
     })
 }
 
@@ -320,6 +336,93 @@ pub fn claude_transcript(projects: &Path, id: &str) -> Option<PathBuf> {
         .flatten()
         .map(|entry| entry.path().join(&name))
         .find(|path| path.is_file())
+}
+
+/// How many `continued-in` records a resume follows, so a broken chain cannot loop.
+const MAX_CONTINUATIONS: usize = 8;
+
+/// The conversations Claude Code carried `transcript` on in: the ids its `continued-in`
+/// records name, in file order (seen with Claude Code 2.1.311 resuming a large transcript). A
+/// conversation resumed twice from the same point has two. Empty when there is no such record
+/// or the file cannot be read.
+pub fn claude_continued_in(transcript: &Path) -> Vec<String> {
+    let Ok(file) = File::open(transcript) else {
+        return Vec::new();
+    };
+    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let mut line = Vec::new();
+    let mut found = Vec::new();
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        // Only the few lines that can hold the record are parsed.
+        let Ok(text) = std::str::from_utf8(&line) else {
+            continue;
+        };
+        if !text.contains("\"continued-in\"") {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(text) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("continued-in") {
+            continue;
+        }
+        if let Some(id) = value
+            .get("continuedInSessionId")
+            .and_then(Value::as_str)
+            .filter(|id| is_conversation_id(id))
+            .filter(|id| !found.iter().any(|known: &String| known == id))
+        {
+            found.push(id.to_owned());
+        }
+    }
+    found
+}
+
+/// The conversation `id` was carried on in, when Claude Code saved both. Of several, the one
+/// whose transcript was written last: the branch the owner went on with, not a later resume
+/// of a stale id (fix-claude-conversations D1).
+pub fn claude_continuation(projects: &Path, id: &str) -> Option<String> {
+    claude_continued_in(&claude_transcript(projects, id)?)
+        .into_iter()
+        .filter_map(|next| {
+            let written = claude_transcript(projects, &next)?
+                .metadata()
+                .ok()?
+                .modified()
+                .ok()?;
+            Some((written, next))
+        })
+        .max_by_key(|(written, _)| *written)
+        .map(|(_, next)| next)
+}
+
+/// The newest conversation along the `continued-in` records from `id`, `id` itself when it
+/// was carried on nowhere. Each step needs the next transcript saved, and no id repeats.
+pub fn claude_latest_conversation(projects: &Path, id: &str) -> String {
+    let mut seen = vec![id.to_owned()];
+    for _ in 0..MAX_CONTINUATIONS {
+        let current = seen.last().expect("seen starts with id");
+        match claude_continuation(projects, current) {
+            Some(next) if !seen.contains(&next) => seen.push(next),
+            _ => break,
+        }
+    }
+    seen.pop().expect("seen starts with id")
+}
+
+/// A Claude conversation id as it names a transcript file: a record from another program's
+/// file must not reach outside the projects folder.
+fn is_conversation_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 fn collect_rollouts(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -536,6 +639,125 @@ mod tests {
     }
 
     const SECRET: &str = "PROMPT-SECRET-77";
+
+    fn continued(from: &str, to: &str) -> String {
+        format!(
+            "{{\"type\":\"continued-in\",\"timestamp\":\"2026-10-27T06:51:57.542Z\",\"sessionId\":\"{from}\",\"continuedInSessionId\":\"{to}\"}}\n"
+        )
+    }
+
+    #[test]
+    fn a_claude_conversation_resumes_where_it_was_carried_on() {
+        let fixture = Fixture::new("continued");
+        let projects = fixture.root.join("claude/projects");
+        let turn = format!("{{\"type\":\"user\",\"message\":{{\"content\":\"{SECRET}\"}}}}\n");
+        fixture.write(
+            "claude/projects/-a/old.jsonl",
+            &format!(
+                "{turn}{}not json\n{}{turn}",
+                continued("old", "gone"),
+                continued("old", "mid")
+            ),
+        );
+        fixture.write(
+            "claude/projects/-a/mid.jsonl",
+            &format!("{turn}{}", continued("mid", "new")),
+        );
+        fixture.write("claude/projects/-b/new.jsonl", &turn);
+
+        assert_eq!(
+            claude_continued_in(&projects.join("-a/old.jsonl")),
+            ["gone", "mid"]
+        );
+        assert_eq!(
+            claude_continuation(&projects, "old").as_deref(),
+            Some("mid"),
+            "an unsaved continuation is passed over"
+        );
+        assert_eq!(claude_latest_conversation(&projects, "old"), "new");
+        assert_eq!(claude_latest_conversation(&projects, "new"), "new");
+        assert_eq!(claude_latest_conversation(&projects, "unknown"), "unknown");
+    }
+
+    /// A conversation carried on under a saved id is offered once, as the newest one; one whose
+    /// continuation was never saved is still offered (fix-claude-conversations D4).
+    #[test]
+    fn a_continued_conversation_is_offered_as_its_newest_only() {
+        let fixture = Fixture::new("continued-offered");
+        let projects = fixture.root.join("claude/projects");
+        let turn = format!(
+            "{{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{{\"content\":\"{SECRET}\"}}}}\n"
+        );
+        fixture.write(
+            "claude/projects/-a/old.jsonl",
+            &format!("{turn}{}", continued("old", "new")),
+        );
+        fixture.write("claude/projects/-a/new.jsonl", &turn);
+        fixture.write(
+            "claude/projects/-a/orphan.jsonl",
+            &format!("{turn}{}", continued("orphan", "never-saved")),
+        );
+
+        let offered = |name: &str| {
+            read_claude(&projects.join(format!("-a/{name}.jsonl")))
+                .unwrap()
+                .offered
+        };
+        assert!(!offered("old"), "continued under a saved id");
+        assert!(offered("new"));
+        assert!(offered("orphan"), "its continuation was never saved");
+    }
+
+    /// 2026-10-27: a conversation continued at 13:51, then resumed from its stale id at 15:47
+    /// and continued again. The branch written last is the one the owner went on with, even
+    /// though its record comes first.
+    #[test]
+    fn of_two_continuations_the_one_written_last_wins() {
+        let fixture = Fixture::new("continued-twice");
+        let projects = fixture.root.join("claude/projects");
+        fixture.write(
+            "claude/projects/-a/old.jsonl",
+            &format!("{}{}", continued("old", "live"), continued("old", "stale")),
+        );
+        fixture.write("claude/projects/-a/stale.jsonl", "{}\n");
+        fixture.write("claude/projects/-a/live.jsonl", "{}\n");
+        let at = |secs| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        for (name, written) in [("stale", 1_000), ("live", 2_000)] {
+            std::fs::File::options()
+                .write(true)
+                .open(projects.join(format!("-a/{name}.jsonl")))
+                .unwrap()
+                .set_modified(at(written))
+                .unwrap();
+        }
+
+        assert_eq!(
+            claude_continuation(&projects, "old").as_deref(),
+            Some("live")
+        );
+        assert_eq!(claude_latest_conversation(&projects, "old"), "live");
+    }
+
+    #[test]
+    fn continuations_never_loop_or_leave_the_projects_folder() {
+        let fixture = Fixture::new("continued-loop");
+        let projects = fixture.root.join("claude/projects");
+        fixture.write("claude/projects/-a/one.jsonl", &continued("one", "two"));
+        fixture.write("claude/projects/-a/two.jsonl", &continued("two", "one"));
+        fixture.write(
+            "claude/projects/-a/away.jsonl",
+            &continued("away", "../../../etc/passwd"),
+        );
+        fixture.write(
+            "claude/projects/-a/unsaved.jsonl",
+            &continued("unsaved", "never-written"),
+        );
+
+        assert_eq!(claude_latest_conversation(&projects, "one"), "two");
+        assert!(claude_continued_in(&projects.join("-a/away.jsonl")).is_empty());
+        assert_eq!(claude_latest_conversation(&projects, "unsaved"), "unsaved");
+        assert!(claude_continued_in(&projects.join("-a/missing.jsonl")).is_empty());
+    }
 
     #[test]
     fn claude_reads_folder_and_prefers_the_agent_name() {

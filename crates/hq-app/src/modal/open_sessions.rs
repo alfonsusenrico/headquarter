@@ -60,6 +60,9 @@ pub struct PickRow {
     pub age: String,
     /// Running in another terminal: tagged "In another terminal".
     pub external: bool,
+    /// Running in Claude Code's own background rather than a terminal, tagged so
+    /// (fix-claude-conversations D3).
+    pub in_background: bool,
     /// False for an outside agent with no known conversation: there is nothing to
     /// continue here later, so it is greyed and cannot be picked.
     pub addable: bool,
@@ -71,6 +74,8 @@ pub struct PickRow {
 /// The tag on a session running in another terminal. It can still be added, to watch
 /// it here and continue it once closed there (owner, 2026-10-23).
 pub const IN_ANOTHER_TERMINAL: &str = "In another terminal";
+/// The tag on a session Claude Code runs in its own background.
+pub const IN_CLAUDE_BACKGROUND: &str = "In Claude Code's background";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickItem {
@@ -190,6 +195,10 @@ pub fn pick_items<Tz: TimeZone>(
             folder: folders::shown(Path::new(&session.cwd), home),
             age: age(now_ms.saturating_sub(session.last_activity_at)),
             external: session.external.is_some(),
+            in_background: session
+                .external
+                .as_ref()
+                .is_some_and(|external| external.background),
             addable: session.origin != Origin::External,
             ways: if session.live || session.external.is_some() {
                 Vec::new()
@@ -672,7 +681,11 @@ impl OpenSessions {
                     .border_color(hsla(chrome.sidebar_line))
                     .text_size(px(11.5))
                     .text_color(hsla(chrome.muted))
-                    .child(IN_ANOTHER_TERMINAL)
+                    .child(if row.in_background {
+                        IN_CLAUDE_BACKGROUND
+                    } else {
+                        IN_ANOTHER_TERMINAL
+                    })
             }))
             .child(
                 div()
@@ -1223,6 +1236,7 @@ mod tests {
         running.external = Some(External {
             pid: Some(7),
             status: None,
+            background: false,
         });
         let sessions = vec![
             session("claude", Agent::Claude, "/u/api", 2),
@@ -1278,12 +1292,14 @@ mod tests {
         elsewhere.external = Some(External {
             pid: Some(5),
             status: None,
+            background: false,
         });
         let mut unlinked = session("external-agy-9", Agent::Agy, "/u/web", 0);
         unlinked.origin = Origin::External;
         unlinked.external = Some(External {
             pid: Some(9),
             status: None,
+            background: false,
         });
         vec![
             titled,
