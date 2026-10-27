@@ -146,6 +146,10 @@ pub fn terminal_event(agent: Agent, signal: &TerminalSignal) -> Option<(Source, 
         }
         let event = match status.state {
             ProgramState::Working => EventKind::ToolActivity,
+            // agy's optional artifact review comes after the turn has ended.
+            ProgramState::Blocked if agent == Agent::Agy && agy::is_artifact_review(status) => {
+                EventKind::TurnComplete
+            }
             ProgramState::Blocked => {
                 EventKind::NeedsInput(status.kind.unwrap_or(NeedsReason::Unknown))
             }
@@ -186,6 +190,7 @@ mod tests {
             state: ProgramState::Blocked,
             kind: Some(NeedsReason::Question),
             id: None,
+            message: None,
         });
         for agent in Agent::ALL {
             assert_eq!(
@@ -199,11 +204,46 @@ mod tests {
     }
 
     #[test]
+    fn agy_artifact_review_ends_the_turn_and_real_waits_need_the_owner() {
+        let blocked = |message: &str| {
+            TerminalSignal::ProgramStatus(ProgramStatus {
+                state: ProgramState::Blocked,
+                kind: Some(NeedsReason::Permission),
+                id: None,
+                message: Some(crate::scanner::Message(message.into())),
+            })
+        };
+        // "Approve plan" and "Trust this folder?", base64 as agy 1.4.7 sends them.
+        let review = blocked("QXBwcm92ZSBwbGFu");
+        let trust = blocked("VHJ1c3QgdGhpcyBmb2xkZXI/");
+        assert_eq!(
+            terminal_event(Agent::Agy, &review),
+            Some((Source::ProgramStatus, EventKind::TurnComplete))
+        );
+        assert_eq!(
+            terminal_event(Agent::Agy, &trust),
+            Some((
+                Source::ProgramStatus,
+                EventKind::NeedsInput(NeedsReason::Permission)
+            ))
+        );
+        // Only agy's own report means that.
+        assert_eq!(
+            terminal_event(Agent::Claude, &review),
+            Some((
+                Source::ProgramStatus,
+                EventKind::NeedsInput(NeedsReason::Permission)
+            ))
+        );
+    }
+
+    #[test]
     fn child_program_status_records_are_ignored() {
         let child = TerminalSignal::ProgramStatus(ProgramStatus {
             state: ProgramState::Done,
             kind: None,
             id: Some("task".into()),
+            message: None,
         });
         assert_eq!(terminal_event(Agent::Claude, &child), None);
     }

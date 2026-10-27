@@ -37,6 +37,19 @@ pub struct ProgramStatus {
     /// Record path; `None` is the program's root record. Child records describe
     /// sub-tasks and do not drive the session status.
     pub id: Option<String>,
+    /// The program's own detail (`msg`), as sent. agy puts the pending command or
+    /// question there, so it is only compared, never shown or kept.
+    pub message: Option<Message>,
+}
+
+/// A report's detail text. Its `Debug` output hides it, so it cannot reach a log.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Message(pub String);
+
+impl std::fmt::Debug for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Message(..)")
+    }
 }
 
 pub struct Scanner {
@@ -143,6 +156,7 @@ fn classify_program_status(rest: &[&[u8]]) -> Option<TerminalSignal> {
     let mut state = None;
     let mut kind = None;
     let mut id = None;
+    let mut message = None;
     for pair in body.split(':') {
         let Some((key, value)) = pair.split_once('=') else {
             continue;
@@ -152,6 +166,7 @@ fn classify_program_status(rest: &[&[u8]]) -> Option<TerminalSignal> {
             "state" => state = Some(value.to_owned()),
             "kind" => kind = Some(value.to_owned()),
             "id" => id = Some(value.to_owned()),
+            "msg" => message = Some(Message(value.to_owned())),
             _ => {}
         }
     }
@@ -176,6 +191,7 @@ fn classify_program_status(rest: &[&[u8]]) -> Option<TerminalSignal> {
         state,
         kind,
         id,
+        message,
     }))
 }
 
@@ -245,7 +261,8 @@ mod tests {
             vec![TerminalSignal::ProgramStatus(ProgramStatus {
                 state: ProgramState::Blocked,
                 kind: Some(NeedsReason::Permission),
-                id: None
+                id: None,
+                message: None
             })]
         );
         assert_eq!(
@@ -253,9 +270,22 @@ mod tests {
             vec![TerminalSignal::ProgramStatus(ProgramStatus {
                 state: ProgramState::Working,
                 kind: None,
-                id: Some("root/task1".into())
+                id: Some("root/task1".into()),
+                message: None
             })]
         );
+    }
+
+    #[test]
+    fn program_status_keeps_the_detail_out_of_debug_output() {
+        let signals = scan(
+            b"\x1b]7501;state=blocked:kind=permission:app=antigravity:msg=QXBwcm92ZSBwbGFu\x07",
+        );
+        let [TerminalSignal::ProgramStatus(status)] = signals.as_slice() else {
+            panic!("one report expected: {signals:?}");
+        };
+        assert_eq!(status.message, Some(Message("QXBwcm92ZSBwbGFu".into())));
+        assert!(!format!("{status:?}").contains("QXBw"));
     }
 
     #[test]
@@ -297,7 +327,8 @@ mod tests {
             vec![TerminalSignal::ProgramStatus(ProgramStatus {
                 state: ProgramState::Done,
                 kind: None,
-                id: None
+                id: None,
+                message: None
             })]
         );
     }

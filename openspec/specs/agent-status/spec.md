@@ -137,3 +137,14 @@ The system SHALL keep a sidebar session whose agent ends without the owner closi
 #### Scenario: Waiting overnight
 - **WHEN** a hosted session has been idle for twelve hours with its agent still running
 - **THEN** its status is still idle
+
+### Requirement: agy's artifact review
+The system SHALL treat agy's report of an artifact waiting for review (`blocked`, kind permission, message "Approve plan") as the end of the turn, so the session shows unread until the owner looks, and SHALL keep agy's other blocked reports as needing the owner.
+
+#### Scenario: A turn that leaves an artifact
+- **WHEN** an agy turn ends and agy reports its artifact review
+- **THEN** the session shows as done and unread, not needs you
+
+#### Scenario: A real approval
+- **WHEN** agy reports it is waiting for folder trust, a command approval, a question or sign-in
+- **THEN** the session shows needs you
