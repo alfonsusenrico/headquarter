@@ -1,6 +1,6 @@
 # Quitting Headquarter stops its host
 
-Status: awaiting the owner's approval.
+Status: approved by the owner on 2026-10-27 ("approve, go ahead").
 
 ## Why
 
