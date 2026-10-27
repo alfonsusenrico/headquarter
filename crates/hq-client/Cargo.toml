@@ -1,6 +1,6 @@
 [package]
 name = "hq-client"
-version = "0.1.14"
+version = "0.1.15"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
@@ -8,9 +8,9 @@ repository.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
-hq-daemon = { version = "0.1.14", path = "../hq-daemon" }
-hq-protocol = { version = "0.1.14", path = "../hq-protocol" }
-hq-signals = { version = "0.1.14", path = "../hq-signals" }
+hq-daemon = { version = "0.1.15", path = "../hq-daemon" }
+hq-protocol = { version = "0.1.15", path = "../hq-protocol" }
+hq-signals = { version = "0.1.15", path = "../hq-signals" }
 
 [lints]
 workspace = true
