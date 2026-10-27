@@ -656,6 +656,125 @@ fn a_viewer_leaving_returns_the_session_to_the_size_still_shown() {
     app.output_until("size:50 120");
 }
 
+/// Attaches once and waits until the stub agent handles size changes and that attach's
+/// redraw is over, so a test measures only its own attaches.
+fn wait_for_stub(env: &TestEnv, session: &str, cols: u16, rows: u16) {
+    let mut warm = env.connect();
+    assert!(matches!(
+        warm.request(&Request::Attach {
+            session: session.to_owned(),
+            cols,
+            rows
+        }),
+        Response::Attached { .. }
+    ));
+    warm.output_until("stub-ready");
+    std::thread::sleep(Duration::from_millis(700));
+}
+
+/// Repaints on every size change it handles, erasing the screen first as full-screen
+/// agents do, and notes each size it handled in `$STUB_ARGS.sizes`. It handles signals only between 0.1 s sleeps, like a busy agent, so two size
+/// changes in the same instant reach it as one.
+const REPAINT_STUB: &str = r#"trap 'size=$(stty size); echo "$size" >> "$STUB_ARGS.sizes"; printf "\033[2J"' WINCH
+printf 'stub-ready\n'
+while :; do sleep 0.1; done
+"#;
+
+/// Attaching asks the agent to repaint even at the size it already has: one row fewer,
+/// then the size again once it has repainted (fix-reattach-redraw).
+#[test]
+fn attaching_at_the_agents_own_size_still_makes_it_repaint() {
+    let mut env = TestEnv::new("repaint");
+    env.stub("agy", REPAINT_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    wait_for_stub(&env, &session.id, 100, 30);
+    let sizes = env.root.join("stub-args.txt.sizes");
+    for _ in 0..2 {
+        std::fs::write(&sizes, "").unwrap();
+        let mut app = env.connect();
+        assert!(matches!(
+            app.request(&Request::Attach {
+                session: session.id.clone(),
+                cols: 100,
+                rows: 30
+            }),
+            Response::Attached { .. }
+        ));
+        wait_until("two repaints", || {
+            std::fs::read_to_string(&sizes).is_ok_and(|seen| seen.lines().count() >= 2)
+        });
+        assert_eq!(
+            std::fs::read_to_string(&sizes).unwrap(),
+            "29 100\n30 100\n",
+            "one row fewer, then its own size, each handled on its own"
+        );
+    }
+}
+
+/// An agent that never erases its screen gets its size back after half a second.
+#[test]
+fn a_silent_agent_gets_its_size_back_after_a_redraw() {
+    let mut env = TestEnv::new("silent");
+    env.stub("agy", SIZE_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    wait_for_stub(&env, &session.id, 90, 20);
+    let mut app = env.connect();
+    assert!(matches!(
+        app.request(&Request::Attach {
+            session: session.id.clone(),
+            cols: 90,
+            rows: 20
+        }),
+        Response::Attached { .. }
+    ));
+    let started = Instant::now();
+    app.output_until("size:19 90");
+    app.output_until("size:20 90");
+    assert!(
+        started.elapsed() >= Duration::from_millis(400),
+        "restored after the wait"
+    );
+}
+
+/// A newer size replaces a redraw still waiting, so the agent ends at the latest viewer's
+/// size.
+#[test]
+fn quick_attaches_end_at_the_latest_size() {
+    let mut env = TestEnv::new("quick");
+    env.stub("agy", SIZE_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    wait_for_stub(&env, &session.id, 80, 24);
+    let attach = |conn: &mut Conn, cols, rows| {
+        assert!(matches!(
+            conn.request(&Request::Attach {
+                session: session.id.clone(),
+                cols,
+                rows
+            }),
+            Response::Attached { .. }
+        ));
+    };
+    let mut first = env.connect();
+    let mut second = env.connect();
+    attach(&mut first, 100, 30);
+    attach(&mut second, 120, 40);
+    second.output_until("size:40 120");
+    std::thread::sleep(Duration::from_millis(800));
+    let mut later = String::new();
+    while let Ok(frame) = second.frames.try_recv() {
+        if let Frame::Output(bytes) = frame {
+            later.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+    assert!(
+        !later.contains("size:30 100"),
+        "an older redraw came back: {later:?}"
+    );
+}
+
 #[test]
 fn hooks_route_to_their_own_session_and_stay_out_of_the_log() {
     let mut env = TestEnv::new("hooks");

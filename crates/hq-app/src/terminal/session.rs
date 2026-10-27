@@ -18,11 +18,14 @@ use hq_protocol::{Frame, Request, Response, SessionInfo, read_frame, write_frame
 use super::model::{GridSize, TerminalModel};
 use crate::theme::Palette;
 
-/// Size the agent sees until the pane has been laid out.
+/// The size to attach at when the pane is never laid out (fix-reattach-redraw).
 const INITIAL_SIZE: GridSize = GridSize {
     columns: 80,
     rows: 24,
 };
+
+/// How long to wait for the pane's first layout before attaching at `INITIAL_SIZE`.
+const LAYOUT_WAIT: Duration = Duration::from_millis(500);
 
 enum Incoming {
     Connected(UnixStream),
@@ -44,7 +47,11 @@ pub struct TerminalSession {
     last_input: Cell<Option<Instant>>,
     /// Attached to the session's shell rather than its agent (add-session-shell-panel).
     pub shell: bool,
+    /// The connection's way back, until it starts: at the pane's first size, so the agent
+    /// never draws at a size the pane does not show (fix-reattach-redraw).
+    unstarted: Option<UnboundedSender<Incoming>>,
     _reader: Task<()>,
+    _layout_wait: Task<()>,
 }
 
 /// How long after the owner's input an agent's copy is still theirs.
@@ -70,8 +77,10 @@ impl TerminalSession {
 
     fn connect(info: SessionInfo, palette: Palette, shell: bool, cx: &mut Context<Self>) -> Self {
         let (tx, mut rx) = unbounded();
-        let session_id = info.id.clone();
-        std::thread::spawn(move || run_connection(&session_id, shell, &tx));
+        let layout_wait = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(LAYOUT_WAIT).await;
+            let _ = this.update(cx, |session, _| session.start(INITIAL_SIZE));
+        });
         let reader = cx.spawn(async move |this, cx| {
             while let Some(incoming) = rx.next().await {
                 if this
@@ -90,8 +99,21 @@ impl TerminalSession {
             agent_copies: (0, String::new()),
             last_input: Cell::new(None),
             shell,
+            unstarted: Some(tx),
             _reader: reader,
+            _layout_wait: layout_wait,
         }
+    }
+
+    /// Connects and attaches at `size`, once.
+    fn start(&mut self, size: GridSize) {
+        let Some(tx) = self.unstarted.take() else {
+            return;
+        };
+        let session_id = self.info.id.clone();
+        let shell = self.shell;
+        let (cols, rows) = (clamp(size.columns), clamp(size.rows));
+        std::thread::spawn(move || run_connection(&session_id, shell, cols, rows, &tx));
     }
 
     fn receive(&mut self, incoming: Incoming, cx: &mut Context<Self>) {
@@ -170,6 +192,12 @@ impl TerminalSession {
     }
 
     pub fn set_size(&mut self, size: GridSize, cx: &mut Context<Self>) {
+        if self.unstarted.is_some() && size.columns > 0 && size.rows > 0 {
+            self.model.resize(size);
+            self.start(size);
+            cx.notify();
+            return;
+        }
         let Some(request) = resize_request(self.model.size(), size) else {
             return;
         };
@@ -204,7 +232,13 @@ fn clamp(value: usize) -> u16 {
 
 /// Runs on its own thread: connects, attaches, then forwards frames until the session
 /// ends or the connection closes.
-fn run_connection(session_id: &str, shell: bool, tx: &UnboundedSender<Incoming>) {
+fn run_connection(
+    session_id: &str,
+    shell: bool,
+    cols: u16,
+    rows: u16,
+    tx: &UnboundedSender<Incoming>,
+) {
     let fail = |message: String| {
         let _ = tx.unbounded_send(Incoming::Failed(message));
     };
@@ -212,7 +246,6 @@ fn run_connection(session_id: &str, shell: bool, tx: &UnboundedSender<Incoming>)
         fail("cannot find the home folder".to_owned());
         return;
     };
-    let (cols, rows) = (clamp(INITIAL_SIZE.columns), clamp(INITIAL_SIZE.rows));
     let attached = if shell {
         hq_client::attach_shell(&paths, session_id, cols, rows)
     } else {
