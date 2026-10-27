@@ -1,5 +1,6 @@
 package com.alfonsusenrico.headquarter.ui
 
+import android.util.LruCache
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -20,17 +21,24 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alfonsusenrico.headquarter.Settings
 import uniffi.hq_mobile.Paint
 import uniffi.hq_mobile.Screen
+import uniffi.hq_mobile.Span
 import kotlin.math.floor
 
 private val Padding = 8.dp
@@ -51,16 +59,19 @@ fun TerminalView(
 ) {
     val tokens = LocalTokens.current
     val density = LocalDensity.current
-    val measurer = rememberTextMeasurer(cacheSize = 512)
+    val measurer = rememberTextMeasurer(cacheSize = 0)
     val style = TextStyle(fontFamily = Mono, fontSize = textSize.sp)
     val cell = remember(textSize, density) { measurer.measure("M", style).size }
+    // The font's own advance, so a row laid out as one text lines up with the grid.
+    val advance = remember(textSize, density) { measurer.measure("M".repeat(100), style).size.width / 100f }
+    val rowLayouts = remember(textSize, density, tokens) { RowLayouts(measurer, style, tokens) }
     val currentTextSize by rememberUpdatedState(textSize)
     val currentCell by rememberUpdatedState(cell)
     var pending by remember { mutableFloatStateOf(0f) }
 
     BoxWithConstraints(modifier.background(tokens.terminalBackground)) {
         val padding = with(density) { Padding.toPx() }
-        val cols = floor((constraints.maxWidth - 2 * padding) / cell.width).toInt().coerceAtLeast(10)
+        val cols = floor((constraints.maxWidth - 2 * padding) / advance).toInt().coerceAtLeast(10)
         val rows = floor((constraints.maxHeight - 2 * padding) / cell.height).toInt().coerceAtLeast(4)
         LaunchedEffect(cols, rows) { onGrid(cols, rows) }
         Canvas(
@@ -85,32 +96,27 @@ fun TerminalView(
                 },
         ) {
             val shown = screen ?: return@Canvas
-            val cw = cell.width.toFloat()
+            val cw = advance
             val ch = cell.height.toFloat()
             shown.lines.forEachIndexed { row, spans ->
                 val y = padding + row * ch
                 spans.forEach { span ->
-                    val x = padding + span.col.toInt() * cw
                     val bg = color(span.bg, tokens)
                     if (bg != tokens.terminalBackground) {
-                        drawRect(bg, Offset(x, y), Size(span.cells.toInt() * cw, ch))
+                        drawRect(bg, Offset(padding + span.col.toInt() * cw, y), Size(span.cells.toInt() * cw, ch))
                     }
-                    val text = span.text
-                    if (text.isNotBlank()) {
-                        val fg = color(span.fg, tokens)
-                        drawText(
-                            measurer,
-                            text,
-                            topLeft = Offset(x, y),
-                            style =
-                                style.copy(
-                                    color = if (span.dim) fg.copy(alpha = 0.6f) else fg,
-                                    fontWeight = if (span.bold) FontWeight.Bold else FontWeight.Normal,
-                                    fontStyle = if (span.italic) FontStyle.Italic else FontStyle.Normal,
-                                    textDecoration = if (span.underline) TextDecoration.Underline else null,
-                                ),
-                            softWrap = false,
-                        )
+                }
+                val layout = rowLayouts.layout(spans)
+                if (layout != null) {
+                    drawText(layout, topLeft = Offset(padding, y))
+                } else {
+                    spans.forEach { span ->
+                        if (span.text.isNotBlank()) {
+                            drawText(
+                                rowLayouts.spanLayout(span),
+                                topLeft = Offset(padding + span.col.toInt() * cw, y),
+                            )
+                        }
                     }
                 }
             }
@@ -123,6 +129,75 @@ fun TerminalView(
             }
         }
     }
+}
+
+/**
+ * Text layouts of terminal rows, kept while the rows stay the same so output that only moves
+ * (scrolling) is not laid out again. A row whose characters each fill one cell is one layout.
+ * A row with wide characters falls back to one layout per span, placed at its column.
+ */
+private class RowLayouts(
+    private val measurer: TextMeasurer,
+    private val style: TextStyle,
+    private val tokens: Tokens,
+) {
+    private val rows = LruCache<List<Span>, TextLayoutResult>(ROWS_KEPT)
+    private val spans = LruCache<Span, TextLayoutResult>(SPANS_KEPT)
+
+    fun layout(row: List<Span>): TextLayoutResult? {
+        rows.get(row)?.let { return it }
+        val text = rowText(row) { spanStyle(it, tokens) } ?: return null
+        val laidOut = measurer.measure(text, style, softWrap = false, maxLines = 1)
+        rows.put(row, laidOut)
+        return laidOut
+    }
+
+    fun spanLayout(span: Span): TextLayoutResult =
+        spans.get(span)
+            ?: measurer
+                .measure(
+                    AnnotatedString(span.text, spanStyle(span, tokens)),
+                    style,
+                    softWrap = false,
+                    maxLines = 1,
+                ).also { spans.put(span, it) }
+
+    private companion object {
+        // A few screens of rows, so scrolling back and forth reuses them.
+        const val ROWS_KEPT = 400
+        const val SPANS_KEPT = 400
+    }
+}
+
+/**
+ * A row as one text: each span from its column, with spaces before it, in its own style. Null
+ * when a span's characters do not each fill one cell (wide or combining characters), since one
+ * text would then drift from the grid.
+ */
+fun rowText(
+    row: List<Span>,
+    styleOf: (Span) -> SpanStyle,
+): AnnotatedString? {
+    if (row.any { it.text.codePointCount(0, it.text.length) != it.cells.toInt() }) return null
+    return buildAnnotatedString {
+        row.forEach { span ->
+            while (length < span.col.toInt()) append(' ')
+            withStyle(styleOf(span)) { append(span.text) }
+        }
+    }
+}
+
+fun spanStyle(
+    span: Span,
+    tokens: Tokens,
+): SpanStyle {
+    val fg = color(span.fg, tokens)
+    return SpanStyle(
+        color = if (span.dim) fg.copy(alpha = 0.6f) else fg,
+        fontWeight = if (span.bold) FontWeight.Bold else FontWeight.Normal,
+        fontStyle = if (span.italic) FontStyle.Italic else FontStyle.Normal,
+        textDecoration = if (span.underline) TextDecoration.Underline else null,
+    )
 }
 
 fun color(
