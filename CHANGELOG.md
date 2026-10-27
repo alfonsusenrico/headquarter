@@ -2,6 +2,22 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.14 (2026-10-27)
+
+- Remote control. Pair a phone from Headquarter ▸ Remote Control… (or `hq remote pair`)
+  and your sessions follow you: needs-you, working and unread, at home or away. The
+  computer and the phone talk end to end encrypted (iroh), through n0's relays when they
+  are on different networks. It stays off until you turn it on, a phone reaches only what
+  an allow-list lets through, and the same window removes a phone at once.
+- Headquarter for Android. Your sidebar on the phone, who needs you first, and a terminal
+  you can type into at the phone's width, with a key row for prompts (1, 2, 3, Esc, the
+  arrows, ⏎), the session's shell, Resume and Add sessions. It connects only while it is
+  on screen and keeps no session content. Get `headquarter-android.apk` from this release
+  (Android 10 or later), and the README says how.
+- `hq remote` turns remote control on and off, pairs a phone, and lists or removes phones.
+- agy no longer shows "needs you" after a turn that leaves an artifact to review. The
+  review is optional, so the session shows as finished and unread.
+
 ## 0.1.14-rc.1 (2026-10-26)
 
 - A release candidate that checks the new Android release job: this release carries a signed

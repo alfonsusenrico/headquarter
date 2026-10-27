@@ -1,6 +1,6 @@
 [package]
 name = "hq-app"
-version = "0.1.14-rc.1"
+version = "0.1.14"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
