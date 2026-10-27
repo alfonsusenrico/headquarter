@@ -126,6 +126,10 @@ The system SHALL show above every session in the terminal pane a one-line header
 - **WHEN** the owner clicks the context meter of a Claude Code session
 - **THEN** a popover lists the input, output and cache token counts, the window size and the session id
 
+#### Scenario: Context meter fill
+- **WHEN** a Claude Code session has used 96% of its context window
+- **THEN** the header's context meter fills 96% of its track, and a session at or over 100% fills it completely
+
 ### Requirement: Details stay in memory
 The system SHALL keep session details only in memory, SHALL NOT write them to the index or the log, and SHALL NOT read prompt or output text to obtain them.
 
