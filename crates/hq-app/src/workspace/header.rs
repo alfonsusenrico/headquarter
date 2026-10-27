@@ -19,7 +19,8 @@ use super::Workspace;
 use crate::header::{self, HeaderLine};
 use crate::terminal::view::hsla;
 
-const HEADER_HEIGHT: f32 = 28.0;
+/// One line with room (refresh-pane-and-status D3).
+const HEADER_HEIGHT: f32 = 38.0;
 /// How long "Copied" shows after the folder is copied.
 const COPIED_FOR: Duration = Duration::from_secs(1);
 const LEFT_NOTE: &str = "Context left in the model's window. Automatic compaction runs near the end of it unless its threshold was changed.";
@@ -88,17 +89,18 @@ impl Workspace {
             .min_w_0()
             .flex()
             .items_center()
-            .gap(px(7.))
+            .gap(px(10.))
             .child(self.marks.element(session.agent, 18., chrome.muted))
             .child(
                 div()
                     .min_w_0()
                     .truncate()
+                    .text_size(px(14.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(hsla(chrome.text))
                     .child(line.title.clone()),
             )
-            .child(separator())
+            .child(div().flex_none().text_color(hsla(chrome.track)).child("│"))
             .child(
                 div()
                     .id("header-folder")
@@ -130,7 +132,7 @@ impl Workspace {
             left = left.child(separator()).child(muted(format!("⎇ {branch}")));
         }
 
-        let mut right = div().flex_none().flex().items_center().gap(px(7.));
+        let mut right = div().flex_none().flex().items_center().gap(px(10.));
         let mut first = true;
         let mut push = |right: gpui::Div, element: AnyElement| {
             let right = if first {
@@ -168,8 +170,8 @@ impl Workspace {
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(12.))
-            .px(px(10.))
+            .gap(px(16.))
+            .px(px(16.))
             .text_size(px(12.5))
             .bg(background)
             .border_b_1()
@@ -200,7 +202,7 @@ impl Workspace {
             .hover(|style| style.bg(gpui::transparent_white()))
             .child(
                 div()
-                    .w(px(40.))
+                    .w(px(60.))
                     .h(px(5.))
                     .rounded(px(3.))
                     .bg(hsla(chrome.track))

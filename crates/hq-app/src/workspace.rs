@@ -68,8 +68,6 @@ const CLOSE_SLOT: f32 = 22.0;
 const SLIDE: Duration = Duration::from_millis(150);
 /// The agents' marks in the pane while the host starts.
 const STARTING_MARK: f32 = 44.0;
-/// One breath of a working or starting session's word, out and back.
-const BREATH: Duration = Duration::from_secs(2);
 /// How much of an inactive row's age shows, beside its muted title.
 const DIMMED: f32 = 0.6;
 /// A usage ring and the gap between rings.
@@ -234,7 +232,8 @@ pub struct Workspace {
     /// The sidebar, drawn as a view GPUI keeps between frames (fix-terminal-redraw-cost).
     sidebar_view: Entity<sidebar_view::SidebarView>,
     /// Steps sidebar motion while any is on screen (fix-sidebar-motion-redraw).
-    motion: Option<Task<()>>,
+    /// The motion clock and the rate it runs at.
+    motion: Option<(model::MotionRate, Task<()>)>,
     motion_epoch: Instant,
     rename: Option<Rename>,
     hover: HoverSlide,
@@ -1007,7 +1006,7 @@ impl Workspace {
             px(48.)
         };
         let items = self.items();
-        self.keep_motion(model::in_motion(&items), window, cx);
+        self.keep_motion(model::motion_rate(&items), window, cx);
         let empty = items.is_empty();
         let rendered = if rail {
             self.render_rail(&items, cx)
@@ -1101,26 +1100,43 @@ impl Workspace {
 
     // ---- sidebar motion -----------------------------------------------------------
 
-    /// Runs the motion clock while the sidebar has something moving, and stops it when
-    /// nothing moves or the system asks for reduced motion. Each step redraws once, so
-    /// motion costs 12 frames a second however many rows breathe, where a GPUI
-    /// animation would draw every display frame.
-    fn keep_motion(&mut self, moving: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if !moving || settings::reduce_motion() {
+    /// Runs the motion clock at the rate what moves needs, and stops it when nothing moves
+    /// or the system asks for reduced motion. Each step redraws once, so motion costs 4
+    /// frames a second while only working rows move, and 12 while a waiting dot pulses,
+    /// however many rows move (refresh-pane-and-status D2).
+    fn keep_motion(
+        &mut self,
+        rate: Option<model::MotionRate>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(rate) = rate.filter(|_| !settings::reduce_motion()) else {
             self.motion = None;
             return;
-        }
-        if self.motion.is_some() {
+        };
+        if self
+            .motion
+            .as_ref()
+            .is_some_and(|(running, _)| *running == rate)
+        {
             return;
         }
-        self.motion = Some(cx.spawn_in(window, async move |this, cx| {
+        let clock = cx.spawn_in(window, async move |this, cx| {
             loop {
-                cx.background_executor().timer(model::MOTION_STEP).await;
+                cx.background_executor().timer(rate.step()).await;
                 if this.update(cx, |_, cx| cx.notify()).is_err() {
                     break;
                 }
             }
-        }));
+        });
+        self.motion = Some((rate, clock));
+    }
+
+    /// Which of a working row's dots is lit now, or `None` while motion is held still.
+    fn lit_dot(&self) -> Option<Option<usize>> {
+        self.motion
+            .is_some()
+            .then(|| model::lit_dot(self.motion_epoch.elapsed()))
     }
 
     /// Where a motion of `period` is now, or `None` while motion is held still.
@@ -1776,20 +1792,14 @@ impl Workspace {
             .child(title)
             .children(row.external.then(|| modal::tag("ext", chrome)))
             .child(match row.status_word() {
+                Some(word) if row.breathing() => working_word(word, self.lit_dot(), chrome),
                 Some(word) => div()
                     .flex_none()
                     .text_right()
                     .text_size(px(12.5))
-                    .text_color(hsla(if row.glyph == model::Glyph::NeedsYou {
-                        chrome.amber
-                    } else {
-                        chrome.muted
-                    }))
-                    .when_some(
-                        self.motion_phase(BREATH).filter(|_| row.breathing()),
-                        |word, phase| word.opacity(gpui::pulsating_between(0.35, 1.0)(phase)),
-                    )
-                    .child(word),
+                    .text_color(hsla(chrome.amber))
+                    .child(word)
+                    .into_any_element(),
                 None => div()
                     .w(px(32.))
                     .flex_none()
@@ -1797,7 +1807,8 @@ impl Workspace {
                     .text_size(px(13.))
                     .text_color(hsla(chrome.muted))
                     .when(row.dimmed(), |age| age.opacity(DIMMED))
-                    .child(row.age.clone()),
+                    .child(row.age.clone())
+                    .into_any_element(),
             })
             .when(row.glyph_cell(), |line| {
                 line.child(glyph::status(row.glyph, chrome))
@@ -2969,4 +2980,35 @@ fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
             return;
         }
     }
+}
+
+/// A working or starting row's word in the accent colour, then three dots lit one after
+/// another (refresh-pane-and-status D1). `lit` is `None` while motion is held still, when
+/// all three show at full strength, and `Some(None)` on the step where all rest.
+fn working_word(word: &'static str, lit: Option<Option<usize>>, chrome: Chrome) -> AnyElement {
+    let accent = hsla(chrome.accent);
+    let dot = |index: usize| {
+        let bright = match lit {
+            None => true,
+            Some(lit) => lit == Some(index),
+        };
+        div()
+            .size(px(3.5))
+            .rounded_full()
+            .bg(accent)
+            .opacity(if bright { 1.0 } else { 0.3 })
+    };
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(2.5))
+        .text_size(px(12.5))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(accent)
+        .child(div().mr(px(1.5)).child(word))
+        .child(dot(0))
+        .child(dot(1))
+        .child(dot(2))
+        .into_any_element()
 }

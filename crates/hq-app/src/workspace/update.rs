@@ -22,8 +22,13 @@ use crate::update::{self, Installed, LogLine, ReleaseNotes, Step, Version};
 /// Buttons shown together share this width, so a pair reads as one choice (owner,
 /// 2026-10-26).
 const BUTTON_WIDTH: f32 = 112.0;
-/// The What's new page keeps its text to a readable width.
-const NOTES_WIDTH: f32 = 720.0;
+/// The pair's width when one of them says "Open Release Page", which does not fit 112.
+const WIDE_BUTTON_WIDTH: f32 = 156.0;
+/// The What's new page is one column of this readable width, centred in the pane
+/// (refresh-pane-and-status D4).
+const NOTES_WIDTH: f32 = 760.0;
+/// The column's padding on each side.
+const COLUMN_PADDING: f32 = 36.0;
 const RELEASES_PAGE: &str = "https://github.com/alfonsusenrico/headquarter/releases";
 /// The log box under the steps shows this many of the latest lines.
 const LOG_LINES: usize = 6;
@@ -312,10 +317,15 @@ impl Workspace {
         };
         let background = super::translucent(self.theme.palette.background, self.appearance.opacity);
         let muted = hsla(chrome.muted);
+        // Later matches the other button's width, so the pair reads as one choice.
+        let pair_width = match &self.updates.installed {
+            Some(_) => BUTTON_WIDTH,
+            None => WIDE_BUTTON_WIDTH,
+        };
         let primary = match &self.updates.installed {
             Some(_) => Button::new("whats-new-update")
                 .primary()
-                .w(px(BUTTON_WIDTH))
+                .w(px(pair_width))
                 .label("Update Now")
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.updates.open = true;
@@ -326,43 +336,97 @@ impl Workspace {
                 let url = update::release_page(latest);
                 Button::new("whats-new-page")
                     .primary()
-                    .w(px(BUTTON_WIDTH))
+                    .w(px(pair_width))
                     .label("Open Release Page")
                     .on_click(move |_, _, cx| cx.open_url(&url))
             }
         };
-        let top = div()
+        let chip = |text: String, new: bool| {
+            let mut tint = hsla(chrome.accent);
+            tint.a = 0.16;
+            // The track colour, faint, shows on both themes' backgrounds.
+            let mut plain = hsla(chrome.track);
+            plain.a = 0.45;
+            div()
+                .flex_none()
+                .px(px(9.))
+                .py(px(2.))
+                .rounded(px(999.))
+                .text_size(px(12.5))
+                .bg(if new { tint } else { plain })
+                .text_color(if new { hsla(chrome.accent) } else { muted })
+                .child(text)
+        };
+        let top = column(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .text_color(muted)
+                        .child("Update available"),
+                )
+                .child(
+                    div()
+                        .text_size(px(22.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child("What's new in Headquarter"),
+                )
+                .child(
+                    div()
+                        .mt(px(6.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(chip(format!("v{} installed", Version::running()), false))
+                        .child(div().text_color(muted).child("→"))
+                        .child(chip(format!("v{latest}"), true)),
+                ),
+        )
+        .flex_none()
+        .pt(px(30.))
+        .pb(px(6.));
+        let what_happens = match &self.updates.installed {
+            Some(_) => "Restarts Headquarter. Your sessions resume on their conversations.",
+            None => "This copy updates from the release page.",
+        };
+        // The buttons stay in view while the notes scroll; the sentence wraps above them
+        // when the pane is too narrow for both.
+        let bar = div()
             .flex_none()
-            .flex()
-            .items_end()
-            .gap(px(12.))
-            .px(px(36.))
-            .pt(px(22.))
-            .pb(px(16.))
-            .border_b_1()
+            .border_t_1()
             .border_color(hsla(chrome.sidebar_line))
+            .bg(background)
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(div().text_size(px(12.5)).text_color(muted).child(format!(
-                        "Update available · Installed version: v{}",
-                        Version::running()
-                    )))
-                    .child(
-                        div()
-                            .text_size(px(22.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(format!("What's new in Headquarter v{latest}")),
-                    ),
-            )
-            .child(
-                Button::new("whats-new-later")
-                    .w(px(BUTTON_WIDTH))
-                    .label("Later")
-                    .on_click(cx.listener(|this, _, window, cx| this.close_whats_new(window, cx))),
-            )
-            .child(primary);
+                column(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(220.))
+                                .text_size(px(13.))
+                                .text_color(muted)
+                                .child(what_happens),
+                        )
+                        .child(
+                            Button::new("whats-new-later")
+                                .w(px(pair_width))
+                                .label("Later")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.close_whats_new(window, cx)
+                                })),
+                        )
+                        .child(primary),
+                )
+                .py(px(12.)),
+            );
         let link = |label: &'static str| {
             div()
                 .id(label)
@@ -374,15 +438,7 @@ impl Workspace {
                 .child(label)
                 .on_click(|_, _, cx| cx.open_url(RELEASES_PAGE))
         };
-        let mut content = div()
-            .w_full()
-            .max_w(px(NOTES_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(26.))
-            .px(px(36.))
-            .pt(px(20.))
-            .pb(px(32.));
+        let mut content = div().flex().flex_col().gap(px(26.)).pt(px(20.)).pb(px(32.));
         match &self.updates.notes {
             Notes::NotLoaded | Notes::Loading => {
                 content =
@@ -426,8 +482,9 @@ impl Workspace {
                     .flex_1()
                     .min_h(px(0.))
                     .overflow_y_scroll()
-                    .child(content),
+                    .child(column(content)),
             )
+            .child(bar)
             .into_any_element()
     }
 
@@ -957,4 +1014,16 @@ fn this_app() -> Option<std::path::PathBuf> {
         .find(|path| path.extension().is_some_and(|extension| extension == "app"))
         .map(std::path::Path::to_path_buf);
     Some(bundle.unwrap_or(executable))
+}
+
+/// The What's new page's column: `content` at full width up to a readable measure,
+/// centred in the pane (refresh-pane-and-status D4).
+fn column(content: impl IntoElement) -> gpui::Div {
+    div().w_full().flex().justify_center().child(
+        div()
+            .w_full()
+            .max_w(px(NOTES_WIDTH + 2.0 * COLUMN_PADDING))
+            .px(px(COLUMN_PADDING))
+            .child(content),
+    )
 }
