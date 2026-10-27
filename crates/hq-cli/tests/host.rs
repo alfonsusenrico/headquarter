@@ -343,6 +343,43 @@ fn a_new_host_waits_for_a_stopping_one() {
     env.daemons.push(waiting);
 }
 
+/// agy 1.4.7's reports around a turn that leaves an artifact to review, then a real wait
+/// (fix-agy-artifact-review).
+const AGY_REVIEW_STUB: &str = r#"printf 'stub-ready\n'
+read line
+printf '\033]7501;state=working:app=antigravity\007'
+sleep 0.3
+printf '\033]7501;state=blocked:kind=permission:app=antigravity:msg=QXBwcm92ZSBwbGFu\007'
+printf 'artifact-ready\n'
+read second
+printf '\033]7501;state=blocked:kind=permission:app=antigravity:msg=VHJ1c3QgdGhpcyBmb2xkZXI/\007'
+sleep 30
+"#;
+
+#[test]
+fn an_agy_artifact_review_is_a_finished_turn_not_a_wait() {
+    let mut env = TestEnv::new("agyreview");
+    env.stub("agy", AGY_REVIEW_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    let mut client = env.connect();
+    assert!(matches!(
+        client.request(&Request::Attach {
+            session: session.id.clone(),
+            cols: 100,
+            rows: 30
+        }),
+        Response::Attached { .. }
+    ));
+    client.output_until("stub-ready");
+    client.send_frame(&Frame::Input(b"plan it\n".to_vec()));
+    client.output_until("artifact-ready");
+    env.wait_status(&session.id, Status::DoneUnread);
+    // A real approval still needs the owner.
+    client.send_frame(&Frame::Input(b"next\n".to_vec()));
+    env.wait_status(&session.id, Status::NeedsYou);
+}
+
 #[test]
 fn hosted_session_survives_detach_and_reports_status() {
     let mut env = TestEnv::new("attach");
