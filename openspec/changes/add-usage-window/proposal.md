@@ -1,6 +1,6 @@
 # A Usage window: CPU and memory per session
 
-Status: awaiting the owner's approval.
+Status: approved by the owner on 2026-10-27 ("approve all three, go ahead").
 
 ## Why
 
