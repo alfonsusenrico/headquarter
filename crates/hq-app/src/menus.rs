@@ -5,7 +5,7 @@
 
 use gpui::{App, KeyBinding, Menu, MenuItem, OsAction, actions};
 
-use crate::shortcuts::Shortcut;
+use crate::shortcuts::{SHORTCUTS, Shortcut};
 
 actions!(
     headquarter,
@@ -23,19 +23,9 @@ actions!(
         NewSession,
         OpenSessions,
         ToggleShell,
+        KeyboardShortcuts,
     ]
 );
-
-/// The key each bound action answers to, as `shortcuts::shortcut` reads it.
-const BOUND: [(&str, Shortcut); 7] = [
-    ("g", Shortcut::ThemeSwitcher),
-    ("h", Shortcut::Hide),
-    ("q", Shortcut::Quit),
-    ("m", Shortcut::Minimize),
-    ("n", Shortcut::NewSession),
-    ("o", Shortcut::OpenSessions),
-    ("t", Shortcut::ToggleShell),
-];
 
 /// Sets the menus and their key bindings, and handles the app-wide actions; the
 /// workspace handles the rest. Does nothing off macOS.
@@ -44,9 +34,9 @@ pub fn install(cx: &mut App) {
         return;
     }
     cx.bind_keys(
-        BOUND
+        SHORTCUTS
             .iter()
-            .filter_map(|&(key, shortcut)| binding(key, shortcut)),
+            .filter_map(|entry| binding(entry.key, entry.shortcut)),
     );
     // The terminal's own copy and paste keys; text fields keep their own bindings.
     cx.bind_keys([
@@ -64,6 +54,7 @@ pub fn install(cx: &mut App) {
             MenuItem::action("Remote Control…", RemoteControl),
             MenuItem::separator(),
             MenuItem::action("Themes…", ThemeSwitcher),
+            MenuItem::action("Keyboard Shortcuts…", KeyboardShortcuts),
             MenuItem::separator(),
             MenuItem::action("Hide Headquarter", Hide),
             MenuItem::action("Hide Others", HideOthers),
@@ -95,6 +86,7 @@ fn binding(key: &str, shortcut: Shortcut) -> Option<KeyBinding> {
         Shortcut::NewSession => KeyBinding::new(&keystroke, NewSession, None),
         Shortcut::OpenSessions => KeyBinding::new(&keystroke, OpenSessions, None),
         Shortcut::ToggleShell => KeyBinding::new(&keystroke, ToggleShell, None),
+        Shortcut::KeyboardShortcuts => KeyBinding::new(&keystroke, KeyboardShortcuts, None),
         _ => return None,
     };
     Some(binding)
@@ -126,9 +118,14 @@ mod tests {
             platform: true,
             ..Keys::default()
         };
-        for (key, expected) in BOUND {
-            assert_eq!(shortcut(key, cmd, true), Some(expected), "cmd-{key}");
-            assert!(binding(key, expected).is_some(), "cmd-{key} has an action");
+        let bound: Vec<_> = SHORTCUTS
+            .iter()
+            .filter(|entry| binding(entry.key, entry.shortcut).is_some())
+            .collect();
+        assert_eq!(bound.len(), 8, "every shortcut a menu shows");
+        for entry in bound {
+            let key = entry.key;
+            assert_eq!(shortcut(key, cmd, true), Some(entry.shortcut), "cmd-{key}");
         }
     }
 
@@ -138,7 +135,8 @@ mod tests {
             control: true,
             ..Keys::default()
         };
-        for (key, _) in BOUND {
+        for entry in SHORTCUTS {
+            let key = entry.key;
             assert_eq!(shortcut(key, ctrl, true), None, "ctrl-{key}");
         }
     }

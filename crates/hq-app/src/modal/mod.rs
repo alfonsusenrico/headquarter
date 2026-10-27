@@ -4,6 +4,7 @@
 pub mod folders;
 pub mod new_session;
 pub mod open_sessions;
+pub mod shortcuts;
 pub mod theme_creator;
 pub mod theme_switcher;
 
