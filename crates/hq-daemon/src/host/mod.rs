@@ -43,7 +43,7 @@ use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
 
 use crate::log::Log;
 use crate::paths::HostPaths;
-use crate::session::{Hosted, HostedParts, Outgoing, Viewer};
+use crate::session::{Hosted, HostedParts, Outgoing, Report, Viewer};
 
 const TICK: Duration = Duration::from_millis(250);
 /// Output activity is fed to the status machine at most this often.
@@ -1387,6 +1387,10 @@ impl Host {
                 Conversation::New { .. } => plan.agent == Agent::Claude,
                 Conversation::Resume(id) => id.is_some(),
             },
+            conversation: match plan.conversation {
+                Conversation::New { id } | Conversation::Resume(Some(id)) => Some(id.to_owned()),
+                Conversation::Resume(None) => None,
+            },
             shell: false,
         }));
         Ok(Spawned {
@@ -1552,6 +1556,7 @@ impl Host {
             pid: child.process_id(),
             tracker: SessionTracker::new(false, Thresholds::default(), now),
             conversation_known: false,
+            conversation: None,
             shell: true,
         }));
         lock(&self.shells).insert(row.id.clone(), Arc::clone(&shell));
@@ -1738,8 +1743,47 @@ impl Host {
             self.log.line("hook payload for no running session");
             return;
         };
+        if let Some(conversation) = record.session_id.as_deref() {
+            let start = (record.event == EventKind::Started)
+                .then(|| start_source(&payload.raw).unwrap_or_default());
+            if !self.own_report(&hosted, conversation, start.as_deref(), now) {
+                return;
+            }
+        }
         hosted.apply_hook(record.event, now);
         self.refresh(&hosted);
+    }
+
+    /// Whether a report from `conversation` is `hosted`'s own, recording a conversation it
+    /// adopts and logging (ids only) one it ignores (fix-hook-session-match).
+    pub(super) fn own_report(
+        &self,
+        hosted: &Hosted,
+        conversation: &str,
+        start: Option<&str>,
+        now: u64,
+    ) -> bool {
+        match hosted.report_from(conversation, start) {
+            Report::Own => true,
+            Report::Adopted => {
+                *lock(&hosted.conversation_known) = true;
+                if let Err(error) = lock(&self.store).set_agent_session_id(&hosted.id, conversation)
+                {
+                    self.log.line(&format!(
+                        "index update failed id={} error={error}",
+                        hosted.id
+                    ));
+                }
+                true
+            }
+            Report::Foreign => {
+                if hosted.log_foreign_now(now) {
+                    self.log
+                        .line(&format!("hook from another conversation id={}", hosted.id));
+                }
+                false
+            }
+        }
     }
 
     fn tick_loop(self: Arc<Self>) {
@@ -1848,4 +1892,11 @@ fn canonical_folder(cwd: &str) -> OpResult<String> {
         return Err(missing());
     }
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// What started a Claude Code session, from a `SessionStart` hook: `startup`, `resume`,
+/// `clear` or `compact`.
+fn start_source(raw: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    value.get("source")?.as_str().map(str::to_owned)
 }

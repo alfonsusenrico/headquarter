@@ -1,6 +1,6 @@
 # Status only from the session's own conversation
 
-Status: awaiting the owner's approval.
+Status: approved by the owner on 2026-10-27 ("ok do both").
 
 ## Why
 
@@ -20,16 +20,18 @@ cost figures, land on Headquarter dev.
 - A Claude Code session's status, needs-you reason, and header figures come only from its own
   conversation. Events from another Claude Code conversation that carry the same `HQ_SESSION`
   are ignored and logged as such (ids only).
-- `/clear` keeps working: the session adopts the new conversation Claude Code starts in place.
+- `/clear`, `/compact` and a resume that gives the conversation a new id keep working: the
+  session follows the conversation its own agent starts.
 - A session resumed without an id (`--resume` with Claude Code's picker) adopts the first
   conversation it reports.
 
 ## What Changes
 
-- `hq-daemon`: each hosted Claude session keeps its conversation id in memory (the id it was
-  launched with). `hook_line` and the status-line path drop a Claude payload whose `session_id`
-  differs, except a `SessionStart` with `source: "clear"`, which switches the session to the new
-  id (and records it in the index, as a found conversation is today).
+- `hq-daemon`: each hosted Claude session keeps its conversation id in memory, named by its
+  agent's first `SessionStart` (the launch's id until then). `hook_line` and the status-line
+  path drop a Claude payload from another conversation. A `SessionStart` with `source` `clear`
+  or `compact` switches the session to the new id. Adopted ids are recorded in the index.
+- `hq-signals`: the status-line helper forwards the conversation id with the figures.
 - The host log gains one line per ignored payload: `hook from another conversation id=<hq id>`,
   at most once a minute per session.
 

@@ -18,6 +18,24 @@ use crate::modes::Modes;
 /// Output kept for clients that attach later.
 pub const CATCH_UP_BYTES: usize = 1024 * 1024;
 const CATCH_UP_CHUNK: usize = 64 * 1024;
+const FOREIGN_LOG_EVERY_MS: u64 = 60_000;
+
+/// The conversation a Claude Code session reports for, and whether its agent has said so
+/// itself yet with a `SessionStart`.
+struct Conversation {
+    id: Option<String>,
+    started: bool,
+}
+
+/// Whose a status report is (`Hosted::report_from`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Report {
+    Own,
+    /// This session's conversation is now the report's.
+    Adopted,
+    /// Another conversation's, carrying this session's launch environment.
+    Foreign,
+}
 
 /// What a connection's writer thread sends to its client.
 pub enum Outgoing {
@@ -76,6 +94,12 @@ pub struct Hosted {
     has_spoken: AtomicBool,
     /// Whether the agent's own conversation id is known.
     pub conversation_known: Mutex<bool>,
+    /// The Claude Code conversation this session reports for (fix-hook-session-match).
+    /// Claude Code's own daemon can run other conversations with this session's launch
+    /// environment; their reports are not this session's.
+    conversation: Mutex<Conversation>,
+    /// When a report from another conversation was last logged.
+    foreign_logged_ms: Mutex<Option<u64>>,
 }
 
 /// The latest output for clients that attach later, and the terminal modes in effect
@@ -104,6 +128,8 @@ pub struct HostedParts {
     pub pid: Option<u32>,
     pub tracker: SessionTracker,
     pub conversation_known: bool,
+    /// The Claude Code conversation the agent was launched on, when the launch names it.
+    pub conversation: Option<String>,
     pub shell: bool,
 }
 
@@ -153,7 +179,51 @@ impl Hosted {
             program_status: AtomicBool::new(false),
             has_spoken: AtomicBool::new(false),
             conversation_known: Mutex::new(parts.conversation_known),
+            conversation: Mutex::new(Conversation {
+                id: parts.conversation,
+                started: false,
+            }),
+            foreign_logged_ms: Mutex::new(None),
         }
+    }
+
+    /// Whether a report from Claude Code `conversation` belongs to this session. `start`
+    /// is the source of a `SessionStart` report. The agent's own first start names its
+    /// conversation, which a resume can change, and `/clear` or `/compact` can change it
+    /// again in place. Until then the launch's conversation, or the first one heard of when
+    /// the launch named none, is the session's. Other agents' reports are always its own.
+    pub fn report_from(&self, conversation: &str, start: Option<&str>) -> Report {
+        if self.agent != Agent::Claude {
+            return Report::Own;
+        }
+        let mut known = lock(&self.conversation);
+        let restarted = match start {
+            Some("clear" | "compact") => true,
+            Some(_) => !known.started,
+            None => false,
+        };
+        if start.is_some() && restarted {
+            known.started = true;
+        }
+        match known.id.as_deref() {
+            Some(id) if id == conversation => Report::Own,
+            Some(_) if !restarted => Report::Foreign,
+            _ => {
+                known.id = Some(conversation.to_owned());
+                Report::Adopted
+            }
+        }
+    }
+
+    /// Whether to log a report from another conversation now: at most once a minute, so a
+    /// chatty one cannot fill the log.
+    pub fn log_foreign_now(&self, now_ms: u64) -> bool {
+        let mut last = lock(&self.foreign_logged_ms);
+        if last.is_some_and(|at| now_ms.saturating_sub(at) < FOREIGN_LOG_EVERY_MS) {
+            return false;
+        }
+        *last = Some(now_ms);
+        true
     }
 
     pub fn write_to_agent(&self, bytes: &[u8]) {

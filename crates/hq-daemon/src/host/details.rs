@@ -11,6 +11,7 @@ use std::time::Duration;
 use hq_protocol::{Frame, Response};
 use hq_signals::details::{CodexRollout, SessionDetails, codex_rollout, git_branch};
 use hq_signals::event::Agent;
+use hq_signals::now_ms;
 
 use super::{Host, lock};
 use crate::session::Outgoing;
@@ -49,6 +50,19 @@ impl Host {
             self.log.line("details payload unreadable");
             return;
         };
+        // The status line names its conversation; another one's figures are not this
+        // session's (fix-hook-session-match).
+        if let Some(conversation) = serde_json::from_str::<serde_json::Value>(raw)
+            .ok()
+            .and_then(|value| value.get("session_id")?.as_str().map(str::to_owned))
+        {
+            let Some(hosted) = lock(&self.live).get(session).cloned() else {
+                return;
+            };
+            if !self.own_report(&hosted, &conversation, None, now_ms()) {
+                return;
+            }
+        }
         lock(&self.details)
             .reported
             .insert(session.to_owned(), details.sanitized());
