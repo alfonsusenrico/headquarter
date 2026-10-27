@@ -1,6 +1,6 @@
 # Sessions already in a folder
 
-Status: awaiting the owner's approval.
+Status: approved by the owner on 2026-10-27 ("approve all three, go ahead").
 
 ## Why
 
