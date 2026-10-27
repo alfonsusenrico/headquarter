@@ -2655,6 +2655,9 @@ fn a_sessions_shell_runs_beside_it_and_ends_with_it() {
         }
     };
 
+    // The stub asks a question first; the shell must leave that status alone.
+    env.wait_status(&session.id, Status::NeedsYou);
+
     // A shell in the session's folder, beside its agent.
     let mut shell = attach_shell(&env);
     shell.send_frame(&Frame::Input(b"echo shell-says-$((6*7)); pwd\n".to_vec()));
@@ -2670,7 +2673,7 @@ fn a_sessions_shell_runs_beside_it_and_ends_with_it() {
     }
     assert_eq!(
         env.session(&session.id).status,
-        Status::Done,
+        Status::NeedsYou,
         "the shell does not change the session's status"
     );
 
