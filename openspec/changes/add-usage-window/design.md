@@ -16,7 +16,8 @@ process's CPU % and resident memory. `sessions` has one entry per running sessio
 resident memory, and how many processes beyond the agent itself. A session's processes are its
 agent and all descendants, and its shell panel and all descendants. The host keeps one `System`
 between requests, because CPU % needs two samples: the first answer has no CPU figure ("…"),
-and later ones do. CPU % is per core, as Activity Monitor shows it. Memory is resident memory,
+and later ones do. An answer whose previous sample is more than 10 s old has no CPU figure
+either, because it would average the whole gap since the window was last open. CPU % is per core, as Activity Monitor shows it. Memory is resident memory,
 summed. Shared pages count once per process, which overstates slightly, the way `top`'s sums do.
 
 Rejected: the app measuring the agents itself. Only the host knows which processes belong to
@@ -36,11 +37,15 @@ host's figure. One line: Headquarter.
 
 - ⌘U (Ctrl+Shift+U on Linux) toggles the popover under the window's top right: the Headquarter
   line, then the five running sessions with the most CPU (name, CPU, memory), then Show all.
-  Esc or ⌘U closes it.
+  Esc, ⌘U or its ✕ closes it. It has no backdrop and stays open while the owner works in the
+  sidebar or the terminal.
 - Show all, or Window ▸ Usage on macOS, opens the Usage window in the modal frame: the
   Headquarter card, "All agents" (the sum of the sessions), then a table of every sidebar
   session in sidebar order, sortable by CPU or memory. Rows with child processes say so
   ("+3 child processes"). Sessions that are not running are dimmed and read "not running".
+- The window closes on Esc, its ✕, or a click outside it.
+- Window ▸ Usage shows no ⌘U beside it: a key bound to the menu item would open the window,
+  and ⌘U opens the popover.
 - On Linux, which has no menu bar, the popover's Show all is the way to the window.
 
 ### D5. The phone
