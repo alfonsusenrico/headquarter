@@ -48,6 +48,7 @@ use crate::themes::{self, Library, Look, ThemeChoice, Token};
 
 mod groups;
 mod header;
+mod quit;
 mod rail;
 mod remote;
 mod shell;
@@ -221,6 +222,11 @@ pub struct Workspace {
     /// The session waiting for "End session" to be confirmed.
     /// The session waiting for "Close" to be confirmed.
     confirm_close: Option<String>,
+    /// The quit dialog, while it asks or stops the host (add-quit-stops-host).
+    quit: Option<quit::QuitState>,
+    quit_focus: FocusHandle,
+    /// Remote control is on in the settings file, for the quit dialog.
+    remote_on: bool,
     /// The session whose agent is being started again because it was opened.
     resuming: Option<String>,
     /// Why starting a session's agent again failed: (session id, reason).
@@ -384,6 +390,9 @@ impl Workspace {
             live_width: None,
             width_motion: 0,
             confirm_close: None,
+            quit: None,
+            quit_focus: cx.focus_handle(),
+            remote_on: false,
             resuming: None,
             resume_failed: None,
             pane_focus: cx.focus_handle(),
@@ -421,6 +430,16 @@ impl Workspace {
         };
         workspace.notifications = settings::notifications(&mut workspace.watcher, None);
         workspace.check_updates = settings::check_updates(&mut workspace.watcher, None);
+        workspace.remote_on = settings::remote_enabled(&mut workspace.watcher, None);
+        // The window's close button quits too, so it asks first (add-quit-stops-host).
+        let asker = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            let Some(workspace) = asker.upgrade() else {
+                return true;
+            };
+            workspace.update(cx, |workspace, cx| workspace.request_quit(window, cx));
+            false
+        });
         workspace.listen_for_notification_clicks(window, cx);
         // Outside an app bundle macOS shows none of the app's notifications (D5).
         if cfg!(target_os = "macos") && cx.app_path().is_err() {
@@ -515,6 +534,7 @@ impl Workspace {
         }
         self.notifications = settings::notifications(&mut self.watcher, Some(self.notifications));
         self.check_updates = settings::check_updates(&mut self.watcher, Some(self.check_updates));
+        self.remote_on = settings::remote_enabled(&mut self.watcher, Some(self.remote_on));
         let (appearance, note) = settings::read(&mut self.watcher, Some(&self.appearance));
         if appearance == self.appearance && note == self.settings_note {
             return;
@@ -1649,10 +1669,7 @@ impl Workspace {
             Shortcut::NextNeedingYou => self.jump_to_next_needing(window, cx),
             Shortcut::ToggleRail => self.toggle_rail(cx),
             Shortcut::ThemeSwitcher => self.toggle_theme_switcher(window, cx),
-            Shortcut::Quit => {
-                Self::save_window_now(window);
-                cx.quit();
-            }
+            Shortcut::Quit => self.request_quit(window, cx),
             Shortcut::Minimize => window.minimize_window(),
             Shortcut::Hide => cx.hide(),
             Shortcut::ToggleShell => self.toggle_shell(window, cx),
@@ -2884,6 +2901,9 @@ impl Render for Workspace {
             .flex()
             .text_size(px(14.))
             .on_key_down(cx.listener(Self::key_down))
+            .on_action(cx.listener(|this, _: &menus::Quit, window, cx| {
+                this.request_quit(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &menus::ThemeSwitcher, window, cx| {
                 this.run_shortcut(Shortcut::ThemeSwitcher, window, cx);
             }))
@@ -2929,6 +2949,7 @@ impl Render for Workspace {
             .children(creator)
             .children(self.render_confirm_delete(cx))
             .children(self.render_confirm_close(cx))
+            .children(self.render_quit(cx))
             .children(self.render_update_window(cx))
             .children(self.render_remote_window(cx))
     }
