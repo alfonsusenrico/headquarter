@@ -245,6 +245,16 @@ impl Press {
             Press::AltShift(keys) => with(&["Alt", "Shift"], keys),
         }
     }
+
+    /// The caps as the window draws them: modifiers once, before the first key, so
+    /// Alt-Shift-arrows reads "⌥ ⇧ ↑ / ↓" rather than repeating them.
+    pub fn shown(self, mac: bool) -> Vec<Vec<String>> {
+        let mut groups = self.caps(mac);
+        for group in groups.iter_mut().skip(1) {
+            group.drain(..group.len() - 1);
+        }
+        groups
+    }
 }
 
 /// One row of the Keyboard Shortcuts window.
@@ -298,7 +308,7 @@ const OTHER_KEYS: [Listing; 7] = [
     Listing {
         area: Area::Sidebar,
         name: "Cancel",
-        what: "Close a close or delete prompt.",
+        what: "Back out of a close or delete prompt.",
         press: Press::Alone(&["Esc"]),
     },
 ];
@@ -457,6 +467,11 @@ mod tests {
             move_row.press.caps(false),
             vec![vec!["Alt", "Shift", "↑"], vec!["Alt", "Shift", "↓"]]
         );
+        assert_eq!(
+            move_row.press.shown(true),
+            vec![vec!["⌥", "⇧", "↑"], vec!["↓"]]
+        );
+        assert_eq!(shell.press.shown(false), shell.press.caps(false));
     }
 
     #[test]

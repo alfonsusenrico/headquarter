@@ -17,9 +17,10 @@ every `Shortcut` value appears in the table once, and no two share a key.
 
 ### D2. The window
 
-In the modal frame the ⌘O and theme windows use, about 560 px wide: area headings, then rows
+In the modal frame the ⌘O and theme windows use, 640 px wide: area headings, then rows
 with key chips on the left (⌘ N on macOS, Ctrl Shift N on Linux) and the name with its
-explanation on the right. Typing any character shows a filter line at the top with the typed
+explanation on the right. Shared modifiers show once (⌥ ⇧ ↑ / ↓), and a long explanation wraps
+rather than being cut (both found on screen, 2026-10-27). Typing any character shows a filter line at the top with the typed
 text and narrows the rows to those whose name, explanation or key matches. Backspace edits it.
 Esc clears a filter, then closes. ⌘/ again closes.
 

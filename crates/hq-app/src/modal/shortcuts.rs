@@ -12,11 +12,13 @@ use crate::shortcuts::{self, Area, Listing};
 use crate::terminal::view::hsla;
 use crate::theme::Chrome;
 
-const WIDTH: f32 = 560.0;
-const HEIGHT: f32 = 560.0;
+const WIDTH: f32 = 640.0;
+const HEIGHT: f32 = 680.0;
 /// The window shrinks to leave this much of the app around it.
 const MARGIN: f32 = 24.0;
-const KEYS_WIDTH: f32 = 190.0;
+/// Fits the widest keys: ⌥ ⇧ ↑ / ↓ on macOS, Alt Shift ↑ / ↓ on Linux.
+const KEYS_WIDTH_MAC: f32 = 120.0;
+const KEYS_WIDTH_LINUX: f32 = 150.0;
 const AREA_WIDTH: f32 = 80.0;
 
 pub enum ShortcutsEvent {
@@ -99,12 +101,16 @@ impl ShortcutsWindow {
                 .child(text)
         };
         let mut keys = div()
-            .w(px(KEYS_WIDTH))
+            .w(px(if self.mac {
+                KEYS_WIDTH_MAC
+            } else {
+                KEYS_WIDTH_LINUX
+            }))
             .flex_none()
             .flex()
             .items_center()
             .gap(px(3.));
-        for (index, group) in row.press.caps(self.mac).into_iter().enumerate() {
+        for (index, group) in row.press.shown(self.mac).into_iter().enumerate() {
             if index > 0 {
                 keys = keys.child(
                     div()
@@ -138,7 +144,7 @@ impl ShortcutsWindow {
                     .flex_1()
                     .min_w_0()
                     .flex()
-                    .items_baseline()
+                    .items_start()
                     .gap(px(8.))
                     .child(
                         div()
@@ -148,8 +154,8 @@ impl ShortcutsWindow {
                     )
                     .child(
                         div()
+                            .flex_1()
                             .min_w_0()
-                            .truncate()
                             .text_color(hsla(chrome.muted))
                             .child(row.what),
                     ),
