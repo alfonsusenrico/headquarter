@@ -1,5 +1,6 @@
 package com.alfonsusenrico.headquarter.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,6 +29,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -94,7 +97,7 @@ fun HqButton(
     val background = if (primary) tokens.accent else tokens.card
     val foreground =
         when {
-            primary -> if (tokens.dark) tokens.terminalBackground else tokens.card
+            primary -> onAccent(tokens)
             danger -> tokens.danger
             else -> tokens.text
         }
@@ -109,6 +112,36 @@ fun HqButton(
             .padding(horizontal = 18.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) { Text(label, color = foreground, fontWeight = FontWeight.SemiBold, fontSize = 15.sp) }
+}
+
+/** Text and icons drawn on the accent colour. */
+fun onAccent(tokens: Tokens): Color = if (tokens.dark) tokens.terminalBackground else tokens.card
+
+/** A 48 dp icon button, plain or on a tonal square. */
+@Composable
+fun IconAction(
+    @DrawableRes icon: Int,
+    description: String,
+    tint: Color,
+    tonal: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val tokens = LocalTokens.current
+    Box(
+        Modifier
+            .size(48.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (tonal) tokens.card else Color.Transparent),
+            contentAlignment = Alignment.Center,
+        ) { Icon(painterResource(icon), null, tint = tint, modifier = Modifier.size(22.dp)) }
+    }
 }
 
 /** A rounded group of rows, as the desktop's cards. */
