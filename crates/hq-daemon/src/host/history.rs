@@ -15,7 +15,6 @@ use hq_store::{Origin, SessionRow, Store, StoreError};
 
 use super::outside::AgyConversation;
 use super::{Host, lock};
-use crate::session::Hosted;
 
 /// The longest a list request waits for the first import after the host starts.
 pub(super) const FIRST_IMPORT_WAIT: Duration = Duration::from_secs(10);
@@ -143,22 +142,40 @@ impl Host {
         }
     }
 
-    /// A hosted Codex or agy session learns its conversation id only after its first
-    /// turn; if an import listed that conversation first, the imported row goes.
-    pub(super) fn drop_imported_duplicate(&self, hosted: &Hosted, conversation: &str) {
+    /// Records that session `id` now holds `conversation`: a hosted Codex or agy session
+    /// learning its id after its first turn, or a Claude session its agent continued under a
+    /// new id. Another row already holding that conversation is removed only when nothing
+    /// of the owner's is in it: imported from history, outside the sidebar, never named.
+    /// Otherwise both stay (fix-claude-conversations D2).
+    pub(super) fn record_conversation(&self, agent: Agent, id: &str, conversation: &str) {
         let store = lock(&self.store);
-        let Ok(Some(row)) = store.find_by_conversation(hosted.agent, conversation) else {
-            return;
-        };
-        if row.id != hosted.id && row.origin == Origin::History {
-            match store.remove_history(&row.id) {
-                Ok(()) => self
-                    .log
-                    .line(&format!("merged imported duplicate into id={}", hosted.id)),
-                Err(error) => self
-                    .log
-                    .line(&format!("index update failed id={} error={error}", row.id)),
+        if let Ok(Some(other)) = store.find_by_conversation(agent, conversation)
+            && other.id != id
+        {
+            if other.origin == Origin::History
+                && other.sidebar_added_at.is_none()
+                && !other.owner_named
+            {
+                match store.remove_history(&other.id) {
+                    Ok(()) => self.log.line(&format!(
+                        "merged imported duplicate id={} into id={id}",
+                        other.id
+                    )),
+                    Err(error) => self.log.line(&format!(
+                        "index update failed id={} error={error}",
+                        other.id
+                    )),
+                }
+            } else {
+                self.log.line(&format!(
+                    "kept both rows of one conversation id={id} other={}",
+                    other.id
+                ));
             }
+        }
+        if let Err(error) = store.set_agent_session_id(id, conversation) {
+            self.log
+                .line(&format!("index update failed id={id} error={error}"));
         }
     }
 }

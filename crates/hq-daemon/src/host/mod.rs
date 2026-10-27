@@ -55,6 +55,10 @@ const STOP_GRACE: Duration = Duration::from_secs(3);
 const STOPPING_HOST_WAIT: Duration = Duration::from_secs(10);
 /// Shortest id prefix accepted as a session reference.
 const MIN_ID_PREFIX: usize = 4;
+/// How long one answer of `claude agents --json` serves resumes (fix-claude-conversations D3).
+const CLAUDE_RUNNING_REUSE: Duration = Duration::from_secs(3);
+/// How long a stopped background conversation may take to leave Claude Code's list.
+const BACKGROUND_STOP_WAIT: Duration = Duration::from_secs(8);
 /// Tells programs that check it (Node's `supports-hyperlinks`, which Claude Code uses)
 /// that the terminal opens links they mark up (OSC 8), so a link an agent wraps over
 /// several lines still opens whole (add-terminal-links).
@@ -144,6 +148,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         titles: Mutex::new(HashMap::new()),
         offered: Mutex::new(HashSet::new()),
         agy_conversations: Mutex::new(Vec::new()),
+        claude_running: Mutex::new(None),
         outside: Mutex::new(outside::OutsideView::default()),
         outside_wake: outside::OutsideWake::default(),
         first_import: history::FirstImport::default(),
@@ -249,11 +254,15 @@ fn conversation_saved(agent: Agent, id: Option<&str>) -> bool {
     let (Agent::Claude, Some(id)) = (agent, id) else {
         return true;
     };
-    let Some(projects) = hq_signals::paths::claude_config_dir().map(|dir| dir.join("projects"))
-    else {
+    let Some(projects) = claude_projects() else {
         return true;
     };
     hq_signals::history::claude_transcript(&projects, id).is_some()
+}
+
+/// Claude Code's saved conversations, one folder per project.
+fn claude_projects() -> Option<PathBuf> {
+    hq_signals::paths::claude_config_dir().map(|dir| dir.join("projects"))
 }
 
 /// Errors are boxed responses: `Response` is large and most calls succeed.
@@ -309,6 +318,8 @@ struct Host {
     /// agy's top-level conversations as the last history pass read them, for linking
     /// agy processes in other terminals.
     agy_conversations: Mutex<Vec<outside::AgyConversation>>,
+    /// Claude Code's running conversations, and when they were asked (`claude_running`).
+    claude_running: Mutex<Option<(Instant, Vec<external::ExternalSession>)>>,
     outside: Mutex<outside::OutsideView>,
     outside_wake: outside::OutsideWake,
     first_import: history::FirstImport,
@@ -569,6 +580,11 @@ impl Host {
                         ),
                         Request::Resume { session, term } => send(
                             self.resume(&session, term)
+                                .map(|session| Response::Created { session })
+                                .unwrap_or_else(|error| *error),
+                        ),
+                        Request::BringIn { session, term } => send(
+                            self.bring_in(&session, term)
                                 .map(|session| Response::Created { session })
                                 .unwrap_or_else(|error| *error),
                         ),
@@ -852,6 +868,10 @@ impl Host {
                 format!("session `{}` is already running; attach to it", row.name),
             ));
         }
+        let folder = canonical_folder(&row.cwd)?;
+        let program = self.resolve_agent(row.agent)?;
+        let row = self.follow_continuation(row);
+        self.refuse_running_claude(&row, &program)?;
         if let Some(external) = lock(&self.outside).linked.get(&row.id) {
             let pid = external
                 .pid
@@ -864,8 +884,6 @@ impl Host {
                 ),
             ));
         }
-        let folder = canonical_folder(&row.cwd)?;
-        let program = self.resolve_agent(row.agent)?;
         let saved = conversation_saved(row.agent, row.agent_session_id.as_deref());
         let conversation = match row.agent_session_id.as_deref() {
             // Claude Code saves a conversation only once it has a message, and refuses to
@@ -909,6 +927,139 @@ impl Host {
 
     /// The executable for `agent`: the settings file's pin, else discovery across the
     /// process `PATH`, the login-shell `PATH`, and the platform's install folders.
+    /// Stops `reference`'s conversation in Claude Code's background, by the background id
+    /// `claude stop` takes (not the conversation id, which it does not match), waits until
+    /// Claude Code no longer lists it, then resumes it here (fix-claude-conversations D3).
+    fn bring_in(self: &Arc<Self>, reference: &str, term: Option<String>) -> OpResult<SessionInfo> {
+        self.refuse_while_stopping()?;
+        let row = self.follow_continuation(self.resolve(reference)?);
+        let claude = self.resolve_agent(row.agent)?;
+        let Some(conversation) = row.agent_session_id.clone() else {
+            return self.resume(reference, term);
+        };
+        *lock(&self.claude_running) = None;
+        let running = external::claude_running(&claude)
+            .map_err(|error| fail(ErrorCode::SpawnFailed, error))?;
+        let background = running.iter().find(|session| {
+            session.background && session.session_id.as_deref() == Some(conversation.as_str())
+        });
+        if let Some(job) = background.and_then(|session| session.background_id.clone()) {
+            self.log
+                .line(&format!("bringing in id={} from background", row.id));
+            external::claude_stop(&claude, &job)
+                .map_err(|error| fail(ErrorCode::SpawnFailed, error))?;
+            let deadline = Instant::now() + BACKGROUND_STOP_WAIT;
+            loop {
+                let still = external::claude_running(&claude).is_ok_and(|running| {
+                    running
+                        .iter()
+                        .any(|session| session.session_id.as_deref() == Some(conversation.as_str()))
+                });
+                if !still {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err(fail(
+                        ErrorCode::RunningInBackground,
+                        format!(
+                            "session `{}` is still running in Claude Code's background",
+                            row.name
+                        ),
+                    ));
+                }
+                thread::sleep(Duration::from_millis(250));
+            }
+            lock(&self.outside).linked.remove(&row.id);
+        }
+        *lock(&self.claude_running) = None;
+        self.resume(reference, term)
+    }
+
+    /// Claude Code's running conversations, asked at most every few seconds: a host start
+    /// resumes several sessions in a row, and each ask costs about a second.
+    fn claude_running(&self, claude: &Path) -> Result<Vec<external::ExternalSession>, String> {
+        let mut cached = lock(&self.claude_running);
+        if let Some((at, running)) = cached.as_ref()
+            && at.elapsed() < CLAUDE_RUNNING_REUSE
+        {
+            return Ok(running.clone());
+        }
+        let running = external::claude_running(claude)?;
+        *cached = Some((Instant::now(), running.clone()));
+        Ok(running)
+    }
+
+    /// A Claude session that never saw its agent continue its conversation resumes the
+    /// newest continuation instead, and keeps it (fix-claude-conversations D1).
+    fn follow_continuation(&self, mut row: SessionRow) -> SessionRow {
+        let (Agent::Claude, Some(stored)) = (row.agent, row.agent_session_id.as_deref()) else {
+            return row;
+        };
+        let Some(projects) = claude_projects() else {
+            return row;
+        };
+        let latest = hq_signals::history::claude_latest_conversation(&projects, stored);
+        if latest == stored {
+            return row;
+        }
+        self.record_conversation(row.agent, &row.id, &latest);
+        self.log
+            .line(&format!("conversation continued id={}", row.id));
+        row.agent_session_id = Some(latest);
+        row
+    }
+
+    /// Claude Code refuses to resume a conversation it is running already, in a terminal or
+    /// in its own background daemon: say which, instead of starting an agent that exits at
+    /// once (fix-claude-conversations D3). If Claude Code cannot be asked, the resume goes on.
+    fn refuse_running_claude(&self, row: &SessionRow, claude: &Path) -> OpResult<()> {
+        let (Agent::Claude, Some(conversation)) = (row.agent, row.agent_session_id.as_deref())
+        else {
+            return Ok(());
+        };
+        // Only a saved conversation can be running anywhere.
+        if !conversation_saved(row.agent, Some(conversation)) {
+            return Ok(());
+        }
+        let running = match self.claude_running(claude) {
+            Ok(running) => running,
+            Err(error) => {
+                self.log
+                    .line(&format!("claude agents unavailable before resume: {error}"));
+                return Ok(());
+            }
+        };
+        let Some(found) = running
+            .iter()
+            .find(|session| session.session_id.as_deref() == Some(conversation))
+        else {
+            return Ok(());
+        };
+        let pid = found
+            .pid
+            .map_or_else(|| "unknown".to_owned(), |pid| pid.to_string());
+        if found.background {
+            self.log.line(&format!(
+                "resume refused id={} running in background",
+                row.id
+            ));
+            return Err(fail(
+                ErrorCode::RunningInBackground,
+                format!(
+                    "session `{}` is running in Claude Code's background (pid {pid})",
+                    row.name
+                ),
+            ));
+        }
+        Err(fail(
+            ErrorCode::ExternalLive,
+            format!(
+                "session `{}` is running in another terminal (pid {pid}); close it there first",
+                row.name
+            ),
+        ))
+    }
+
     fn resolve_agent(&self, agent: Agent) -> OpResult<PathBuf> {
         let settings = lock(&self.settings)
             .current()
@@ -1058,6 +1209,8 @@ impl Host {
         lock(&self.store)
             .add_to_sidebar(&ids, now_ms())
             .map_err(storage_error)?;
+        self.log
+            .line(&format!("sidebar added ids={}", ids.join(",")));
         for id in &ids {
             self.broadcast(id);
         }
@@ -1071,6 +1224,10 @@ impl Host {
         lock(&self.store)
             .remove_from_sidebar(&ids)
             .map_err(storage_error)?;
+        // Which rows leave the sidebar, so a row that vanishes can be traced
+        // (fix-claude-conversations D5). Ids only.
+        self.log
+            .line(&format!("sidebar removed ids={}", ids.join(",")));
         for id in &ids {
             self.end_shell(id);
             self.settle_start(id);
@@ -1490,7 +1647,34 @@ impl Host {
             hosted.id,
             exit_code.map_or_else(|| "unknown".to_owned(), |code| code.to_string())
         ));
+        self.note_left_in_background(hosted);
         self.broadcast(&hosted.id);
+    }
+
+    /// Claude Code can keep a conversation running in its own background after the agent
+    /// the host started ends; logged at once (ids only), so a later resume that is refused
+    /// is not the first sign (fix-claude-conversations D3). Skipped while the host stops.
+    fn note_left_in_background(&self, hosted: &Hosted) {
+        if hosted.agent != Agent::Claude || self.stopping.load(Ordering::SeqCst) {
+            return;
+        }
+        let (Some(conversation), Ok(claude)) =
+            (hosted.conversation_id(), self.resolve_agent(Agent::Claude))
+        else {
+            return;
+        };
+        *lock(&self.claude_running) = None;
+        let left = external::claude_running(&claude).is_ok_and(|running| {
+            running.iter().any(|session| {
+                session.background && session.session_id.as_deref() == Some(conversation.as_str())
+            })
+        });
+        if left {
+            self.log.line(&format!(
+                "conversation still running in background id={}",
+                hosted.id
+            ));
+        }
     }
 
     /// The session's shell, started first when none runs: the owner's login shell in
@@ -1655,15 +1839,7 @@ impl Host {
         match found {
             Some(conversation) => {
                 *lock(&hosted.conversation_known) = true;
-                self.drop_imported_duplicate(hosted, &conversation);
-                if let Err(error) =
-                    lock(&self.store).set_agent_session_id(&hosted.id, &conversation)
-                {
-                    self.log.line(&format!(
-                        "index update failed id={} error={error}",
-                        hosted.id
-                    ));
-                }
+                self.record_conversation(hosted.agent, &hosted.id, &conversation);
                 self.log
                     .line(&format!("conversation found id={}", hosted.id));
             }
@@ -1767,13 +1943,14 @@ impl Host {
             Report::Own => true,
             Report::Adopted => {
                 *lock(&hosted.conversation_known) = true;
-                if let Err(error) = lock(&self.store).set_agent_session_id(&hosted.id, conversation)
-                {
-                    self.log.line(&format!(
-                        "index update failed id={} error={error}",
-                        hosted.id
-                    ));
-                }
+                self.record_conversation(hosted.agent, &hosted.id, conversation);
+                true
+            }
+            Report::Foreign if self.continued_in(hosted, conversation, now) => {
+                hosted.continue_in(conversation);
+                self.record_conversation(hosted.agent, &hosted.id, conversation);
+                self.log
+                    .line(&format!("conversation continued id={}", hosted.id));
                 true
             }
             Report::Foreign => {
@@ -1784,6 +1961,19 @@ impl Host {
                 false
             }
         }
+    }
+
+    /// Whether Claude Code carried `hosted`'s conversation on under `conversation`, read
+    /// from the current conversation's transcript (fix-claude-conversations D1).
+    fn continued_in(&self, hosted: &Hosted, conversation: &str, now: u64) -> bool {
+        if hosted.agent != Agent::Claude || !hosted.check_continuation_now(now) {
+            return false;
+        }
+        let (Some(current), Some(projects)) = (hosted.conversation_id(), claude_projects()) else {
+            return false;
+        };
+        hq_signals::history::claude_continuation(&projects, &current).as_deref()
+            == Some(conversation)
     }
 
     fn tick_loop(self: Arc<Self>) {

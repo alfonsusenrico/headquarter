@@ -15,7 +15,7 @@ pub use hq_signals::quota::Account;
 use hq_signals::status::Status;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 11;
+pub const PROTOCOL_VERSION: u32 = 12;
 pub const MAX_PAYLOAD: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +169,13 @@ pub enum Request {
         #[serde(default)]
         term: Option<String>,
     },
+    /// Stop a Claude conversation running in Claude Code's background, then resume it in
+    /// Headquarter (fix-claude-conversations D3).
+    BringIn {
+        session: String,
+        #[serde(default)]
+        term: Option<String>,
+    },
     /// Put sessions in the sidebar: names or id prefixes, all or nothing.
     Add {
         sessions: Vec<String>,
@@ -314,6 +321,9 @@ pub enum ErrorCode {
     NotAllowed,
     /// Remote control is off, so there is nothing to pair with.
     RemoteOff,
+    /// The conversation is running in Claude Code's own background daemon, so resuming it
+    /// would fail; the message names its process (fix-claude-conversations).
+    RunningInBackground,
 }
 
 /// How a past conversation leaves its agent (remove-conversations, owner 2026-10-23).
@@ -704,6 +714,10 @@ pub struct External {
     pub pid: Option<u32>,
     /// `None` when no source reports one.
     pub status: Option<Status>,
+    /// Running in Claude Code's own background daemon rather than a terminal, so it can be
+    /// brought into Headquarter (fix-claude-conversations D3).
+    #[serde(default)]
+    pub background: bool,
 }
 
 /// Display labels for group folders: the final folder name, extended with parent
