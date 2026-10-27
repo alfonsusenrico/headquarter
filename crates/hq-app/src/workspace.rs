@@ -33,6 +33,7 @@ use crate::marks::{self, Marks};
 use crate::menus;
 use crate::modal::new_session::{NewEvent, NewSession, Provider};
 use crate::modal::open_sessions::{OpenEvent, OpenSessions};
+use crate::modal::shortcuts::{ShortcutsEvent, ShortcutsWindow};
 use crate::modal::theme_creator::{CreatorEvent, CreatorStart, ThemeCreator};
 use crate::modal::theme_switcher::{self, ThemeEvent, ThemeSwitcher};
 use crate::modal::{self};
@@ -113,6 +114,11 @@ enum Modal {
     },
     Theme {
         view: Entity<ThemeSwitcher>,
+        _events: Subscription,
+    },
+    /// The Keyboard Shortcuts window (add-shortcuts-window).
+    Shortcuts {
+        view: Entity<ShortcutsWindow>,
         _events: Subscription,
     },
     /// The theme creator's side panel; it draws its own full-window layer.
@@ -605,6 +611,9 @@ impl Workspace {
             Some(Modal::Theme { view: window, .. }) => {
                 window.update(cx, |window, cx| window.set_chrome(chrome, cx));
             }
+            Some(Modal::Shortcuts { view: window, .. }) => {
+                window.update(cx, |window, cx| window.set_chrome(chrome, cx));
+            }
             Some(Modal::Creator { .. }) | None => {}
         }
         cx.notify();
@@ -671,7 +680,7 @@ impl Workspace {
             Some(Modal::New { view: window, .. }) => {
                 window.update(cx, |window, cx| window.set_marks(shared, cx));
             }
-            Some(Modal::Theme { .. } | Modal::Creator { .. }) | None => {}
+            Some(Modal::Theme { .. } | Modal::Shortcuts { .. } | Modal::Creator { .. }) | None => {}
         }
         self.marks = marks;
         cx.notify();
@@ -1396,6 +1405,37 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Opens the Keyboard Shortcuts window, or closes it when it is open. A theme being
+    /// tried is put back first, and the theme creator's unsaved edits are never dropped.
+    fn toggle_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.modal {
+            Some(Modal::Shortcuts { .. }) => {
+                self.close_modal(window, cx);
+                return;
+            }
+            Some(Modal::Creator { .. }) => return,
+            Some(Modal::Theme { .. }) => {
+                self.theme_preview = None;
+                self.apply_settings(window, cx);
+            }
+            Some(Modal::Open { .. } | Modal::New { .. }) | None => {}
+        }
+        let chrome = self.theme.chrome;
+        let keys = cx.new(|cx| ShortcutsWindow::new(chrome, window, cx));
+        let events = cx.subscribe_in(
+            &keys,
+            window,
+            |this, _, event: &ShortcutsEvent, window, cx| match event {
+                ShortcutsEvent::Close => this.close_modal(window, cx),
+            },
+        );
+        self.modal = Some(Modal::Shortcuts {
+            view: keys,
+            _events: events,
+        });
+        cx.notify();
+    }
+
     /// Opens the theme switcher, or closes it as Escape does when it is open.
     fn toggle_theme_switcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.modal, Some(Modal::Theme { .. })) {
@@ -1704,6 +1744,7 @@ impl Workspace {
             Shortcut::Minimize => window.minimize_window(),
             Shortcut::Hide => cx.hide(),
             Shortcut::ToggleShell => self.toggle_shell(window, cx),
+            Shortcut::KeyboardShortcuts => self.toggle_shortcuts(window, cx),
         }
     }
 
@@ -2947,6 +2988,7 @@ impl Render for Workspace {
                 Modal::Open { view: open, .. } => open.clone().into_any_element(),
                 Modal::New { view: new, .. } => new.clone().into_any_element(),
                 Modal::Theme { view: switcher, .. } => switcher.clone().into_any_element(),
+                Modal::Shortcuts { view: keys, .. } => keys.clone().into_any_element(),
                 // The creator keeps the app in view: no dimming, its own layer.
                 Modal::Creator { .. } => return None,
             };
@@ -2994,6 +3036,11 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &menus::RemoteControl, window, cx| {
                 this.open_remote_window(window, cx);
             }))
+            .on_action(
+                cx.listener(|this, _: &menus::KeyboardShortcuts, window, cx| {
+                    this.run_shortcut(Shortcut::KeyboardShortcuts, window, cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &menus::ToggleShell, window, cx| {
                 this.run_shortcut(Shortcut::ToggleShell, window, cx);
             }))
