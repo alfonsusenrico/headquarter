@@ -56,5 +56,23 @@ rounds, the median per case. Each case runs N sessions, waits 10 s, then measure
   window is shown, and once a minute while it is hidden.
 - **Variation:** Alacritty's figures vary more between rounds at high session counts.
 
+## The working status, before and after (2026-10-27)
+
+The sidebar's "working" status changed from a fading word, drawn 12 times a second, to three
+dots that step 4 times a second. Measured on the same Mac with
+`scripts/bench/run.sh hq busy "1 10 50" 30`: the stand-in agent working, three rounds
+alternating the two builds, the median per case. Headquarter only, the app and its host together.
+Alacritty and the recordings were not run again, so the comparison above is unchanged.
+
+| Working sessions | CPU before | CPU after |
+|---|---|---|
+| 1 | 9.1% | 6.8% |
+| 10 | 10.5% | 7.5% |
+| 50 | 16.9% | 10.7% |
+
+A working session costs about a quarter to a third less CPU, and the app's memory is unchanged
+(148 to 153 MB in both). What remains is mostly the shown session's own output, which still draws
+when it arrives.
+
 To run it yourself, record the agents first with `scripts/bench/record.sh`, then run
 `scripts/bench/suite.sh` and `scripts/bench/summarize.py` (see `scripts/bench/README.md`).

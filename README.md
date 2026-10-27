@@ -159,6 +159,10 @@ median of three rounds. The full numbers are in [`docs/benchmark.md`](docs/bench
 - **One session? Alacritty is lighter, honestly.** A single working session costs 5 to
   12% of a core here, against 3 to 12% for one Alacritty window. At idle, Headquarter
   uses under 1% of one core; Alacritty uses about none.
+- **And working just got cheaper.** The sidebar's working dots step 4 times a second
+  instead of fading 12 times. With a simulated agent working, that is a quarter to a
+  third less CPU: 9.1% to 6.8% for one session, 16.9% to 10.7% for fifty
+  ([before and after](docs/benchmark.md#the-working-status-before-and-after-2026-10-27)).
 
 But you did not install a terminal for agents to run one agent.
 
