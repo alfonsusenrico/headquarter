@@ -24,6 +24,7 @@ actions!(
         OpenSessions,
         ToggleShell,
         KeyboardShortcuts,
+        UsageWindow,
     ]
 );
 
@@ -71,6 +72,7 @@ pub fn install(cx: &mut App) {
             MenuItem::action("New Session", NewSession),
             MenuItem::action("Open Sessions", OpenSessions),
             MenuItem::action("Shell", ToggleShell),
+            MenuItem::action("Usage", UsageWindow),
         ]),
     ]);
 }
@@ -87,6 +89,9 @@ fn binding(key: &str, shortcut: Shortcut) -> Option<KeyBinding> {
         Shortcut::OpenSessions => KeyBinding::new(&keystroke, OpenSessions, None),
         Shortcut::ToggleShell => KeyBinding::new(&keystroke, ToggleShell, None),
         Shortcut::KeyboardShortcuts => KeyBinding::new(&keystroke, KeyboardShortcuts, None),
+        // ⌘U opens the small popover, and Window ▸ Usage the full window
+        // (add-usage-window D4), so the key stays a key handler and is not bound here.
+        Shortcut::Usage => return None,
         _ => return None,
     };
     Some(binding)

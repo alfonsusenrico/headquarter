@@ -52,6 +52,7 @@ mod header;
 mod quit;
 mod rail;
 mod remote;
+mod resources;
 mod shell;
 mod sidebar_view;
 mod update;
@@ -276,6 +277,8 @@ pub struct Workspace {
     usage_open: Option<Agent>,
     /// The Remote Control window, while open (add-remote-gateway D12).
     remote_window: Option<remote::RemoteWindow>,
+    /// The Usage popover or window, while shown (add-usage-window).
+    resources: Option<resources::ResourcesView>,
     /// The details list every agent: opened from the "+N" chip.
     usage_all: bool,
     /// A refresh asked of the host has not been answered yet.
@@ -427,6 +430,7 @@ impl Workspace {
             usage: Vec::new(),
             usage_open: None,
             remote_window: None,
+            resources: None,
             usage_all: false,
             usage_refreshing: false,
             usage_dismissed: None,
@@ -1745,6 +1749,7 @@ impl Workspace {
             Shortcut::Hide => cx.hide(),
             Shortcut::ToggleShell => self.toggle_shell(window, cx),
             Shortcut::KeyboardShortcuts => self.toggle_shortcuts(window, cx),
+            Shortcut::Usage => self.toggle_resources(window, cx),
         }
     }
 
@@ -3044,6 +3049,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &menus::ToggleShell, window, cx| {
                 this.run_shortcut(Shortcut::ToggleShell, window, cx);
             }))
+            .on_action(cx.listener(|this, _: &menus::UsageWindow, window, cx| {
+                this.show_resources_window(window, cx);
+            }))
             .on_drag_move(cx.listener(
                 |this, event: &gpui::DragMoveEvent<rail::DividerDrag>, _, cx| {
                     this.drag_divider(f32::from(event.event.position.x), cx);
@@ -3071,6 +3079,7 @@ impl Render for Workspace {
             .children(self.render_quit(cx))
             .children(self.render_update_window(cx))
             .children(self.render_remote_window(cx))
+            .children(self.render_resources(window, cx))
     }
 }
 

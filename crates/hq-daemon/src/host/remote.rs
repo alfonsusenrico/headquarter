@@ -121,6 +121,8 @@ fn allowed(request: &Request) -> bool {
         | Request::SetGroup { .. }
         | Request::CloseShell { .. }
         | Request::RefreshUsage {}
+        // The Usage window is desktop only (add-usage-window D5).
+        | Request::Resources {}
         | Request::Stop {}
         | Request::Pair { .. }
         | Request::RemoteStatus {}
@@ -789,6 +791,7 @@ mod tests {
                 session: "s".into(),
             },
             Request::RefreshUsage {},
+            Request::Resources {},
         ];
         for request in &closed {
             assert!(!allowed(request), "{request:?}");

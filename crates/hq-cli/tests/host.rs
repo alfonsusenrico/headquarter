@@ -4391,3 +4391,51 @@ fn remote_control_keeps_an_idle_host_up() {
     }
     assert!(env.log().contains("reason=idle"), "{}", env.log());
 }
+
+/// Starts a child that keeps a core busy until the agent ends, then idles.
+const BUSY_STUB: &str = r#"if [ "$1" = "agents" ]; then echo '[]'; exit 0; fi
+agent=$$
+( while kill -0 "$agent" 2>/dev/null; do :; done ) &
+printf 'busy-stub\n'
+sleep 30
+"#;
+
+#[test]
+fn resources_cover_what_a_session_started_and_only_running_sessions() {
+    let mut env = TestEnv::new("resources");
+    env.stub("claude", BUSY_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Claude);
+    let footprint = |env: &TestEnv| match env.connect().request(&Request::Resources {}) {
+        Response::Resources { host, sessions } => {
+            assert!(host.memory > 0, "the host measures itself");
+            assert_eq!(host.processes, 1);
+            sessions
+                .into_iter()
+                .find(|entry| entry.session == session.id)
+                .map(|entry| entry.footprint)
+        }
+        other => panic!("unexpected resources answer {other:?}"),
+    };
+
+    wait_until("the busy child", || {
+        footprint(&env).is_some_and(|footprint| footprint.processes >= 2)
+    });
+    std::thread::sleep(Duration::from_secs(1));
+    let busy = footprint(&env).expect("a running session has figures");
+    assert!(busy.processes >= 2, "the child counts: {busy:?}");
+    assert!(busy.memory > 0);
+    assert!(
+        busy.cpu.is_some_and(|cpu| cpu > 50.0),
+        "the busy child shows on the second sample: {busy:?}"
+    );
+
+    assert!(matches!(
+        env.connect().request(&Request::Kill {
+            session: session.id.clone()
+        }),
+        Response::Done
+    ));
+    wait_until("ended", || !env.session(&session.id).live);
+    assert_eq!(footprint(&env), None, "a stopped session has no entry");
+}
