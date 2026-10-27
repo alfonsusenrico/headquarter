@@ -161,3 +161,18 @@ The system SHALL show, until the host answers with its first session list, the a
 #### Scenario: Add sessions while starting
 - **WHEN** the owner opens Add sessions before the first list has arrived
 - **THEN** it shows the marks lighting up in turn above "Loading your sessions…" rather than "No sessions match."
+
+### Requirement: Quitting stops the host
+Quitting the app, by its shortcut, its menu, or the window's close button, SHALL ask whether to stop the host and its sessions (Quit), quit the app only and leave them running (Keep Running), or stay (Cancel). Quit SHALL stop the host before the app ends, and the sessions that were running SHALL resume the next time the app opens.
+
+#### Scenario: Quit with sessions running
+- **WHEN** the owner presses ⌘Q with three sessions running and chooses Quit
+- **THEN** the host and its agents stop, the app quits, and the three sessions resume when Headquarter opens again
+
+#### Scenario: Keep running
+- **WHEN** the owner closes the window and chooses Keep Running
+- **THEN** the app quits and the host and its agents go on running
+
+#### Scenario: Cancel
+- **WHEN** the owner presses ⌘Q and chooses Cancel
+- **THEN** the app stays open and nothing stops
