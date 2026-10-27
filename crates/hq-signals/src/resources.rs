@@ -2,6 +2,7 @@
 //! processes and every process they started (add-usage-window D1).
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
@@ -10,7 +11,7 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Footprint {
     /// Percent of one core, as Activity Monitor shows it, so a busy tree can pass 100.
-    /// `None` on the first sample, which has nothing to compare with.
+    /// `None` when the sample before it is missing or too old to compare with.
     pub cpu: Option<f32>,
     /// Resident memory in bytes, summed over the processes.
     pub memory: u64,
@@ -33,10 +34,16 @@ impl Footprint {
     }
 }
 
+/// CPU use is averaged since the previous sample, so one older than this would blur a
+/// long stretch into one figure; the Usage window samples every 2 s.
+const FRESH: Duration = Duration::from_secs(10);
+
 /// Keeps the process table between samples, because CPU use is measured between two.
 pub struct Sampler {
     system: System,
-    samples: u32,
+    last: Option<Instant>,
+    /// Whether the latest sample followed a fresh one, so its CPU figures mean something.
+    cpu_ready: bool,
     children: HashMap<Pid, Vec<Pid>>,
 }
 
@@ -50,7 +57,8 @@ impl Sampler {
     pub fn new() -> Sampler {
         Sampler {
             system: System::new(),
-            samples: 0,
+            last: None,
+            cpu_ready: false,
             children: HashMap::new(),
         }
     }
@@ -62,7 +70,8 @@ impl Sampler {
             true,
             ProcessRefreshKind::nothing().with_cpu().with_memory(),
         );
-        self.samples = self.samples.saturating_add(1);
+        self.cpu_ready = self.last.is_some_and(|at| at.elapsed() <= FRESH);
+        self.last = Some(Instant::now());
         self.children.clear();
         for process in self.system.processes().values() {
             // Linux lists threads as tasks of their process; their memory is the
@@ -99,7 +108,7 @@ impl Sampler {
         }
         let mut seen = std::collections::HashSet::new();
         let mut total = Footprint {
-            cpu: (self.samples > 1).then_some(0.0),
+            cpu: self.cpu_ready.then_some(0.0),
             memory: 0,
             processes: 0,
         };
@@ -123,7 +132,7 @@ impl Sampler {
     }
 
     fn cpu(&self, process: &sysinfo::Process) -> Option<f32> {
-        (self.samples > 1).then(|| process.cpu_usage())
+        self.cpu_ready.then(|| process.cpu_usage())
     }
 }
 

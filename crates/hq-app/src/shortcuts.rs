@@ -21,6 +21,8 @@ pub enum Shortcut {
     ToggleShell,
     /// Opens or closes the Keyboard Shortcuts window.
     KeyboardShortcuts,
+    /// Opens or closes the Usage popover (add-usage-window D4).
+    Usage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -95,7 +97,7 @@ const fn entry(
 }
 
 /// Every app shortcut, in the order the window lists them.
-pub const SHORTCUTS: [Entry; 12] = [
+pub const SHORTCUTS: [Entry; 13] = [
     entry(
         Shortcut::NewSession,
         "n",
@@ -161,6 +163,13 @@ pub const SHORTCUTS: [Entry; 12] = [
             "This window.",
         )
     },
+    entry(
+        Shortcut::Usage,
+        "u",
+        Area::Window,
+        "Usage",
+        "CPU and memory of Headquarter and each session.",
+    ),
     entry(
         Shortcut::Minimize,
         "m",
@@ -389,7 +398,7 @@ mod tests {
     };
 
     /// Every shortcut; the match fails to compile when one is added without a row here.
-    const ALL: [Shortcut; 12] = [
+    const ALL: [Shortcut; 13] = [
         Shortcut::FocusSidebar,
         Shortcut::FocusTerminal,
         Shortcut::NewSession,
@@ -402,6 +411,7 @@ mod tests {
         Shortcut::Hide,
         Shortcut::ToggleShell,
         Shortcut::KeyboardShortcuts,
+        Shortcut::Usage,
     ];
 
     fn _every_shortcut_is_in_all(shortcut: Shortcut) {
@@ -417,7 +427,8 @@ mod tests {
             | Shortcut::Minimize
             | Shortcut::Hide
             | Shortcut::ToggleShell
-            | Shortcut::KeyboardShortcuts => {}
+            | Shortcut::KeyboardShortcuts
+            | Shortcut::Usage => {}
         }
     }
 
@@ -490,6 +501,21 @@ mod tests {
         assert_eq!(names("FOCUS", true), ["Focus Sidebar", "Focus Terminal"]);
         assert_eq!(names("", true).len(), listings(true).len());
         assert!(names("zzz", true).is_empty());
+    }
+
+    #[test]
+    fn usage_is_cmd_u_and_ctrl_u_stays_with_the_agent() {
+        assert_eq!(shortcut("u", CMD, true), Some(Shortcut::Usage));
+        assert_eq!(shortcut("u", CTRL_SHIFT, false), Some(Shortcut::Usage));
+        let ctrl = Keys {
+            control: true,
+            ..Keys::default()
+        };
+        assert_eq!(
+            shortcut("u", ctrl, false),
+            None,
+            "the agents' delete-line key"
+        );
     }
 
     #[test]
