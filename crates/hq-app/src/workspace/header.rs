@@ -189,7 +189,7 @@ impl Workspace {
         } else {
             chrome.text
         };
-        let filled = (used / 100.0).clamp(0.0, 1.0) as f32 * 40.0;
+        let filled = meter_fill(used);
         div()
             .id("header-meter")
             .flex_none()
@@ -202,7 +202,7 @@ impl Workspace {
             .hover(|style| style.bg(gpui::transparent_white()))
             .child(
                 div()
-                    .w(px(60.))
+                    .w(px(METER_WIDTH))
                     .h(px(5.))
                     .rounded(px(3.))
                     .bg(hsla(chrome.track))
@@ -310,5 +310,26 @@ impl Workspace {
         panel
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .into_any_element()
+    }
+}
+
+/// The context meter's track width. The fill is measured against the same width, so 96% fills
+/// 96% of the track.
+const METER_WIDTH: f32 = 60.0;
+
+/// How much of the meter's track `used` percent fills, in pixels.
+fn meter_fill(used: f64) -> f32 {
+    (used / 100.0).clamp(0.0, 1.0) as f32 * METER_WIDTH
+}
+
+#[cfg(test)]
+mod meter_tests {
+    use super::*;
+
+    #[test]
+    fn the_fill_matches_the_percentage_of_the_track() {
+        assert!((meter_fill(96.0) - 57.6).abs() < 0.01);
+        assert_eq!(meter_fill(0.0), 0.0);
+        assert_eq!(meter_fill(140.0), METER_WIDTH);
     }
 }
