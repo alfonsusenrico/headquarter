@@ -1,6 +1,6 @@
 # Keep Claude Code sessions on their own conversation
 
-Status: awaiting the owner's approval.
+Status: approved by the owner on 2026-10-27 ("approve, go ahead").
 
 ## Why
 
@@ -58,5 +58,5 @@ and the other agent's `research/evidence/claude-continued-conversation/findings.
 
 ## Impact
 
-Host and app. No index schema change. Possibly protocol 12 for the new error (decided in the
-design). The other agent's branch is folded in, then deleted with the owner's go.
+Host and app. No index schema change. Protocol 12: the `RunningInBackground` error, the `BringIn`
+request and the `background` flag on outside sessions. The other agent's branch is folded in, then deleted with the owner's go.

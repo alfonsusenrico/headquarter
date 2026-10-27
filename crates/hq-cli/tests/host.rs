@@ -2236,6 +2236,257 @@ fn hosted_conversation_is_not_imported_twice() {
     );
 }
 
+/// Appends the record Claude Code writes when it carries conversation `from` on under `to`.
+fn continue_claude(env: &TestEnv, from: &str, to: &str) {
+    let path = env
+        .root
+        .join("home/.claude/projects/-work")
+        .join(format!("{from}.jsonl"));
+    let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    writeln!(
+        file,
+        r#"{{"type":"continued-in","sessionId":"{from}","continuedInSessionId":"{to}"}}"#
+    )
+    .unwrap();
+}
+
+fn kill_and_wait(env: &TestEnv, id: &str) {
+    assert!(matches!(
+        env.connect().request(&Request::Kill {
+            session: id.to_owned()
+        }),
+        Response::Done
+    ));
+    wait_until("ended", || !env.session(id).live);
+}
+
+/// Claude Code can carry a resumed conversation on under a new id without telling the
+/// host; the next resume takes the new one (fix-claude-conversations D1).
+#[test]
+fn a_resume_follows_the_conversation_claude_continued_in() {
+    let mut env = TestEnv::new("continued");
+    env.stub("claude", RECORDING_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Claude);
+    kill_and_wait(&env, &session.id);
+    env.claude_transcript(&session.id, "Before");
+    env.claude_transcript("carried-on", "After");
+    continue_claude(&env, &session.id, "carried-on");
+    std::fs::write(env.root.join("stub-args.txt"), "").unwrap();
+
+    assert!(matches!(
+        env.connect().request(&Request::Resume {
+            session: session.id.clone(),
+            term: None
+        }),
+        Response::Created { .. }
+    ));
+    wait_until("resumed the new id", || {
+        std::fs::read_to_string(env.root.join("stub-args.txt"))
+            .is_ok_and(|args| args.contains("--resume\ncarried-on"))
+    });
+    assert_eq!(
+        env.session(&session.id).agent_session_id.as_deref(),
+        Some("carried-on")
+    );
+    assert!(env.log().contains("conversation continued"));
+}
+
+/// A merge of two rows of one conversation never deletes the owner's row: the 2026-10-27
+/// case, where the owner's named sidebar session was imported from history
+/// (fix-claude-conversations D2).
+#[test]
+fn merges_keep_the_owners_rows_and_drop_only_unnamed_copies() {
+    let mut env = TestEnv::new("merges");
+    env.stub("claude", RECORDING_STUB);
+    env.claude_transcript("copy-only", "An unnamed copy");
+    env.claude_transcript("kept-copy", "A copy the owner added");
+    let mut daemon = env.command();
+    daemon.env("HQ_HISTORY_INTERVAL_SECS", "1");
+    env.daemons.push(
+        daemon
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    wait_until("imported", || {
+        env.sessions()
+            .iter()
+            .filter(|row| row.origin == hq_protocol::Origin::History)
+            .count()
+            == 2
+    });
+    let row_of = |env: &TestEnv, conversation: &str| {
+        env.sessions()
+            .into_iter()
+            .find(|row| {
+                row.origin == hq_protocol::Origin::History
+                    && row.agent_session_id.as_deref() == Some(conversation)
+            })
+            .map(|row| row.id)
+    };
+    let kept = row_of(&env, "kept-copy").unwrap();
+    assert!(matches!(
+        env.connect().request(&Request::Add {
+            sessions: vec![kept.clone()]
+        }),
+        Response::Done
+    ));
+    assert!(env.log().contains(&format!("sidebar added ids={kept}")));
+
+    let mine = env.create(Agent::Claude);
+    assert!(matches!(
+        env.connect().request(&Request::Rename {
+            session: mine.id.clone(),
+            name: "Mine".into()
+        }),
+        Response::Done
+    ));
+    env.claude_transcript(&mine.id, "Mine");
+    continue_claude(&env, &mine.id, "copy-only");
+    send_hook(
+        &env,
+        &mine.id,
+        &mine.id,
+        r#""hook_event_name":"SessionStart","source":"startup""#,
+    );
+    send_hook(
+        &env,
+        &mine.id,
+        "copy-only",
+        r#""hook_event_name":"UserPromptSubmit""#,
+    );
+    wait_until("continued", || {
+        env.session(&mine.id).agent_session_id.as_deref() == Some("copy-only")
+    });
+    let after = env.session(&mine.id);
+    assert!(
+        after.in_sidebar && after.owner_named,
+        "the owner's row stays"
+    );
+    assert_eq!(row_of(&env, "copy-only"), None, "the unnamed copy goes");
+
+    let other = env.create(Agent::Claude);
+    env.claude_transcript(&other.id, "Other");
+    continue_claude(&env, &other.id, "kept-copy");
+    send_hook(
+        &env,
+        &other.id,
+        &other.id,
+        r#""hook_event_name":"SessionStart","source":"startup""#,
+    );
+    send_hook(
+        &env,
+        &other.id,
+        "kept-copy",
+        r#""hook_event_name":"UserPromptSubmit""#,
+    );
+    wait_until("continued", || {
+        env.session(&other.id).agent_session_id.as_deref() == Some("kept-copy")
+    });
+    assert_eq!(
+        row_of(&env, "kept-copy").as_deref(),
+        Some(kept.as_str()),
+        "a copy in the sidebar stays"
+    );
+    assert!(env.log().contains("kept both rows of one conversation"));
+
+    assert!(matches!(
+        env.connect().request(&Request::Remove {
+            sessions: vec![kept.clone()]
+        }),
+        Response::Done
+    ));
+    assert!(env.log().contains(&format!("sidebar removed ids={kept}")));
+}
+
+/// Lists the conversation named in `$STUB_ARGS.background` as running in Claude Code's
+/// background daemon.
+const CLAUDE_IN_BACKGROUND: &str = r#"if [ "$1" = "agents" ]; then
+  if [ -e "$STUB_ARGS.background" ]; then
+    printf '[{"pid":4242,"cwd":"%s","kind":"background","id":"bg42","sessionId":"%s","status":"idle"}]\n' "$WORK" "$(cat "$STUB_ARGS.background")"
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [ "$1" = "stop" ]; then
+  printf 'stop %s\n' "$2" >> "$STUB_ARGS"
+  [ "$2" = "bg42" ] && rm -f "$STUB_ARGS.background"
+  exit 0
+fi
+printf '%s\n' "$@" >> "$STUB_ARGS"
+sleep 30
+"#;
+
+/// Claude Code refuses to resume a conversation its daemon runs; the host says so instead
+/// of starting an agent that exits at once (fix-claude-conversations D3).
+#[test]
+fn a_conversation_running_in_claudes_background_is_not_resumed() {
+    let mut env = TestEnv::new("background");
+    env.stub("claude", CLAUDE_IN_BACKGROUND);
+    env.start_daemon();
+    let session = env.create(Agent::Claude);
+    kill_and_wait(&env, &session.id);
+    env.claude_transcript(&session.id, "Running elsewhere");
+    std::fs::write(env.root.join("stub-args.txt.background"), &session.id).unwrap();
+    std::fs::write(env.root.join("stub-args.txt"), "").unwrap();
+
+    match env.connect().request(&Request::Resume {
+        session: session.id.clone(),
+        term: None,
+    }) {
+        Response::Error { code, message, .. } => {
+            assert_eq!(code, ErrorCode::RunningInBackground);
+            assert!(message.contains("4242"), "{message}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !std::fs::read_to_string(env.root.join("stub-args.txt"))
+            .unwrap()
+            .contains("--resume"),
+        "no agent started"
+    );
+}
+
+/// Bring into Headquarter stops the background copy by the id `claude stop` takes, then
+/// resumes the conversation here (fix-claude-conversations D3).
+#[test]
+fn a_background_conversation_is_brought_into_headquarter() {
+    let mut env = TestEnv::new("bringin");
+    env.stub("claude", CLAUDE_IN_BACKGROUND);
+    env.start_daemon();
+    let session = env.create(Agent::Claude);
+    kill_and_wait(&env, &session.id);
+    env.claude_transcript(&session.id, "Running elsewhere");
+    std::fs::write(env.root.join("stub-args.txt.background"), &session.id).unwrap();
+    std::fs::write(env.root.join("stub-args.txt"), "").unwrap();
+
+    match env.connect().request(&Request::BringIn {
+        session: session.id.clone(),
+        term: None,
+    }) {
+        Response::Created { session: created } => assert_eq!(created.id, session.id),
+        other => panic!("unexpected {other:?}"),
+    }
+    wait_until("resumed", || {
+        std::fs::read_to_string(env.root.join("stub-args.txt"))
+            .is_ok_and(|args| args.contains(&format!("--resume\n{}", session.id)))
+    });
+    let args = std::fs::read_to_string(env.root.join("stub-args.txt")).unwrap();
+    assert!(
+        args.starts_with("stop bg42\n"),
+        "stopped by the background id first: {args:?}"
+    );
+}
+
 #[test]
 fn outside_sessions_are_linked_and_block_resume() {
     let mut env = TestEnv::new("outside");

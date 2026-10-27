@@ -355,6 +355,7 @@ mod tests {
         running.external = Some(hq_protocol::External {
             pid: Some(7),
             status: Some(Status::NeedsYou),
+            background: false,
         });
         let text = sidebar_list(&[running], &[], 0);
         assert!(text.contains("needs you · external 7"), "{text}");

@@ -475,6 +475,19 @@ pub fn resume(paths: &HostPaths, session: &str) -> Result<SessionInfo> {
     }
 }
 
+/// Stops a conversation running in Claude Code's background and resumes it in Headquarter.
+pub fn bring_in(paths: &HostPaths, session: &str) -> Result<SessionInfo> {
+    let mut client = Client::connect_or_start(paths)?;
+    let response = client.request(&Request::BringIn {
+        session: session.to_owned(),
+        term: Some("xterm-256color".to_owned()),
+    })?;
+    match expect_ok(response)? {
+        Response::Created { session } => Ok(session),
+        other => bail!("unexpected answer to bring in: {other:?}"),
+    }
+}
+
 /// Starts `agent` in `folder` as a hosted session, in `group` when given.
 pub fn create_session(
     paths: &HostPaths,
@@ -538,10 +551,26 @@ pub fn close_shell(paths: &HostPaths, session: &str) -> Result<()> {
 /// Turns an error response into an error for the caller.
 pub fn expect_ok(response: Response) -> Result<Response> {
     match response {
-        Response::Error { message, .. } => bail!(message),
+        Response::Error { code, message, .. } => Err(Refused { code, message }.into()),
         other => Ok(other),
     }
 }
+
+/// The host refused a request: why, in its words, and its code, so a client can act on a
+/// particular refusal (`anyhow::Error::downcast_ref`).
+#[derive(Debug)]
+pub struct Refused {
+    pub code: ErrorCode,
+    pub message: String,
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Refused {}
 
 /// Starts the host as `<hq> daemon`, where `<hq>` is this executable when it is `hq`
 /// (or `headquarter`), or the `hq` beside it otherwise (the desktop app).
@@ -619,6 +648,7 @@ mod tests {
                             session: session(Some(External {
                                 pid: Some(42),
                                 status: Some(Status::Done),
+                                background: false,
                             })),
                         });
                     }

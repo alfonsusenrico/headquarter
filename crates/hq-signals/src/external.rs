@@ -36,6 +36,12 @@ pub struct ExternalSession {
     pub last_activity_at: Option<u64>,
     /// `None` means unknown: no source supports a status.
     pub status: Option<Status>,
+    /// Claude Code runs it in its own daemon (`kind: background`), not in a terminal: it
+    /// keeps running after the program that started it ends (fix-claude-conversations).
+    pub background: bool,
+    /// The id `claude stop` and `claude attach` take for a background session (its `id`),
+    /// which is not the conversation id.
+    pub background_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -68,6 +74,8 @@ pub struct ScanMemory {
 /// `claude agents --json` normally answers in well under a second; a hung CLI must
 /// not stall the scan.
 const CLAUDE_AGENTS_TIMEOUT: Duration = Duration::from_secs(5);
+/// `claude stop` answers at once; a hung CLI must not hold the host's request.
+const CLAUDE_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Scans every source; a failing source is reported and the others still run.
 /// Processes in `exclude_pids`, and every process they started, are not outside
@@ -178,9 +186,48 @@ pub fn scan(
             started_at: Some(process.started_at),
             last_activity_at: agy_activity,
             status: None,
+            background: false,
+            background_id: None,
         }));
 
     report
+}
+
+/// The conversations Claude Code runs now, asked directly (`claude agents --json`), for a
+/// check that cannot wait for the next scan.
+pub fn claude_running(claude: &Path) -> Result<Vec<ExternalSession>, String> {
+    claude_sessions(claude, CLAUDE_AGENTS_TIMEOUT)
+}
+
+/// Stops a session in Claude Code's background: `claude stop <background id>`. The id is the
+/// list's `id`, not the conversation id, which `claude stop` does not match.
+pub fn claude_stop(claude: &Path, background_id: &str) -> Result<(), String> {
+    let mut child = Command::new(claude)
+        .args(["stop", background_id])
+        .env("PATH", hq_discovery::shell::agent_path(claude))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("cannot run claude: {error}"))?;
+    let deadline = std::time::Instant::now() + CLAUDE_STOP_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!("claude stop exited with {status}")),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "claude stop did not finish within {} s",
+                    CLAUDE_STOP_TIMEOUT.as_secs()
+                ));
+            }
+        }
+    }
 }
 
 fn claude_sessions(claude: &Path, timeout: Duration) -> Result<Vec<ExternalSession>, String> {
@@ -256,6 +303,8 @@ fn claude_entry(entry: &Value) -> ExternalSession {
             .map(|ms| ms / 1000),
         last_activity_at: None,
         status,
+        background: text("kind").as_deref() == Some("background"),
+        background_id: text("id").filter(|_| text("kind").as_deref() == Some("background")),
     }
 }
 
@@ -505,6 +554,8 @@ fn codex_session(process: &AgentProcess, rollouts: &[Rollout]) -> ExternalSessio
         started_at: Some(process.started_at),
         last_activity_at: rollout.map(|rollout| rollout.modified),
         status: rollout.and_then(|rollout| rollout.status),
+        background: false,
+        background_id: None,
     }
 }
 
@@ -683,6 +734,8 @@ mod tests {
         );
         assert_eq!(sessions[0].started_at, Some(1792000000));
         assert_eq!(sessions[0].session_id.as_deref(), Some("s1"));
+        let background: Vec<bool> = sessions.iter().map(|s| s.background).collect();
+        assert_eq!(background, [false, false, false, true, false, false]);
     }
 
     #[test]
@@ -940,6 +993,8 @@ mod tests {
             started_at: None,
             last_activity_at: None,
             status: None,
+            background: false,
+            background_id: None,
         };
         let sessions = vec![session(Some("/a")), session(Some("/a")), session(None)];
         let groups = by_folder(&sessions);

@@ -224,7 +224,9 @@ pub struct Workspace {
     /// The session whose agent is being started again because it was opened.
     resuming: Option<String>,
     /// Why starting a session's agent again failed: (session id, reason).
-    resume_failed: Option<(String, String)>,
+    /// The session whose resume failed, why, and whether it was because Claude Code runs
+    /// its conversation in the background (fix-claude-conversations D3).
+    resume_failed: Option<(String, String, bool)>,
     /// The pane's keyboard while it shows an inactive session: Enter resumes it.
     pane_focus: FocusHandle,
     /// The latest start failure already notified (Unix milliseconds).
@@ -968,7 +970,7 @@ impl Workspace {
             window,
             cx,
             // The failure is kept for the pane, so it is returned rather than raised.
-            move |paths| Ok(hq_client::resume(paths, &id).map_err(|error| format!("{error:#}"))),
+            move |paths| Ok(hq_client::resume(paths, &id).map_err(refusal)),
             move |this, result, window, cx| {
                 this.resuming = None;
                 match result {
@@ -980,7 +982,36 @@ impl Workspace {
                             this.open(&id, window, cx);
                         }
                     }
-                    Err(reason) => this.resume_failed = Some((wanted, reason)),
+                    Err((reason, background)) => {
+                        this.resume_failed = Some((wanted, reason, background));
+                    }
+                }
+            },
+        );
+    }
+
+    /// Stops the session's conversation in Claude Code's background and resumes it here.
+    fn bring_in(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.resuming = Some(id.clone());
+        self.resume_failed = None;
+        let wanted = id.clone();
+        self.host_call(
+            window,
+            cx,
+            move |paths| Ok(hq_client::bring_in(paths, &id).map_err(refusal)),
+            move |this, result, window, cx| {
+                this.resuming = None;
+                match result {
+                    Ok(session) => {
+                        let id = session.id.clone();
+                        this.upsert(session, window, cx);
+                        if this.shown_id() == Some(wanted.as_str()) {
+                            this.open(&id, window, cx);
+                        }
+                    }
+                    Err((reason, background)) => {
+                        this.resume_failed = Some((wanted, reason, background));
+                    }
                 }
             },
         );
@@ -2665,11 +2696,40 @@ impl Workspace {
                     let pid = external
                         .pid
                         .map_or_else(String::new, |pid| format!(" (process {pid})"));
+                    if !external.background {
+                        return centred
+                            .child(heading)
+                            .child(note(format!(
+                                "Running in another terminal{pid}. Headquarter shows its status; close it there to continue it here."
+                            )))
+                            .into_any_element();
+                    }
+                    if self.resuming.as_deref() == Some(id.as_str()) {
+                        return centred
+                            .child(heading)
+                            .child(note("Bringing it into Headquarter…".to_owned()))
+                            .into_any_element();
+                    }
+                    let failed = self
+                        .resume_failed
+                        .as_ref()
+                        .filter(|(failed, _, _)| *failed == id)
+                        .map(|(_, reason, _)| reason.clone());
                     return centred
                         .child(heading)
                         .child(note(format!(
-                            "Running in another terminal{pid}. Headquarter shows its status; close it there to continue it here."
+                            "Running in Claude Code's background{pid}. Bring it into Headquarter to continue it here."
                         )))
+                        .children(failed.map(note))
+                        .child(
+                            Button::new("pane-bring-in")
+                                .primary()
+                                .label("Bring into Headquarter")
+                                .on_click(cx.listener({
+                                    let id = id.clone();
+                                    move |this, _, window, cx| this.bring_in(id.clone(), window, cx)
+                                })),
+                        )
                         .into_any_element();
                 }
                 if session.live {
@@ -2694,11 +2754,15 @@ impl Workspace {
                 }
                 // Inactive: the agent starts only when the owner asks (D4). The reason
                 // a start failed comes from this window's try, else from the host's.
+                let in_background = self
+                    .resume_failed
+                    .as_ref()
+                    .is_some_and(|(failed, _, background)| *failed == id && *background);
                 let reason = self
                     .resume_failed
                     .as_ref()
-                    .filter(|(failed, _)| *failed == id)
-                    .map(|(_, reason)| reason.clone())
+                    .filter(|(failed, _, _)| *failed == id)
+                    .map(|(_, reason, _)| reason.clone())
                     .or_else(|| {
                         session
                             .start_error
@@ -2721,6 +2785,14 @@ impl Workspace {
                         .on_click(cx.listener({
                             let id = id.clone();
                             move |this, _, _, cx| this.request_close(id.clone(), cx)
+                        }))
+                } else if in_background {
+                    Button::new("pane-bring-in")
+                        .primary()
+                        .label("Bring into Headquarter")
+                        .on_click(cx.listener({
+                            let id = id.clone();
+                            move |this, _, window, cx| this.bring_in(id.clone(), window, cx)
                         }))
                 } else {
                     Button::new("pane-resume")
@@ -3011,4 +3083,13 @@ fn working_word(word: &'static str, lit: Option<Option<usize>>, chrome: Chrome) 
         .child(dot(1))
         .child(dot(2))
         .into_any_element()
+}
+
+/// A failed resume for the session pane: what the host said, and whether it was because the
+/// conversation runs in Claude Code's background.
+fn refusal(error: anyhow::Error) -> (String, bool) {
+    let background = error
+        .downcast_ref::<hq_client::Refused>()
+        .is_some_and(|refused| refused.code == hq_protocol::ErrorCode::RunningInBackground);
+    (format!("{error:#}"), background)
 }

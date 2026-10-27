@@ -38,13 +38,19 @@ Before starting `claude --resume <id>`, the host asks Claude Code which conversa
 session pane: "This conversation is running in Claude Code's background (pid N)" with "Bring
 into Headquarter". That action stops the background session, then resumes it.
 
-How to stop it is decided in task 1.3 by experiment. Candidates: `claude stop <id>` (did not
-work for the owner), the `/stop` command sent to an attached front end, or ending the spare
-process. The design records the one that works.
+Decided by experiment (task 1.3): `claude stop <background id>`, where the background id is the
+`id` field of `claude agents --json` (`b0981cf4`), not the conversation id. `claude stop` with the
+conversation id answers "No job matching", which is what failed for the owner. After the stop,
+the host waits until Claude Code no longer lists the conversation (up to 8 s), then resumes it.
+`claude stop` runs with a 10 s limit.
 
-Also, after the host ends a Claude session (close, stop), it checks once whether the
-conversation is still running in the background, and logs it (ids only), so a restart is not
-the first sign.
+Also, when a Claude session's agent exits (not while the host stops), the host checks once
+whether the conversation is still running in the background, and logs it (ids only), so a
+refused resume is not the first sign. The outside scan's entry carries a `background` flag
+(protocol `External`), so the app tags such a session "In Claude Code's background" and its
+pane offers Bring into Headquarter instead of "close it there". The direct check runs before
+the scan-based refusal, which stays as a fallback, and is asked only for a conversation with a
+saved transcript, reusing one answer for 3 s.
 
 ### D4. One entry per chain
 
@@ -54,8 +60,10 @@ and are no longer offered.
 
 ### D5. Logging adds and removes
 
-`Add`, `Remove`, `Close`, and any merge that changes a row's sidebar membership log a line with
-the row ids and the client kind (app, CLI, phone). No titles. This finds what removed the
+Every change to sidebar membership logs a line with the row ids: `sidebar added ids=…` and
+`sidebar removed ids=…` (Remove and Close both pass through it), and merges log which rows they
+kept or removed. No titles. The host cannot tell a phone's request from the app's (the gateway
+passes phones in as ordinary clients), so the lines carry ids only. This finds what removed the
 owner's row three times. Task 2.3 tries to reproduce it.
 
 ## Risks
