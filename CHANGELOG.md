@@ -2,6 +2,17 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.15 (2026-10-27)
+
+- "working" is easier to spot. The word now shows in the accent colour with three dots
+  stepping beside it, instead of a fade that was easy to miss. It also costs less: with
+  50 sessions working, the app and its host went from 16.9% to 10.7% CPU on our
+  benchmark (`docs/benchmark.md`).
+- A roomier header over the terminal: a taller bar, a larger session title and a
+  separator before the folder.
+- The update page sits in a centred column on a wide window, with the installed and new
+  versions side by side and the buttons in a bar at the bottom.
+
 ## 0.1.14 (2026-10-27)
 
 - Remote control. Pair a phone from Headquarter ▸ Remote Control… (or `hq remote pair`)

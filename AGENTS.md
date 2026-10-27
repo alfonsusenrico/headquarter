@@ -25,6 +25,7 @@ usage quota. Targets macOS and Linux.
 Capabilities: database, remote access, mobile app
 Design surface: desktop application (session sidebar, terminal pane, quota footer), and a phone
 app (Android: home mirroring the sidebar, session terminal with a key row, pairing, settings)
+Delivery: us
 Language: UI text English; relative ages as `0m`, `1m`, `3h`, `2d`, `5w` (no seconds); times in local 12-hour format.
 
 ## Commands
@@ -157,6 +158,30 @@ public relays); `HQ_REMOTE_PAIR_SECS` shortens the 2-minute pairing code.
 - Dependency policy (crates.io only, no unmaintained crates): `deny.toml` checks
   `unmaintained` for workspace crates' direct dependencies only, because GPUI's deep
   tree carries unmaintained crates we cannot replace (add-terminal-pane, 2026-10-20).
+
+## Release
+
+- Who: the agent on the owner's go
+- Kind: installer (desktop archives and installers for macOS and Linux, and the signed Android APK)
+- Trigger: pushing a `v*` tag on `main` runs `release.yml` (`dist`). Its `custom-build-android`
+  job (`build-android.yml`, environment `android-release`) builds and signs the APK
+- Versions: `vMAJOR.MINOR.PATCH`, one version for every crate and the APK (desktop and phone
+  release together). A `-rc.N` pre-release goes first only when the release pipeline changed
+- Notes: a `## X.Y.Z (YYYY-MM-DD)` section at the top of `CHANGELOG.md`, user-facing, which
+  `dist` uses as the GitHub release's notes
+- Before: a `chore/release-X.Y.Z` pull request sets `version` and every `hq-*` path dependency in
+  `crates/*/Cargo.toml`, `Cargo.lock` (`cargo update -w`) and the changelog. `./scripts/check`
+  passes on it, then the owner merges it
+- Steps: from `main` equal to `origin/main` at the merge commit, `git tag vX.Y.Z <merge commit>`,
+  `git push origin vX.Y.Z`, then watch the `release.yml` run until every job succeeds
+- Staging and soak: none
+- Verify: every job succeeded, `releases/latest` is the new tag, and the assets match `sha256.sum`.
+  The APK's `.sha256` matches, `apksigner verify --print-certs` shows `CN=Headquarter` with
+  SHA-256 `7c64a1f2b6ba540fda5e93dc663b23dc6fb3e5bd19811b09dae1293e25ed5f64`, and its
+  versionName and versionCode follow the version. The released `hq --version` prints it
+- Rollback: a published tag is never moved or reused. Fix forward with the next patch release.
+  Marking the broken GitHub release as a pre-release (so the app's update check skips it) needs
+  the owner's instruction
 
 ## References
 
