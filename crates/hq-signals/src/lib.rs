@@ -13,6 +13,7 @@ pub mod helpers;
 pub mod history;
 pub mod paths;
 pub mod quota;
+pub mod resources;
 pub mod scanner;
 pub mod status;
 pub mod subagents;

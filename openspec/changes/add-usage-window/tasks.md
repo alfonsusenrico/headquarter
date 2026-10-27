@@ -2,8 +2,8 @@
 
 ## 1. Host
 
-- [ ] 1.1 `Resources` request and response, protocol 12, refused for phones (D1, D5). Evidence: protocol round-trip test, `allowed()` test.
-- [ ] 1.2 Sampling a session's processes and descendants, CPU per core on the second sample (D1). Evidence: host test with a stub agent that starts a child process and burns CPU: the child is counted, CPU rises above 50% on the second sample, a stopped session has no entry.
+- [x] 1.1 `Resources` request and response, protocol 13, refused for phones (D1, D5). Evidence: protocol round-trip test, `allowed()` test. Done 2026-10-27: `resources_round_trip`, `Resources` in `allowed()`'s refused list and its test.
+- [x] 1.2 Sampling a session's processes and descendants, CPU per core on the second sample (D1). Evidence: host test with a stub agent that starts a child process and burns CPU: the child is counted, CPU rises above 50% on the second sample, a stopped session has no entry. Done 2026-10-27: `hq_signals::resources::Sampler` (tests: a tree counts what its root started, no CPU on the first sample), host test `resources_cover_what_a_session_started_and_only_running_sessions`.
 
 ## 2. App
 

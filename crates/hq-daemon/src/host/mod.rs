@@ -8,6 +8,7 @@ mod history;
 mod outside;
 mod remote;
 mod remove;
+mod resources;
 mod starting;
 mod usage;
 
@@ -139,6 +140,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         starts: starting::Starts::default(),
         subscribers: Mutex::new(Vec::new()),
         usage: Mutex::new(usage::UsageBook::default()),
+        resources: Mutex::new(hq_signals::resources::Sampler::new()),
         usage_settled: Condvar::new(),
         details: Mutex::new(details::DetailsBook::default()),
         clients: AtomicUsize::new(0),
@@ -301,6 +303,8 @@ struct Host {
     starts: starting::Starts,
     subscribers: Mutex<Vec<Subscriber>>,
     usage: Mutex<usage::UsageBook>,
+    /// The process table between Usage window samples (add-usage-window D1).
+    resources: Mutex<hq_signals::resources::Sampler>,
     /// Signalled when a usage read finishes and its result has gone out.
     usage_settled: Condvar,
     /// Sessions' details, in memory only.
@@ -676,6 +680,7 @@ impl Host {
                             self.refresh_usage();
                             send(Response::Done);
                         }
+                        Request::Resources {} => send(self.resources()),
                         Request::Stop {} => {
                             send(Response::Done);
                             stop_requested = true;

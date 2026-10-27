@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 pub use hq_daemon::paths::HostPaths;
 use hq_protocol::{
-    AgentUsage, ErrorCode, Frame, GroupColor, GroupInfo, PROTOCOL_VERSION, RemoveWay, Request,
-    Response, SessionInfo, host_protocol_in_refusal, read_frame, write_frame,
+    AgentUsage, ErrorCode, Footprint, Frame, GroupColor, GroupInfo, PROTOCOL_VERSION, RemoveWay,
+    Request, Response, SessionFootprint, SessionInfo, host_protocol_in_refusal, read_frame,
+    write_frame,
 };
 use hq_signals::details::SessionDetails;
 use hq_signals::event::Agent;
@@ -449,6 +450,15 @@ pub fn usage(paths: &HostPaths) -> Result<Vec<AgentUsage>> {
 /// Asks for a new reading; subscribers to usage receive it.
 pub fn refresh_usage(paths: &HostPaths) -> Result<()> {
     request_done(paths, &Request::RefreshUsage {})
+}
+
+/// The host's own CPU and memory, and each running session's (add-usage-window D1).
+pub fn resources(paths: &HostPaths) -> Result<(Footprint, Vec<SessionFootprint>)> {
+    let mut client = Client::connect_or_start(paths)?;
+    match expect_ok(client.request(&Request::Resources {})?)? {
+        Response::Resources { host, sessions } => Ok((host, sessions)),
+        other => bail!("unexpected answer to resources: {other:?}"),
+    }
 }
 
 /// Removes a past conversation from its agent, the way that agent allows.

@@ -30,7 +30,7 @@ phone does not get this.
 
 ## What Changes
 
-- `hq-protocol`: a `Resources` request and its response (protocol 12): the host's own CPU and
+- `hq-protocol`: a `Resources` request and its response (protocol 13): the host's own CPU and
   memory, and per running session its CPU, memory and process count.
 - `hq-daemon`: answers it by sampling the process table (`sysinfo`, already a dependency of
   `hq-signals`) for each running session's agent and shell panel and their descendants. The
@@ -51,4 +51,4 @@ capability.
 
 ## Impact
 
-Protocol 11 to 12: the app and host update together, as for every protocol change.
+Protocol 12 to 13 (12 went to fix-session-restore, #71): the app and host update together, as for every protocol change.

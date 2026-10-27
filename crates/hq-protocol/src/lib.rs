@@ -12,10 +12,11 @@ use std::io::{Read, Write};
 
 use hq_signals::event::{Agent, NeedsReason};
 pub use hq_signals::quota::Account;
+pub use hq_signals::resources::Footprint;
 use hq_signals::status::Status;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 pub const MAX_PAYLOAD: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,6 +237,9 @@ pub enum Request {
     Usage {},
     /// Read usage again now; subscribers to usage get `UsageChanged` with the result.
     RefreshUsage {},
+    /// The host's own CPU and memory, and each running session's with every process it
+    /// started and its shell panel (add-usage-window D1).
+    Resources {},
     /// The client shows this session (or none): it receives `DetailsChanged` with the
     /// session's details at once and whenever they change. Needs `Subscribe` first.
     FollowDetails {
@@ -433,6 +437,10 @@ pub enum Response {
     UsageChanged {
         agents: Vec<AgentUsage>,
     },
+    Resources {
+        host: Footprint,
+        sessions: Vec<SessionFootprint>,
+    },
     /// The attached session's agent exited.
     Ended {
         session: String,
@@ -520,6 +528,14 @@ pub struct AgentUsage {
     /// What the limits belong to, when the agent reports it.
     #[serde(default)]
     pub account: Option<Account>,
+}
+
+/// What a running session costs: its agent, every process the agent started, and its
+/// shell panel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionFootprint {
+    pub session: String,
+    pub footprint: Footprint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1109,6 +1125,29 @@ mod tests {
                 account: Some(Account::Subscription {
                     plan: Some("plus".into()),
                 }),
+            }],
+        };
+        let bytes = serde_json::to_vec(&answer).unwrap();
+        assert_eq!(Response::parse(&bytes).unwrap(), answer);
+    }
+
+    #[test]
+    fn resources_round_trip() {
+        let bytes = serde_json::to_vec(&Request::Resources {}).unwrap();
+        assert_eq!(Request::parse(&bytes).unwrap(), Request::Resources {});
+        let answer = Response::Resources {
+            host: Footprint {
+                cpu: Some(0.5),
+                memory: 40 << 20,
+                processes: 1,
+            },
+            sessions: vec![SessionFootprint {
+                session: "claude-1".into(),
+                footprint: Footprint {
+                    cpu: None,
+                    memory: 300 << 20,
+                    processes: 4,
+                },
             }],
         };
         let bytes = serde_json::to_vec(&answer).unwrap();
