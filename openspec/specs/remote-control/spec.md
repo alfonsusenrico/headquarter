@@ -125,3 +125,10 @@ The system SHALL accept a shown pairing code from a phone it already knows, keep
 #### Scenario: Scanning again
 - **WHEN** a phone the computer still lists scans a new code from Remote Control
 - **THEN** it pairs, and `hq remote devices` lists it once
+
+### Requirement: Resources stay on the desktop
+The host SHALL refuse a paired phone's request for the resources of its sessions.
+
+#### Scenario: A phone asks for resources
+- **WHEN** a paired phone sends the resources request
+- **THEN** the host refuses it as it refuses any request outside the allow-list

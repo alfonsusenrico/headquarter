@@ -305,3 +305,10 @@ The host SHALL NOT delete a session that is in the sidebar or named by the owner
 #### Scenario: A named sidebar row and an imported copy
 - **WHEN** a named sidebar session and an imported history row come to hold the same conversation
 - **THEN** the named sidebar session stays, and the imported row is removed
+
+### Requirement: Resources of running sessions
+The host SHALL report, when a client asks, its own CPU and memory and, for each running session, the CPU and memory of the session's agent and all its descendant processes, and of its shell panel, with the number of processes beyond the agent. CPU SHALL be given per core and memory as resident memory.
+
+#### Scenario: A session with a child process
+- **WHEN** a session's agent has started a child process that uses CPU, and a client asks twice
+- **THEN** the second answer includes the child in the session's figures and counts one process beyond the agent
