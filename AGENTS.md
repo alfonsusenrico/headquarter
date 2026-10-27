@@ -1,5 +1,26 @@
 # Headquarter
 
+<!-- pakem:profile name=personal version=1.0.0 sha256=1c6beb9c1bcc7e2717cc2783f1aa19692ba35b99ba577fdb9e0b548ddbd4bf22 -->
+Personal project rules (Pakem profile `personal`):
+
+- Prefer free services and tiers, weighed against quality (`default:free-first`). When
+  a paid option is clearly better, propose it with the free alternative, a monthly
+  cost estimate, and the quality gained. Record an approved one as an `## Overrides`
+  bullet naming the service and its budget.
+- Call models through the owner's AI inference gateway. A project with only a simple
+  AI call may call a provider directly and says so in `AGENTS.md`.
+- Repositories live on GitHub, private unless the owner makes one public. Checks run on
+  GitHub-hosted runners in public repositories and on the owner's self-hosted runner in
+  private ones.
+- Hosts and environments are chosen per project (`deploy/release.toml`), and services
+  release with `pakem release`. Runtime settings and secrets live in env files on the
+  host, never in the repository.
+- Code, docs, and commits are in English; each project states the language of its UI
+  and generated content.
+- Commit with the owner's own name and personal email, set repo-locally before the
+  first commit. The owner reviews and merges.
+<!-- /pakem:profile -->
+
 ## Purpose and boundaries
 
 Headquarter (`headquarter`, alias `hq`) is the owner's desktop terminal for coding-agent
@@ -22,7 +43,7 @@ usage quota. Targets macOS and Linux.
   beside it) goes to the system Trash, Codex only through its own `archive` and
   `delete`; agy is never changed (`host/remove.rs`).
 
-Capabilities: database, remote access, mobile app
+Capabilities: database, deployed
 Design surface: desktop application (session sidebar, terminal pane, quota footer), and a phone
 app (Android: home mirroring the sidebar, session terminal with a key row, pairing, settings)
 Delivery: us
@@ -48,72 +69,22 @@ launched agents inherit it, and Claude Code then installs itself under it and re
 `~/.local/bin/claude`. Tests must not depend on, or run, what the test machine has installed: they run with
 their own `HOME`, config folder and `SHELL`, and with `HQ_SYSTEM_BIN_DIRS` empty, which replaces the
 system-wide folders discovery searches (Homebrew's, `/usr/local/bin`, Linux's); set it to a folder of
-stubs to test those. Remote control tests run with `HQ_REMOTE_RELAYS=none` (direct addresses, no
-public relays); `HQ_REMOTE_PAIR_SECS` shortens the 2-minute pairing code.
+stubs to test those. Remote control tests run with `HQ_REMOTE_RELAYS=none` (direct addresses
+only); `HQ_REMOTE_PAIR_SECS` shortens the 2-minute pairing code.
 
 ## Architecture map
 
-- `crates/hq-signals`: agent status signals: launch adapters and each agent's close
-  keys, OSC scanner, status machine, hook normalization, quota readers, external scan,
-  Codex sub-agents (`subagents.rs`) and its shared server (`codex_server.rs`), hook
-  helpers, and read-only history readers (`history.rs`).
-- Titles read from agent history are display-only: never write them to the index, the
-  log, or evidence files (owner decision 2026-10-20).
-- `crates/hq-store`: SQLite session index and its migrations
-  (`crates/hq-store/migrations/`).
-- `crates/hq-protocol`: client and host frames and messages, group labels, and
-  `sidebar.rs`: the sidebar's order, the owner's groups and folder labels, shared by
-  `hq ls` and the app;
-  `usage.rs`: how usage readings are shown, shared by `hq usage` and the app.
-- `crates/hq-discovery`: platform detection, login-shell `PATH`, the known-agent table
-  (`agents.rs`; adding an agent is a row), and the install-folder search.
-- `crates/hq-config`: the optional settings file with strict validation. `schema.rs`
-  lists every accepted key and the Alacritty keys reported as unsupported;
-  `appearance.rs` reads the look and keys; `setup.rs` writes the file for first-run
-  setup and edits only setup's keys on a rerun (`toml_edit`, layout and comments kept).
-- `crates/hq-daemon`: the host. It owns PTYs, the index, and `agentd.sock` and
-  `hooks.sock` in `~/.local/share/headquarter/`. `host/history.rs` imports agent
-  history every 60 s (`HQ_HISTORY_INTERVAL_SECS` shortens it in tests), `host/outside.rs` links outside agents every 5 s,
-  `host/close.rs` closes a session with the agent's own keys, and `host/usage.rs`
-  reads usage only while a client shows it (`HQ_USAGE_INTERVAL_SECS` shortens the 5-minute Codex interval in tests).
-  `host/remote.rs` is remote control's gateway: off unless enabled, an iroh endpoint
-  on its own thread that passes each paired phone to `agentd.sock` as an ordinary
-  client through an allow-list (add-remote-gateway).
-- `crates/hq-remote`: remote control's connection, shared by the host's gateway and the
-  phone's core: binding the iroh endpoint (relays), pairing codes, and `hq-protocol`
-  frames over QUIC.
-- `crates/hq-mobile`: the phone's core for the Android app, exposed to Kotlin with UniFFI:
-  pairing, the computers it knows, the connection to the computer on screen, home as
-  `hq_protocol::sidebar` arranges it, and open terminals (`alacritty_terminal`). Calls block,
-  the app waits for changes with `wait_change()`, and nothing calls back into Kotlin (add-android-app).
-- `mobile/android/`: the Android app (Kotlin, Jetpack Compose, minSdk 29, application id
-  `com.alfonsusenrico.headquarter`). `Core.kt` holds the core and the lifecycle (connected
-  only while on screen), `PhoneKey.kt` keeps the phone's key under the Android Keystore,
-  `ui/` holds the screens and `ui/Theme.kt` the desktop's tokens. The core's libraries and
-  binding are generated (`scripts/android-core`) and not committed.
-- `crates/hq-client`: the host connection shared by the CLI and the app; it starts the
-  host (`hq` beside the running executable) when none is running.
-- `crates/hq-cli`: the `hq` and `headquarter` executables. They are thin entry points
-  over `hq_cli::main`.
-- `crates/hq-app`: the desktop app `headquarter-app`, a GPUI client of the same
-  protocol. `terminal/` holds the model (`alacritty_terminal`), frame building, key
-  encoding, the session connection and the painted view; `theme.rs` is the tokens
-  file; `settings.rs` applies the settings file and reloads it; `sidebar/` holds the
-  sidebar model and the painted status glyphs; `modal/` holds the Open sessions (⌘O)
-  and New session (⌘N) windows in one frame and the folder browser (`folders.rs`);
-  `workspace/groups.rs` draws the owner's groups and handles dragging sessions into them;
-  `shortcuts.rs` keeps app shortcuts off the keys agents use; `menus.rs` (macOS menus),
-  `notifications.rs` (when to notify); `setup.rs` is the first-run screen and
-  `shell.rs` the root view that shows it before the workspace; `app_state.rs` keeps
-  the window, shown session, theme and sidebar in `app-state.json`.
-- `crates/hq-probe`: the Phase 0 evidence tool.
-- `openspec/`: proposals, designs, and specs; the source of truth for behaviour.
-  Archived changes (`openspec/changes/archive/`) stay local, as do `research/` (notes,
-  prototypes, evidence) and the `docs/ref *.jpg` references: development material,
-  never committed (`.gitignore`). The repository carries the product only.
+Each crate and folder: [`docs/architecture.md`](docs/architecture.md).
+
+- `openspec/` is the source of truth for behaviour. Archived changes
+  (`openspec/changes/archive/`) stay local, as do `research/` (notes, prototypes, evidence)
+  and the `docs/ref *.jpg` references: development material, never committed
+  (`.gitignore`).
 
 ## Project rules
 
+- Titles read from agent history are display-only: never write them to the index, the
+  log, or evidence files (owner decision 2026-10-20).
 - Status comes first from OSC 7501, which Claude Code, Codex, and agy all emit once the
   terminal answers its query. Hooks supplement it for Claude (session id, tools,
   reasons). Output activity is a fallback until the first structured report.
@@ -138,31 +109,32 @@ public relays); `HQ_REMOTE_PAIR_SECS` shortens the 2-minute pairing code.
   (`runtime-shaders`), so local macOS builds need no Xcode. Expect about 4 GB in
   `target/`.
 
-## Overrides
+## Capability standards
 
-- `database` (PostgreSQL by default): Headquarter uses SQLite (`rusqlite`, bundled)
-  because it is a single-user desktop app with a local index (add-session-daemon D2,
-  2026-10-20).
-- `database` (migrations as a separate step before app start): migrations run at host
-  startup, under the single-instance lock, so exactly one process can apply them.
-  Applied migrations are checksummed and a changed one stops the host
-  (add-session-daemon D2, 2026-10-20). `0002` adds a column, which SQLite cannot guard
-  with `IF NOT EXISTS`; the recorded-migration check alone keeps it from running twice
-  (add-session-history, 2026-10-20).
+Where a standard does not fit, and what this project does instead:
 
-- CI (hosted CI from the first commit): `./scripts/check` is the project's CI, run
-  locally before every push (owner, 2026-10-21). The only hosted workflow, `release.yml`
-  from `dist`, runs on version tags (add-release-installer D5). Not covered locally: a
-  Linux build, and a secret scan of the history (review diffs for secrets).
-
-- Dependency policy (crates.io only, no unmaintained crates): `deny.toml` checks
-  `unmaintained` for workspace crates' direct dependencies only, because GPUI's deep
-  tree carries unmaintained crates we cannot replace (add-terminal-pane, 2026-10-20).
+- `database`: SQLite (`rusqlite`, bundled), not PostgreSQL, because it is a single-user
+  desktop app with a local index. Tests run real SQLite, in memory and on disk through
+  the host tests (add-session-daemon D2, 2026-10-20).
+- `database`: migrations run at host startup, under the single-instance lock, so exactly
+  one process applies them. Applied migrations are checksummed and a changed one stops the
+  host (add-session-daemon D2). The recorded-migration check alone keeps `0002`, which adds
+  a column, from running twice (add-session-history, 2026-10-20).
+- `deployed`: a desktop app serves no requests, so it has no request ids or health
+  checks. Logs carry events only. Releases are immutable tags that roll back by fixing
+  forward (`## Release`). The index lives on the user's machine and its backups.
+- Checks: `./scripts/check` is the project's CI, run locally before every push (owner,
+  2026-10-21), not a hosted runner. The only hosted workflow, `release.yml` from `dist`,
+  runs on version tags (add-release-installer D5). Not covered locally: a Linux build,
+  and a secret scan of the history (review diffs for secrets).
+- Dependencies: `deny.toml` checks `unmaintained` for workspace crates' direct
+  dependencies only, because GPUI's deep tree carries unmaintained crates we cannot
+  replace (add-terminal-pane, 2026-10-20).
 
 ## Release
 
 - Who: the agent on the owner's go
-- Kind: installer (desktop archives and installers for macOS and Linux, and the signed Android APK)
+- Kind: installer (desktop archives for macOS and Linux, and the signed Android APK)
 - Trigger: pushing a `v*` tag on `main` runs `release.yml` (`dist`). Its `custom-build-android`
   job (`build-android.yml`, environment `android-release`) builds and signs the APK
 - Versions: `vMAJOR.MINOR.PATCH`, one version for every crate and the APK (desktop and phone
@@ -178,7 +150,7 @@ public relays); `HQ_REMOTE_PAIR_SECS` shortens the 2-minute pairing code.
 - Verify: every job succeeded, `releases/latest` is the new tag, and the assets match `sha256.sum`.
   The APK's `.sha256` matches, `apksigner verify --print-certs` shows `CN=Headquarter` with
   SHA-256 `7c64a1f2b6ba540fda5e93dc663b23dc6fb3e5bd19811b09dae1293e25ed5f64`, and its
-  versionName and versionCode follow the version. The released `hq --version` prints it
+  version name and code match. The released `hq --version` prints it
 - Rollback: a published tag is never moved or reused. Fix forward with the next patch release.
   Marking the broken GitHub release as a pre-release (so the app's update check skips it) needs
   the owner's instruction
