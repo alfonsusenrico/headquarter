@@ -20,9 +20,18 @@ Claude Code 2.1.311, a throwaway `claude --bg` session: `claude stop` with the c
 answers "No job matching". With the background id (`id` field) it stops the session, and the
 conversation stays (`research/evidence/claude-daemon-sessions/findings.md`).
 
-## Not verified yet
+## Real app (owner, 2026-10-27)
 
-- On screen: the background state and Bring into Headquarter, the Add sessions tag, one entry
-  per chain. Checked with the owner on the real app (task 3.2).
+A local release build of `main` with this change, `add-quit-stops-host` and
+`fix-header-meter-fill` (`test/real-case` @ edc9f3f), installed with `scripts/install.sh`. The
+owner quit and reopened Headquarter. The host log shows the stop, then
+`session started id=c36d4559… resume=true known_conversation=true saved=true`: the Headquarter
+dev row came back as itself and resumed conversation 582a1c38, the one Claude Code had continued
+it in. The owner accepted it ("works").
+
+## Not verified
+
+- On screen: the background state and Bring into Headquarter, and the Add sessions tag. The real
+  case had no conversation held in Claude Code's background. The host tests cover both.
 - What removed the owner's sidebar row three times (task 2.3): not reproduced. The new
   `sidebar removed ids=…` lines show it if it happens again.

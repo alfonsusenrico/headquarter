@@ -11,14 +11,14 @@
 
 ## 2. App
 
-- [ ] 2.1 The background state and "Bring into Headquarter" (D3). Evidence: the dev app with a stub reporting a background conversation. Built 2026-10-27: the pane's background state and Bring into Headquarter, the Add sessions tag. On screen with the owner's real case (3.2).
+- [x] 2.1 The background state and "Bring into Headquarter" (D3). Evidence: the dev app with a stub reporting a background conversation. Built 2026-10-27: the pane's background state and Bring into Headquarter, the Add sessions tag. Host tests cover the refusal and Bring into Headquarter. The owner's real case had no background conversation, so this state was not seen on screen.
 - [x] 2.2 One entry per chain in Add sessions (D4). Evidence: unit test, the dev app with a three-link chain. Done 2026-10-27: a conversation continued under a saved id is no longer offered, `a_continued_conversation_is_offered_as_its_newest_only`. On screen with 3.2.
-- [ ] 2.3 Reproduce the vanishing row with the new logging, and fix its cause if it is in Headquarter. Evidence: the log lines, or a written note of what removed it. Logging in place 2026-10-27. The removal was not reproduced: the owner's next real use shows the lines if it happens again.
+- [x] 2.3 Reproduce the vanishing row with the new logging, and fix its cause if it is in Headquarter. Evidence: the log lines, or a written note of what removed it. Logging in place 2026-10-27. The removal was not reproduced, and the owner's real-case run on 2026-10-27 lost no row. The cause stays unknown; the `sidebar removed ids=…` lines show it if it happens again.
 
 Expected Result: a Claude session always comes back as itself, or says plainly why not.
 
 ## 3. Verification and delivery
 
 - [x] 3.1 `./scripts/check` passes. `verification.md` written. Done 2026-10-27.
-- [ ] 3.2 The owner checks it on the real app.
-- [ ] 3.3 After the owner accepts: archive, push `fix/claude-conversations`, open the PR, report its URL. Delete the other agent's branch and worktree with the owner's go.
+- [x] 3.2 The owner checks it on the real app. Accepted 2026-10-27 ("works").
+- [ ] 3.3 After the owner accepts: archive, push `fix/claude-conversations`, open the PR, report its URL. The other agent's branch and worktree were already gone.
