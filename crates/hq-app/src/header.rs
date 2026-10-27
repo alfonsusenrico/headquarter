@@ -5,14 +5,16 @@
 
 use hq_signals::details::SessionDetails;
 
-/// About how wide one character of the header's 12.5 px text is.
+/// About how wide one character of the header's 12.5 px details is.
 const CHAR_PX: f32 = 7.0;
-/// A `·` separator with its spacing.
-const SEPARATOR_PX: f32 = 14.0;
+/// About how wide one character of the 14 px semibold title is.
+const TITLE_CHAR_PX: f32 = 8.2;
+/// A separator with the gaps on both sides of it (refresh-pane-and-status D3).
+const SEPARATOR_PX: f32 = 26.0;
 /// The agent mark, the side padding and the gap between the two halves.
-const FIXED_PX: f32 = 20.0 + 20.0 + 24.0;
+const FIXED_PX: f32 = 20.0 + 32.0 + 16.0;
 /// The context meter's bar beside its words.
-const METER_PX: f32 = 46.0;
+const METER_PX: f32 = 66.0;
 /// Folders are never shortened below this many characters.
 const MIN_FOLDER_CHARS: usize = 12;
 
@@ -48,7 +50,7 @@ impl HeaderLine {
 
     /// The line as it fits in `width` pixels: cost, then "left", the model and the
     /// branch are dropped in that order, then the folder is shortened in the middle,
-    /// then the title at its end (the element truncates it).
+    /// and only then the title at its end (the element truncates it).
     pub fn fitted(mut self, width: f32) -> HeaderLine {
         let drops: [fn(&mut HeaderLine) -> bool; 4] = [
             |line| line.cost.take().is_some(),
@@ -80,7 +82,8 @@ impl HeaderLine {
                 .as_deref()
                 .map_or(0.0, |value| text(value) + SEPARATOR_PX)
         };
-        let mut total = FIXED_PX + text(&self.title) + SEPARATOR_PX + text(&self.folder);
+        let title = self.title.chars().count() as f32 * TITLE_CHAR_PX;
+        let mut total = FIXED_PX + title + SEPARATOR_PX + text(&self.folder);
         total += item(&self.branch.as_ref().map(|branch| format!("⎇ {branch}")));
         total += item(&self.model);
         total += self.used.map_or(0.0, |used| {
@@ -194,11 +197,15 @@ mod tests {
         let no_left = step(80.0);
         assert_eq!((no_left.cost.clone(), no_left.left.clone()), (None, None));
         assert!(no_left.model.is_some());
-        let tight = full.clone().fitted(420.0);
+        let tight = full.clone().fitted(520.0);
         assert_eq!((tight.model.clone(), tight.branch.clone()), (None, None));
         assert!(tight.used.is_some(), "the meter stays");
         assert!(tight.folder.contains('…'), "{}", tight.folder);
         assert!(tight.folder.starts_with("~/w") && tight.folder.ends_with("api"));
+        assert_eq!(
+            tight.title, "Fix the flaky login test",
+            "the title keeps its words"
+        );
     }
 
     #[test]

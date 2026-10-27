@@ -104,7 +104,7 @@ The system SHALL answer the agent's terminal queries (device attributes, cursor 
 - **THEN** it receives the position report and continues without waiting
 
 ### Requirement: Session details header
-The system SHALL show above every session in the terminal pane a one-line header, divided from the terminal by a line, with the session's title, full folder and git branch, and the model, context used and left, and cost when the session's agent reports them, leaving out anything the agent does not report.
+The system SHALL show above every session in the terminal pane a one-line header, 38 px tall and divided from the terminal by a line, with the session's title in a larger type than its details, its full folder and git branch, and the model, context used and left, and cost when the session's agent reports them, leaving out anything the agent does not report.
 
 #### Scenario: Claude Code session
 - **WHEN** a Claude Code session has answered a message
@@ -120,7 +120,7 @@ The system SHALL show above every session in the terminal pane a one-line header
 
 #### Scenario: Narrow pane
 - **WHEN** the pane is too narrow for every item
-- **THEN** the cost goes first, then the context left, the model and the branch, and the folder is shortened in the middle
+- **THEN** the cost goes first, then the context left, the model and the branch, and the folder is shortened in the middle while the title keeps its width
 
 #### Scenario: Token details
 - **WHEN** the owner clicks the context meter of a Claude Code session

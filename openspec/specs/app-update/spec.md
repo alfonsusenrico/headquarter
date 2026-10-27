@@ -21,7 +21,7 @@ The system SHALL check for a newer release of Headquarter at app start, every 6 
 - **THEN** nothing is shown, and the next check runs as planned
 
 ### Requirement: Update notice
-The system SHALL keep the update pill in the sidebar until the update is installed, and SHALL open from it, and from Check for Updates… when it finds a newer release, a What's new page in the pane naming the installed version and the new one, with Later and Update Now at the same width, where Later returns to the pane shown before.
+The system SHALL keep the update pill in the sidebar until the update is installed, and SHALL open from it, and from Check for Updates… when it finds a newer release, a What's new page in the pane, in a readable column centred in the pane, naming the installed version and the new one, with a bar at the bottom of the pane that stays in view while the notes scroll and holds what the update does and Later and Update Now at the same width, where Later returns to the pane shown before.
 
 #### Scenario: Later
 - **WHEN** the owner opens the pill and presses Later or Escape
@@ -30,6 +30,18 @@ The system SHALL keep the update pill in the sidebar until the update is install
 #### Scenario: Not installed by the installer
 - **WHEN** a newer release exists and the running app is not one the installer installed
 - **THEN** the page names the version and offers the release page instead of Update Now
+
+#### Scenario: A wide window
+- **WHEN** the page opens in a pane much wider than the notes
+- **THEN** the title, the version jump, the notes and the bottom bar's content share one column centred in the pane
+
+#### Scenario: Long notes
+- **WHEN** the notes are longer than the pane and the owner scrolls them
+- **THEN** Later and Update Now stay in view at the bottom of the pane
+
+#### Scenario: A narrow pane
+- **WHEN** the pane is narrower than the column
+- **THEN** the column fills the pane and nothing is cut off
 
 ### Requirement: Installing an update
 The system SHALL install an update with that release's own installer after checking it against the checksum GitHub publishes for it, SHALL show the steps download, verify, install and restart as they happen, moving only forward, and SHALL leave the installed version unchanged and say why when any step fails.

@@ -80,7 +80,7 @@ The system SHALL offer an Open sessions window (the sidebar's command field, Cmd
 - **THEN** the command fails naming the unknown one and the sidebar is unchanged
 
 ### Requirement: Status by shape
-The system SHALL mark needs you, idle not read yet, and idle with glyphs that differ in shape as well as colour: an amber ring, a filled speech bubble with a dot, and an outlined speech bubble. It SHALL mark working with "working" fading in and out and no glyph. It SHALL mark inactive with a crescent moon and a dimmed title and age, and a session starting with the host with "starting" fading in and out. It SHALL show idle-not-read-yet sessions with a bold title until the owner has seen them.
+The system SHALL mark needs you, idle not read yet, and idle with glyphs differing in shape as well as colour: an amber ring, a filled speech bubble with a dot, an outlined speech bubble. Working and starting SHALL show their word in the accent colour with three dots lit in turn, and no glyph. Inactive SHALL show a crescent moon with a dimmed title and age. Idle-not-read-yet sessions SHALL have a bold title until seen.
 
 #### Scenario: Finished while away
 - **WHEN** a sidebar session finishes a turn while another session is shown
@@ -100,7 +100,7 @@ The system SHALL mark needs you, idle not read yet, and idle with glyphs that di
 
 #### Scenario: Working
 - **WHEN** a sidebar session is working
-- **THEN** its row shows "working" fading in and out, right-aligned where the other rows' glyphs end, and no glyph
+- **THEN** its row shows "working" in the accent colour with three dots lighting one after another, right-aligned where the other rows' glyphs end, and no glyph
 
 #### Scenario: Inactive
 - **WHEN** a sidebar session's agent was quit
@@ -108,15 +108,15 @@ The system SHALL mark needs you, idle not read yet, and idle with glyphs that di
 
 #### Scenario: Starting with the host
 - **WHEN** the host starts with three sessions to start
-- **THEN** all three rows show "starting" fading in and out, right-aligned where the other rows' glyphs end, with no glyph, and each switches to its own status as its agent becomes ready, one after another
-
+- **THEN** all three rows show "starting" with its stepping dots, right-aligned where the other rows' glyphs end, with no glyph, and each switches to its own status as its agent becomes ready, one after another
 
 ### Requirement: Status words end the row
-The system SHALL right-align the breathing "working" and "starting" words at the end of the row, where the other rows' glyphs end, without an empty glyph cell after them.
+The system SHALL right-align the "working" and "starting" words with their dots at the end of the row, where the other rows' glyphs end, without an empty glyph cell after them.
 
 #### Scenario: Working beside an idle row
 - **WHEN** one sidebar session is working and the next is idle
 - **THEN** "working" ends level with the idle row's speech bubble
+
 ### Requirement: Opening sessions
 The system SHALL show a sidebar session in the terminal pane when chosen; for an inactive session it SHALL show the session with a "Resume Session" button and start its agent on the same conversation only when it is pressed, or offer "Remove from Sidebar" instead when its folder no longer exists. It SHALL mark the open row distinctly from the keyboard's place and from rows under the pointer, and SHALL state that a session running in another terminal is observed only.
 
@@ -472,19 +472,23 @@ The system SHALL let the owner rename a group by clicking its name, which become
 - **THEN** the group collapses
 
 ### Requirement: Motion within a frame budget
-The app SHALL draw the sidebar's motion, a working row's "working" word and the waiting dot of a collapsed group, at most 12 times a second and only while such motion is on screen, and SHALL hold both still when the operating system asks for reduced motion.
+The app SHALL draw the sidebar's motion only while such motion is on screen: at most 4 times a second while only working or starting rows move, and at most 12 times a second while a collapsed group's waiting dot is on screen. It SHALL hold all motion still when the operating system asks for reduced motion.
 
 #### Scenario: A session works
 - **WHEN** a session in the sidebar is working and nothing else on screen changes
-- **THEN** its "working" word fades between 35% and full strength every 2 s and the app draws at most 12 frames a second for it
+- **THEN** its dots step 4 times a second and the app draws at most 4 frames a second for it
+
+#### Scenario: A waiting group is collapsed
+- **WHEN** a session works and a collapsed group is waiting on the owner
+- **THEN** the app draws at most 12 frames a second, and the working dots still step 4 times a second
 
 #### Scenario: Nothing in motion
-- **WHEN** no session on screen is working and no collapsed group is waiting on the owner
+- **WHEN** no session on screen is working or starting and no collapsed group is waiting on the owner
 - **THEN** the app draws no frames for motion
 
 #### Scenario: Reduced motion
 - **WHEN** the operating system asks for reduced motion and a session is working
-- **THEN** the "working" word is drawn still and the app draws no frames for it
+- **THEN** "working" and its three dots are drawn still and the app draws no frames for them
 
 ### Requirement: Folder search leaves media libraries alone
 The system SHALL NOT read the Music, Movies or Pictures folders directly in the home folder, nor package folders such as apps and media libraries, while it searches for project folders.

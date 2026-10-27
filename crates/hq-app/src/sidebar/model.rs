@@ -333,21 +333,53 @@ pub fn initials(name: &str) -> String {
     letters.to_uppercase()
 }
 
-/// How often sidebar motion steps: 12 times a second, enough for a fade to look smooth.
-/// Motion is drawn on this clock rather than every display frame
+/// How often the waiting dot's pulse steps: 12 times a second, enough for a fade to look
+/// smooth. Motion is drawn on a clock rather than every display frame
 /// (fix-sidebar-motion-redraw).
 pub const MOTION_STEP: Duration = Duration::from_nanos(1_000_000_000 / 12);
+/// How often a working row's dots step: 4 times a second (refresh-pane-and-status D1).
+pub const DOTS_STEP: Duration = Duration::from_millis(250);
 
-/// Whether anything in the sidebar moves: a working or starting row's word, or the dot
-/// of a collapsed group waiting on the owner.
-pub fn in_motion(items: &[Item]) -> bool {
-    items.iter().any(|item| match item {
-        Item::Row(row) => row.breathing(),
-        Item::GroupHeader {
-            needing, collapsed, ..
-        } => *collapsed && *needing > 0,
-        _ => false,
-    })
+/// How fast the motion clock must run for what moves. Each step draws the whole window,
+/// so the clock runs only as fast as the fastest motion on screen needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionRate {
+    /// Only working or starting rows move: their dots need 4 steps a second.
+    Dots,
+    /// A collapsed group's waiting dot pulses, which needs 12 steps a second.
+    Pulse,
+}
+
+impl MotionRate {
+    pub fn step(self) -> Duration {
+        match self {
+            MotionRate::Dots => DOTS_STEP,
+            MotionRate::Pulse => MOTION_STEP,
+        }
+    }
+}
+
+/// What the sidebar's motion needs: the waiting dot of a collapsed group waiting on the
+/// owner, a working or starting row's dots, or nothing.
+pub fn motion_rate(items: &[Item]) -> Option<MotionRate> {
+    let mut rate = None;
+    for item in items {
+        match item {
+            Item::GroupHeader {
+                needing, collapsed, ..
+            } if *collapsed && *needing > 0 => return Some(MotionRate::Pulse),
+            Item::Row(row) if row.breathing() => rate = Some(MotionRate::Dots),
+            _ => {}
+        }
+    }
+    rate
+}
+
+/// Which of a working row's three dots is lit after `elapsed`: they light one after
+/// another, then all rest for a step, one turn a second. `None` is the resting step.
+pub fn lit_dot(elapsed: Duration) -> Option<usize> {
+    let step = (elapsed.as_nanos() / DOTS_STEP.as_nanos()) % 4;
+    (step < 3).then_some(step as usize)
 }
 
 /// Where a motion of `period` is after `elapsed`, from 0.0 to 1.0, moved on whole
@@ -753,13 +785,14 @@ mod tests {
     #[test]
     fn motion_comes_from_working_rows_and_waiting_collapsed_groups_only() {
         let still = items(&fixture(), &groups(false), None, NOW);
-        assert!(!in_motion(&still));
+        assert_eq!(motion_rate(&still), None);
 
         let mut working = fixture();
         working[0].status = Status::Working;
-        assert!(in_motion(&items(&working, &groups(false), None, NOW)));
+        let working = items(&working, &groups(false), None, NOW);
+        assert_eq!(motion_rate(&working), Some(MotionRate::Dots));
 
-        let waiting = [Item::GroupHeader {
+        let waiting = Item::GroupHeader {
             id: 2,
             name: "Web".into(),
             total: 1,
@@ -767,8 +800,14 @@ mod tests {
             collapsed: true,
             color: GroupColor::Green,
             picked: None,
-        }];
-        assert!(in_motion(&waiting));
+        };
+        assert_eq!(
+            motion_rate(std::slice::from_ref(&waiting)),
+            Some(MotionRate::Pulse)
+        );
+        // The pulse needs the faster clock, whatever else moves.
+        let both: Vec<Item> = working.iter().cloned().chain([waiting]).collect();
+        assert_eq!(motion_rate(&both), Some(MotionRate::Pulse));
         let open = [Item::GroupHeader {
             id: 2,
             name: "Web".into(),
@@ -778,7 +817,24 @@ mod tests {
             color: GroupColor::Green,
             picked: None,
         }];
-        assert!(!in_motion(&open), "an open group shows its row instead");
+        assert_eq!(
+            motion_rate(&open),
+            None,
+            "an open group shows its row instead"
+        );
+    }
+
+    #[test]
+    fn working_dots_light_in_turn_four_steps_a_second() {
+        let at = |ms| lit_dot(Duration::from_millis(ms));
+        assert_eq!(at(0), Some(0));
+        assert_eq!(at(249), Some(0));
+        assert_eq!(at(250), Some(1));
+        assert_eq!(at(500), Some(2));
+        assert_eq!(at(750), None, "all rest for a step");
+        assert_eq!(at(1_000), Some(0), "one turn a second");
+        assert_eq!(MotionRate::Dots.step(), Duration::from_millis(250));
+        assert_eq!(MotionRate::Pulse.step(), MOTION_STEP);
     }
 
     #[test]
@@ -817,7 +873,7 @@ mod tests {
         }
         assert_eq!(rows(&items, "ready")[0].glyph, Glyph::Idle);
         assert!(rows(&items, "ready")[0].glyph_cell());
-        assert!(in_motion(&items));
+        assert_eq!(motion_rate(&items), Some(MotionRate::Dots));
     }
 
     #[test]
