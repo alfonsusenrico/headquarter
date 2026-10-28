@@ -50,13 +50,19 @@ impl Workspace {
             return;
         }
         self.quit = Some(QuitState::Asking);
+        self.quit_return = window.focused(cx);
         window.focus(&self.quit_focus, cx);
         cx.notify();
     }
 
-    fn cancel_quit(&mut self, cx: &mut Context<Self>) {
+    /// Closes the dialog and gives focus back to what had it, so a window under the dialog
+    /// answers its keys again (fix-quit-over-windows D2).
+    fn cancel_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.quit != Some(QuitState::Stopping) {
             self.quit = None;
+            if let Some(focus) = self.quit_return.take() {
+                window.focus(&focus, cx);
+            }
             cx.notify();
         }
     }
@@ -124,7 +130,9 @@ impl Workspace {
                     lines,
                     vec![
                         button("quit-cancel", "Cancel")
-                            .on_click(cx.listener(|this, _, _, cx| this.cancel_quit(cx)))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.cancel_quit(window, cx)),
+                            )
                             .into_any_element(),
                         button("quit-keep", "Keep Running")
                             .on_click(
@@ -153,7 +161,7 @@ impl Workspace {
                 ],
                 vec![
                     button("quit-cancel", "Cancel")
-                        .on_click(cx.listener(|this, _, _, cx| this.cancel_quit(cx)))
+                        .on_click(cx.listener(|this, _, window, cx| this.cancel_quit(window, cx)))
                         .into_any_element(),
                     button("quit-anyway", "Quit Anyway")
                         .primary()
@@ -177,7 +185,7 @@ impl Workspace {
                 .track_focus(&self.quit_focus)
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     match event.keystroke.key.as_str() {
-                        "escape" => this.cancel_quit(cx),
+                        "escape" => this.cancel_quit(window, cx),
                         "enter" if this.quit == Some(QuitState::Asking) => {
                             this.quit_and_stop(window, cx);
                         }

@@ -232,6 +232,8 @@ pub struct Workspace {
     /// The quit dialog, while it asks or stops the host (add-quit-stops-host).
     quit: Option<quit::QuitState>,
     quit_focus: FocusHandle,
+    /// What had focus when the quit dialog took it, given back on Cancel.
+    quit_return: Option<FocusHandle>,
     /// Remote control is on in the settings file, for the quit dialog.
     remote_on: bool,
     /// The session whose agent is being started again because it was opened.
@@ -403,6 +405,7 @@ impl Workspace {
             confirm_close: None,
             quit: None,
             quit_focus: cx.focus_handle(),
+            quit_return: None,
             remote_on: false,
             resuming: None,
             resume_failed: None,
@@ -3125,10 +3128,12 @@ impl Render for Workspace {
             .children(creator)
             .children(self.render_confirm_delete(cx))
             .children(self.render_confirm_close(cx))
-            .children(self.render_quit(cx))
             .children(self.render_update_window(cx))
             .children(self.render_remote_window(cx))
             .children(self.render_resources(window, cx))
+            // Last, so it covers every window: quitting can be asked from anywhere
+            // (fix-quit-over-windows D1).
+            .children(self.render_quit(cx))
     }
 }
 
