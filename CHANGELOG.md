@@ -2,6 +2,15 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.18 (2026-10-28)
+
+- One session, two screens, no more mess. While your phone has a session open, the desktop
+  shows "Open on <your phone>" in its place, with Use here (or Enter) to take it back, and the
+  sidebar marks the row with a phone. When the desktop takes it back, the phone returns to its
+  home and says where the session went. No more half-width columns on the desktop or garbled text
+  on the phone.
+- Update the phone app and Headquarter together: this version of each needs the other.
+
 ## 0.1.17 (2026-10-28)
 
 - A finished look for the phone app. Home has a large title that folds away as you scroll, a
