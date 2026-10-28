@@ -740,6 +740,10 @@ impl Workspace {
                 window.update_sessions(sessions, cx);
             });
         }
+        if let Some(Modal::New { view: window, .. }) = &self.modal {
+            let sessions = self.sessions.clone();
+            window.update(cx, |window, cx| window.set_sessions(sessions, cx));
+        }
         cx.notify();
     }
 
@@ -1390,6 +1394,14 @@ impl Workspace {
         let marks = self.marks.clone();
         let new =
             cx.new(|cx| NewSession::new(providers, preferred, home, chrome, marks, window, cx));
+        let sessions = self.sessions.clone();
+        let not_asked = crate::app_state::path()
+            .map(|path| crate::app_state::load_not_asked(&path))
+            .unwrap_or_default();
+        new.update(cx, |new, cx| {
+            new.set_not_asked(not_asked);
+            new.set_sessions(sessions, cx);
+        });
         let events =
             cx.subscribe_in(
                 &new,
@@ -1398,6 +1410,8 @@ impl Workspace {
                     NewEvent::Start { agent, folder } => {
                         this.start_session(*agent, folder.clone(), window, cx);
                     }
+                    NewEvent::Continue(id) => this.continue_session(id.clone(), window, cx),
+                    NewEvent::NotAsked(ids) => this.leave_out_of_questions(ids),
                     NewEvent::Close => this.close_modal(window, cx),
                 },
             );
@@ -1671,6 +1685,44 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Adds a session New session offered to the sidebar and resumes it
+    /// (add-folder-sessions D3); a host error stays in the window's footer.
+    fn continue_session(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let ids = vec![id.clone()];
+        let task = cx.background_executor().spawn(async move {
+            let paths =
+                HostPaths::standard().ok_or_else(|| anyhow!("cannot find the home folder"))?;
+            hq_client::add_to_sidebar(&paths, &ids)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |this, window, cx| match result {
+                Ok(()) => {
+                    this.close_modal(window, cx);
+                    this.open(&id, window, cx);
+                    this.resume(id, window, cx);
+                }
+                Err(error) => {
+                    if let Some(Modal::New { view: new, .. }) = &this.modal {
+                        new.update(cx, |new, cx| new.failed(format!("{error:#}"), cx));
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Keeps sessions out of New session's question from now on (add-folder-sessions D4).
+    fn leave_out_of_questions(&mut self, ids: &[String]) {
+        let Some(path) = crate::app_state::path() else {
+            return;
+        };
+        let kept = crate::app_state::load_not_asked(&path);
+        let after = crate::modal::folder_sessions::not_asked_after(&kept, ids, &self.sessions);
+        // A lost write only means these sessions are offered once more.
+        let _ = crate::app_state::save_not_asked(&path, &after);
     }
 
     /// Starts a session with the provider's own command; a host error stays in the
@@ -2949,10 +3001,7 @@ fn reset_row(name: String, words: &'static str, muted: crate::theme::Paint) -> g
 }
 
 fn overlay(chrome: Chrome) -> gpui::Hsla {
-    let mut shade = hsla(chrome.text);
-    shade.l = 0.08;
-    shade.a = 0.4;
-    shade
+    crate::modal::shade(chrome)
 }
 
 impl Render for Workspace {

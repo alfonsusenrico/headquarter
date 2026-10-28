@@ -1,28 +1,39 @@
 //! New session (⌘N): a provider on the left, a folder from the folder browser on the
-//! right, started with the provider's own command (redesign-session-modal D4).
+//! right, started with the provider's own command (redesign-session-modal D4). Folders
+//! show how many sessions they hold, and starting where some are not in the sidebar
+//! offers those first (add-folder-sessions).
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
+use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    HighlightStyle, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render,
-    ScrollStrategy, SharedString, StatefulInteractiveElement, Styled, StyledText, Subscription,
-    Task, UniformListScrollHandle, Window, div, px, uniform_list,
+    HighlightStyle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement,
+    Render, ScrollStrategy, SharedString, StatefulInteractiveElement, Styled, StyledText,
+    Subscription, Task, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use gpui_component::Disableable;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
+use hq_protocol::SessionInfo;
+use hq_protocol::sidebar::{age, display_title};
 use hq_signals::event::Agent;
 
+use super::folder_sessions;
 use super::folders::{self, FolderRow, Listing};
 use crate::marks::Marks;
 use crate::terminal::view::hsla;
 use crate::theme::Chrome;
 
 const LINE: f32 = 38.0;
+const DIALOG_WIDTH: f32 = 480.0;
+/// The dialog's two buttons share one width (equal-width button groups).
+const DIALOG_BUTTON_WIDTH: f32 = 150.0;
 
 /// A provider in the left column.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,8 +149,48 @@ impl Browser {
 }
 
 pub enum NewEvent {
-    Start { agent: Agent, folder: PathBuf },
+    Start {
+        agent: Agent,
+        folder: PathBuf,
+    },
+    /// Add this session to the sidebar and resume it.
+    Continue(String),
+    /// Do not offer these sessions again (add-folder-sessions D4).
+    NotAsked(Vec<String>),
     Close,
+}
+
+/// A session offered in the dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offer {
+    pub id: String,
+    pub agent: Agent,
+    pub title: String,
+    /// "Claude Code · last used 2h ago".
+    pub detail: String,
+}
+
+impl Offer {
+    pub fn new(session: &SessionInfo, now_ms: u64) -> Offer {
+        Offer {
+            id: session.id.clone(),
+            agent: session.agent,
+            title: display_title(session),
+            detail: format!(
+                "{} · last used {} ago",
+                Provider::unknown(session.agent).name,
+                age(now_ms.saturating_sub(session.last_activity_at))
+            ),
+        }
+    }
+}
+
+/// The question asked on Start in a folder holding sessions not in the sidebar.
+struct Asking {
+    agent: Agent,
+    folder: PathBuf,
+    offers: Vec<Offer>,
+    dont_ask: bool,
 }
 
 pub struct NewSession {
@@ -152,6 +203,12 @@ pub struct NewSession {
     /// A host error from the last start, shown in the footer.
     error: Option<String>,
     starting: bool,
+    sessions: Vec<SessionInfo>,
+    /// Sessions per folder, for the rows' counts.
+    counts: HashMap<PathBuf, usize>,
+    /// Sessions the owner chose not to be offered again.
+    not_asked: Vec<String>,
+    asking: Option<Asking>,
     home: PathBuf,
     field: Entity<InputState>,
     focus: FocusHandle,
@@ -200,6 +257,10 @@ impl NewSession {
             walking: true,
             error: None,
             starting: false,
+            sessions: Vec::new(),
+            counts: HashMap::new(),
+            not_asked: Vec::new(),
+            asking: None,
             home,
             field,
             focus: cx.focus_handle(),
@@ -275,6 +336,17 @@ impl NewSession {
         cx.notify();
     }
 
+    /// Every session the host lists, for the counts and the check on Start.
+    pub fn set_sessions(&mut self, sessions: Vec<SessionInfo>, cx: &mut Context<Self>) {
+        self.counts = folder_sessions::counts(&sessions);
+        self.sessions = sessions;
+        cx.notify();
+    }
+
+    pub fn set_not_asked(&mut self, not_asked: Vec<String>) {
+        self.not_asked = not_asked;
+    }
+
     /// The host could not start the session; the window stays open and says why.
     pub fn failed(&mut self, error: String, cx: &mut Context<Self>) {
         self.starting = false;
@@ -288,13 +360,69 @@ impl NewSession {
         (!self.starting).then(|| (agent, folder.to_path_buf()))
     }
 
-    fn start(&mut self, cx: &mut Context<Self>) {
+    /// Starts in the chosen folder, or first offers its sessions that are not in the
+    /// sidebar (add-folder-sessions D2).
+    fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((agent, folder)) = self.ready() else {
             return;
         };
+        let not_asked: HashSet<String> = self.not_asked.iter().cloned().collect();
+        let now_ms = hq_signals::now_ms();
+        let offers: Vec<Offer> = folder_sessions::forgotten(&self.sessions, &folder, &not_asked)
+            .into_iter()
+            .map(|session| Offer::new(session, now_ms))
+            .collect();
+        if offers.is_empty() {
+            self.start_new(agent, folder, cx);
+            return;
+        }
+        self.asking = Some(Asking {
+            agent,
+            folder,
+            offers,
+            dont_ask: false,
+        });
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    fn start_new(&mut self, agent: Agent, folder: PathBuf, cx: &mut Context<Self>) {
         self.starting = true;
         self.error = None;
         cx.emit(NewEvent::Start { agent, folder });
+        cx.notify();
+    }
+
+    /// Takes the dialog's answer away, keeping the offered sessions out of later
+    /// questions when the owner ticked the box.
+    fn answer(&mut self, cx: &mut Context<Self>) -> Option<Asking> {
+        let asking = self.asking.take()?;
+        if asking.dont_ask {
+            let ids = asking.offers.iter().map(|offer| offer.id.clone()).collect();
+            cx.emit(NewEvent::NotAsked(ids));
+        }
+        Some(asking)
+    }
+
+    fn start_new_anyway(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(asking) = self.answer(cx) {
+            window.focus(&self.field.focus_handle(cx), cx);
+            self.start_new(asking.agent, asking.folder, cx);
+        }
+    }
+
+    fn continue_offer(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.answer(cx).is_some() {
+            self.starting = true;
+            self.error = None;
+            cx.emit(NewEvent::Continue(id));
+            cx.notify();
+        }
+    }
+
+    fn cancel_asking(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.asking = None;
+        window.focus(&self.field.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -330,6 +458,14 @@ impl NewSession {
     }
 
     fn handle_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.asking.is_some() {
+            match key {
+                "escape" => self.cancel_asking(window, cx),
+                "enter" => self.start_new_anyway(window, cx),
+                _ => return false,
+            }
+            return true;
+        }
         if key == "escape" {
             cx.emit(NewEvent::Close);
             return true;
@@ -344,7 +480,7 @@ impl NewSession {
                 cx.notify();
             }
             Step::Text(text) => self.go_to(text, window, cx),
-            Step::Start(_) => self.start(cx),
+            Step::Start(_) => self.start(window, cx),
         }
         true
     }
@@ -447,13 +583,30 @@ impl NewSession {
                     .into_any_element()
             }
         };
+        let highlighted = index == self.browser.index;
+        // On the highlighted row's tint, muted text falls under AA in dark (D5).
+        let quiet = if highlighted {
+            chrome.group
+        } else {
+            chrome.muted
+        };
         let end = match row {
-            FolderRow::Here(_) => super::tag("Open here", chrome),
+            FolderRow::Here(_) => super::tag("Open here", chrome).text_color(hsla(quiet)),
             FolderRow::Sub(_) | FolderRow::Found(_) => {
-                div().flex_none().text_color(hsla(chrome.muted)).child("›")
+                div().flex_none().text_color(hsla(quiet)).child("›")
             }
         };
-        let highlighted = index == self.browser.index;
+        let count = self
+            .counts
+            .get(row.path())
+            .and_then(|count| folder_sessions::count_label(*count))
+            .map(|label| {
+                div()
+                    .flex_none()
+                    .text_size(px(12.5))
+                    .text_color(hsla(quiet))
+                    .child(label)
+            });
         let hover = super::tint(chrome, if highlighted { 0.2 } else { 0.06 });
         let mut line = div()
             .id(SharedString::from(format!("folder-{index}")))
@@ -469,6 +622,7 @@ impl NewSession {
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
             .child(div().flex_1().min_w_0().child(label))
+            .children(count)
             .child(end)
             .on_click(cx.listener(move |this, _, window, cx| this.choose_row(index, window, cx)));
         if highlighted {
@@ -507,8 +661,140 @@ impl NewSession {
                     .primary()
                     .label("Start session")
                     .disabled(ready.is_none())
-                    .on_click(cx.listener(|this, _, _, cx| this.start(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.start(window, cx))),
             )
+    }
+}
+
+impl NewSession {
+    /// The dialog over the window (add-folder-sessions D3).
+    fn render_asking(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let asking = self.asking.as_ref()?;
+        let chrome = self.chrome;
+        let rows = asking.offers.iter().enumerate().map(|(index, offer)| {
+            let id = offer.id.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .py(px(8.))
+                .when(index > 0, |row| {
+                    row.border_t_1().border_color(hsla(chrome.sidebar_line))
+                })
+                .child(self.marks.element(offer.agent, 18., chrome.muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().truncate().child(offer.title.clone()))
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(px(12.5))
+                                .text_color(hsla(chrome.muted))
+                                .child(offer.detail.clone()),
+                        ),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("continue-{index}")))
+                        .label("Continue")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.continue_offer(id.clone(), cx);
+                        })),
+                )
+        });
+        let button = |id: &'static str, label: &'static str| {
+            Button::new(id).label(label).w(px(DIALOG_BUTTON_WIDTH))
+        };
+        let dialog = div()
+            .id("not-in-sidebar")
+            .w(px(DIALOG_WIDTH))
+            .max_h_full()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .p(px(20.))
+            .rounded(px(14.))
+            .border_1()
+            .border_color(hsla(chrome.sidebar_line))
+            .bg(hsla(chrome.sidebar))
+            .shadow_lg()
+            .text_size(px(14.))
+            .text_color(hsla(chrome.text))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .text_size(px(16.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("Not in your sidebar"),
+                    )
+                    .child(
+                        div()
+                            .truncate()
+                            .text_color(hsla(chrome.muted))
+                            .child(folders::shown(&asking.folder, &self.home)),
+                    ),
+            )
+            .child(
+                div()
+                    .id("not-in-sidebar-rows")
+                    .flex_shrink(1.)
+                    .min_h(px(0.))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .children(rows),
+            )
+            .child(
+                Checkbox::new("not-in-sidebar-dont-ask")
+                    .label("Don't ask again for these")
+                    .checked(asking.dont_ask)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        if let Some(asking) = &mut this.asking {
+                            asking.dont_ask = *checked;
+                            cx.notify();
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(button("not-in-sidebar-cancel", "Cancel").on_click(
+                        cx.listener(|this, _, window, cx| this.cancel_asking(window, cx)),
+                    ))
+                    .child(
+                        button("not-in-sidebar-start", "Start new session")
+                            .primary()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.start_new_anyway(window, cx);
+                            })),
+                    ),
+            );
+        Some(
+            div()
+                .id("not-in-sidebar-backdrop")
+                .occlude()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .p(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(super::shade(chrome))
+                .child(dialog)
+                .into_any_element(),
+        )
     }
 }
 
@@ -580,6 +866,8 @@ impl Render for NewSession {
             )
             .child(self.render_footer(cx));
         let frame = super::frame("new-session", chrome, window, self.render_nav(cx), body)
+            .relative()
+            .children(self.render_asking(cx))
             .key_context("NewSession")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down));

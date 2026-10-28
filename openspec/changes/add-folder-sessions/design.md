@@ -12,12 +12,14 @@ session window (`modal/new_session.rs`) browses folders (`folders.rs`) and start
 
 Sessions are counted by folder (`cwd`, exact match after `~` expansion), leaving out outside
 sessions. A folder row with any shows "N sessions" (1: "1 session") in muted text, right
-aligned. No split between sidebar and past.
+aligned. No split between sidebar and past. Past conversations count only when Add sessions
+offers them (`offered`): one its agent no longer keeps, or a run a program started, cannot be
+continued, so counting it would promise a session the dialog never lists.
 
 ### D2. The check on Start
 
-On Start, the app takes the chosen folder's sessions that are not in the sidebar and not in the
-owner's "don't ask again" list. None: start at once, as today. Any: the dialog.
+On Start, the app takes the chosen folder's counted sessions (D1) that are not in the sidebar
+and not in the owner's "don't ask again" list. None: start at once, as today. Any: the dialog.
 
 ### D3. The dialog
 
@@ -36,8 +38,12 @@ Ids of sessions that no longer exist are dropped when the state is saved.
 
 ### D5. The tag
 
-"Open here" uses the accent text on the accent-soft background in both themes, checked AA
-(4.10:1 in dark today).
+On the highlighted folder row, "Open here", the count and the › use the group colour, as the
+options page drew them, and muted text elsewhere. Muted on the highlighted row's accent tint
+was 4.10:1 in dark. A theme test checks AA for each on its row, highlighted or hovered, in both
+themes.
+
+Rejected: accent text on an accent-soft fill. It would be the only filled tag in the app.
 
 ## Risks
 

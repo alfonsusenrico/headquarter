@@ -1,8 +1,9 @@
 //! App-only state kept between runs in `<data folder>/app-state.json`: the sidebar's
 //! width and whether it is the icon rail (`openspec/changes/add-sidebar-rail/design.md`,
-//! D4), the theme the owner chose (add-theme-switcher D4), and the window's place and
-//! the session it showed (add-session-restore D3). Other keys in the file are kept as
-//! they are, so later state can join it.
+//! D4), the theme the owner chose (add-theme-switcher D4), the window's place and the
+//! session it showed (add-session-restore D3), and the sessions New session no longer
+//! offers (add-folder-sessions D4). Other keys in the file are kept as they are, so
+//! later state can join it.
 
 use std::path::{Path, PathBuf};
 
@@ -222,6 +223,18 @@ pub fn save_start_failures_told(path: &Path, at: u64) -> std::io::Result<()> {
     save_entry(path, "start_failures_told", json!(at))
 }
 
+/// The sessions New session no longer offers before a start (add-folder-sessions D4).
+pub fn load_not_asked(path: &Path) -> Vec<String> {
+    read(path)
+        .and_then(|state| state.get("not_asked").cloned())
+        .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_not_asked(path: &Path, sessions: &[String]) -> std::io::Result<()> {
+    save_entry(path, "not_asked", json!(sessions))
+}
+
 fn read(path: &Path) -> Option<Value> {
     serde_json::from_slice::<Value>(&std::fs::read(path).ok()?).ok()
 }
@@ -382,6 +395,21 @@ mod tests {
             load_shell_share(&path),
             SHELL_SHARE,
             "an impossible share is ignored"
+        );
+    }
+
+    #[test]
+    fn sessions_not_to_ask_about_are_kept_with_the_rest() {
+        let path = file("not-asked");
+        assert!(load_not_asked(&path).is_empty());
+        save_shown(&path, "abc123").unwrap();
+        save_not_asked(&path, &["one".to_owned(), "two".to_owned()]).unwrap();
+        assert_eq!(load_not_asked(&path), ["one", "two"]);
+        assert_eq!(load_shown(&path).as_deref(), Some("abc123"));
+        std::fs::write(&path, r#"{"not_asked":"one"}"#).unwrap();
+        assert!(
+            load_not_asked(&path).is_empty(),
+            "an odd value keeps nothing"
         );
     }
 
