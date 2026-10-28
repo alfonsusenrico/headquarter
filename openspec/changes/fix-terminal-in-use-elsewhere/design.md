@@ -42,13 +42,16 @@ button that sends `Focus {}`. The header, the key row and the text field stay us
 key there takes the session over as today. The terminal under the cover keeps receiving output,
 and the agent redraws at the phone's size once it is in use.
 
-### D4. The desktop shows a bar
+### D4. The desktop shows a notice
 
 While the holder is a phone, the terminal pane (and the shell panel when its shell is held) shows a
-slim bar at its top, "In use on <phone> · Click to use here". The narrow drawing stays visible
-below it. Clicking the bar sends `Focus {}`, as a click in the terminal does today. When the holder
-is `Computer` (another local client such as `hq attach`), the bar says "In use in another
-terminal". The bar follows the theme tokens and meets the contrast rule in every theme.
+slim notice at its top right, clear of the narrower drawing, which starts at the left, "In use on <phone> · Click to use here". It is
+drawn over the terminal rather than beside it, so the pane's grid, and the size it keeps for when
+it is in use, do not change. The narrow drawing stays visible below it. Clicking the notice sends
+`Focus {}`, as a click in the terminal does today. When the holder is `Computer` (another local
+client such as `hq attach`), it says "In use in another terminal · Click to use here". It uses the
+terminal's own text and background colours swapped, so it is as readable as the terminal's text in
+every theme.
 
 ### D5. Protocol 14
 

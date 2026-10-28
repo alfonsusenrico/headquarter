@@ -13,7 +13,7 @@ use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{App, ClipboardItem, Context, Task};
 use hq_client::HostPaths;
-use hq_protocol::{Frame, Request, Response, SessionInfo, read_frame, write_frame};
+use hq_protocol::{Frame, Holder, Request, Response, SessionInfo, read_frame, write_frame};
 
 use super::model::{GridSize, TerminalModel};
 use crate::theme::Palette;
@@ -30,6 +30,7 @@ const LAYOUT_WAIT: Duration = Duration::from_millis(500);
 enum Incoming {
     Connected(UnixStream),
     Output(Vec<u8>),
+    InUse(Holder),
     Ended(Option<u32>),
     Failed(String),
 }
@@ -47,6 +48,9 @@ pub struct TerminalSession {
     last_input: Cell<Option<Instant>>,
     /// Attached to the session's shell rather than its agent (add-session-shell-panel).
     pub shell: bool,
+    /// The client the agent's terminal is sized for, once the host says
+    /// (fix-terminal-in-use-elsewhere D1).
+    pub holder: Option<Holder>,
     /// The connection's way back, until it starts: at the pane's first size, so the agent
     /// never draws at a size the pane does not show (fix-reattach-redraw).
     unstarted: Option<UnboundedSender<Incoming>>,
@@ -99,6 +103,7 @@ impl TerminalSession {
             agent_copies: (0, String::new()),
             last_input: Cell::new(None),
             shell,
+            holder: None,
             unstarted: Some(tx),
             _reader: reader,
             _layout_wait: layout_wait,
@@ -140,6 +145,7 @@ impl TerminalSession {
                     store_copy(target, text, cx);
                 }
             }
+            Incoming::InUse(holder) => self.holder = Some(holder),
             Incoming::Ended(code) => {
                 let code = code.map_or_else(|| "unknown".to_owned(), |code| code.to_string());
                 let program = if self.shell {
@@ -215,6 +221,16 @@ impl TerminalSession {
     }
 }
 
+/// What the pane says while another client has the session, or nothing while this
+/// window has it (fix-terminal-in-use-elsewhere D4).
+pub fn in_use_note(holder: Option<&Holder>) -> Option<String> {
+    match holder? {
+        Holder::Here => None,
+        Holder::Computer => Some("In use in another terminal · Click to use here".to_owned()),
+        Holder::Phone { name } => Some(format!("In use on {name} · Click to use here")),
+    }
+}
+
 /// The `Resize` to send when the pane's grid changes from `old` to `new`.
 fn resize_request(old: GridSize, new: GridSize) -> Option<Request> {
     if new == old || new.columns == 0 || new.rows == 0 {
@@ -268,6 +284,7 @@ fn run_connection(
         let incoming = match read_frame(&mut reader) {
             Ok(Some(Frame::Output(bytes))) => Incoming::Output(bytes),
             Ok(Some(Frame::Control(bytes))) => match Response::parse(&bytes) {
+                Ok(Response::InUse { holder }) => Incoming::InUse(holder),
                 Ok(Response::Ended { exit_code, .. }) => Incoming::Ended(exit_code),
                 Ok(Response::Error { message, .. }) => Incoming::Failed(message),
                 _ => continue,
@@ -323,6 +340,23 @@ mod tests {
         columns: 80,
         rows: 24,
     };
+
+    #[test]
+    fn the_pane_names_the_client_in_use_elsewhere() {
+        assert_eq!(in_use_note(None), None, "before the host says");
+        assert_eq!(in_use_note(Some(&Holder::Here)), None);
+        assert_eq!(
+            in_use_note(Some(&Holder::Phone {
+                name: "Pixel 8".into()
+            }))
+            .as_deref(),
+            Some("In use on Pixel 8 · Click to use here")
+        );
+        assert_eq!(
+            in_use_note(Some(&Holder::Computer)).as_deref(),
+            Some("In use in another terminal · Click to use here")
+        );
+    }
 
     #[test]
     fn resize_is_sent_only_on_change() {

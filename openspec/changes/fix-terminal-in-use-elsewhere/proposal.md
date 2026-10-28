@@ -1,7 +1,7 @@
 # Saying where a session is in use
 
-Status: proposed 2026-10-28, waiting for the owner's approval (owner: plan now, build after
-approval).
+Status: approved by the owner 2026-10-28 ("approve the in-use fix"). Planned first, built after
+approval.
 
 ## Why
 

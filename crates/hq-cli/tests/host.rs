@@ -2,6 +2,7 @@
 //! data folder, `HOME`, and a `PATH` holding only stub agents and system tools, so no
 //! real agent runs and no owner file is read.
 
+use std::collections::VecDeque;
 use std::io::{BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
@@ -11,7 +12,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use hq_protocol::{
-    ErrorCode, Frame, PROTOCOL_VERSION, Request, Response, SessionInfo, read_frame, write_frame,
+    ErrorCode, Frame, Holder, PROTOCOL_VERSION, Request, Response, SessionInfo, read_frame,
+    write_frame,
 };
 use hq_signals::event::Agent;
 use hq_signals::forward::ForwardedPayload;
@@ -200,6 +202,8 @@ impl Drop for TestEnv {
 struct Conn {
     writer: UnixStream,
     frames: Receiver<Frame>,
+    /// `InUse` notices, set aside so they are never taken for an answer.
+    in_use: VecDeque<Holder>,
 }
 
 impl Conn {
@@ -218,7 +222,11 @@ impl Conn {
                 }
             }
         });
-        Conn { writer, frames }
+        Conn {
+            writer,
+            frames,
+            in_use: VecDeque::new(),
+        }
     }
 
     /// Ends the connection for the host now; dropping `Conn` alone leaves the socket
@@ -240,8 +248,32 @@ impl Conn {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             match self.frames.recv_timeout(left).expect("a response in time") {
-                Frame::Control(bytes) => return Response::parse(&bytes).unwrap(),
+                Frame::Control(bytes) => match Response::parse(&bytes).unwrap() {
+                    Response::InUse { holder } => self.in_use.push_back(holder),
+                    response => return response,
+                },
                 _ => continue,
+            }
+        }
+    }
+
+    /// Waits for the host to say `expected` is in use, passing earlier notices.
+    fn in_use_until(&mut self, expected: &Holder) {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            if let Some(at) = self.in_use.iter().position(|holder| holder == expected) {
+                self.in_use.drain(..=at);
+                return;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.frames.recv_timeout(left) {
+                Ok(Frame::Control(bytes)) => {
+                    if let Ok(Response::InUse { holder }) = Response::parse(&bytes) {
+                        self.in_use.push_back(holder);
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => panic!("{expected:?} not said to be in use; got {:?}", self.in_use),
             }
         }
     }
@@ -274,6 +306,11 @@ impl Conn {
             let left = deadline.saturating_duration_since(Instant::now());
             match self.frames.recv_timeout(left) {
                 Ok(Frame::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+                Ok(Frame::Control(bytes)) => {
+                    if let Ok(Response::InUse { holder }) = Response::parse(&bytes) {
+                        self.in_use.push_back(holder);
+                    }
+                }
                 Ok(_) => {}
                 Err(_) => panic!("`{needle}` not seen; got {seen:?}"),
             }
@@ -3540,6 +3577,8 @@ struct Phone {
     recv: Option<iroh::endpoint::RecvStream>,
     /// The gateway's welcome on the current connection, once received.
     welcome: Option<Response>,
+    /// `InUse` notices, set aside so they are never taken for an answer.
+    in_use: VecDeque<Holder>,
 }
 
 impl Phone {
@@ -3563,6 +3602,7 @@ impl Phone {
             send: None,
             recv: None,
             welcome: None,
+            in_use: VecDeque::new(),
         }
     }
 
@@ -3612,6 +3652,7 @@ impl Phone {
             match self.next()? {
                 Frame::Control(bytes) => match Response::parse(&bytes).unwrap() {
                     welcome @ Response::RemoteWelcome { .. } => self.welcome = Some(welcome),
+                    Response::InUse { holder } => self.in_use.push_back(holder),
                     response => return Some(response),
                 },
                 _ => continue,
@@ -3624,11 +3665,38 @@ impl Phone {
         while !seen.contains(needle) {
             match self.next() {
                 Some(Frame::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+                Some(Frame::Control(bytes)) => {
+                    if let Ok(Response::InUse { holder }) = Response::parse(&bytes) {
+                        self.in_use.push_back(holder);
+                    }
+                }
                 Some(_) => {}
                 None => panic!("closed before `{needle}`; got {seen:?}"),
             }
         }
         seen
+    }
+
+    /// Waits for the host to say `expected` is in use, passing earlier notices.
+    fn in_use_until(&mut self, expected: &Holder) {
+        loop {
+            if let Some(at) = self.in_use.iter().position(|holder| holder == expected) {
+                self.in_use.drain(..=at);
+                return;
+            }
+            match self.next() {
+                Some(Frame::Control(bytes)) => {
+                    if let Ok(Response::InUse { holder }) = Response::parse(&bytes) {
+                        self.in_use.push_back(holder);
+                    }
+                }
+                Some(_) => {}
+                None => panic!(
+                    "closed before {expected:?} was in use; got {:?}",
+                    self.in_use
+                ),
+            }
+        }
     }
 
     fn pair(&mut self, code: &str, name: &str) -> Option<Response> {
@@ -3704,6 +3772,26 @@ fn a_paired_phone_follows_types_and_is_held_to_the_allow_list() {
     phone.output_until("stub-ready");
     phone.send(&Frame::Input(b"from-the-phone\n".to_vec()));
     phone.output_until("got:from-the-phone");
+    phone.in_use_until(&Holder::Here);
+
+    // The desktop takes the session, then the phone takes it back: each names the other,
+    // the phone by the name the computer paired it with (fix-terminal-in-use-elsewhere).
+    let mut desktop = env.connect();
+    assert!(matches!(
+        desktop.request(&Request::Attach {
+            session: session.id.clone(),
+            cols: 160,
+            rows: 45,
+        }),
+        Response::Attached { .. }
+    ));
+    desktop.in_use_until(&Holder::Here);
+    phone.in_use_until(&Holder::Computer);
+    phone.send(&Frame::Input(b"back\n".to_vec()));
+    phone.in_use_until(&Holder::Here);
+    desktop.in_use_until(&Holder::Phone {
+        name: "Test Phone".into(),
+    });
 
     // Refused, and the connection carries on.
     for refused in [
@@ -3721,6 +3809,9 @@ fn a_paired_phone_follows_types_and_is_held_to_the_allow_list() {
         },
         Request::Stop {},
         Request::RemotePair {},
+        Request::Device {
+            name: "MacBook".into(),
+        },
     ] {
         phone.request(&refused);
         match phone.next_response() {
@@ -3729,6 +3820,13 @@ fn a_paired_phone_follows_types_and_is_held_to_the_allow_list() {
         }
     }
     assert_ne!(env.session(&session.id).name, "renamed");
+    // Naming itself changed nothing: the desktop still hears the paired name.
+    desktop.send(&Request::Focus {});
+    desktop.in_use_until(&Holder::Here);
+    phone.send(&Frame::Input(b"again\n".to_vec()));
+    desktop.in_use_until(&Holder::Phone {
+        name: "Test Phone".into(),
+    });
 
     let mut local = env.connect();
     match local.request(&Request::RemoteDevices {}) {
@@ -4242,16 +4340,25 @@ fn the_terminal_is_sized_for_the_device_in_use() {
     let mut desktop = env.connect();
     attach(&mut desktop, 160, 45);
     desktop.output_until("stub-ready");
+    desktop.in_use_until(&Holder::Here);
     let mut phone = env.connect();
     attach(&mut phone, 54, 40);
     desktop.output_until("size:40 54");
+    // Each client is told who has the terminal, from its own side
+    // (fix-terminal-in-use-elsewhere D1).
+    phone.in_use_until(&Holder::Here);
+    desktop.in_use_until(&Holder::Computer);
 
     // Back on the desktop.
     desktop.send(&Request::Focus {});
     desktop.output_until("size:45 160");
+    desktop.in_use_until(&Holder::Here);
+    phone.in_use_until(&Holder::Computer);
     // The phone types: its size.
     phone.send_frame(&Frame::Input(b"x".to_vec()));
     desktop.output_until("size:40 54");
+    phone.in_use_until(&Holder::Here);
+    desktop.in_use_until(&Holder::Computer);
     // A desktop resize while the phone is in use waits; a terminal reply does not count
     // as using the desktop.
     desktop.send(&Request::Resize {
@@ -4270,6 +4377,7 @@ fn the_terminal_is_sized_for_the_device_in_use() {
         Response::Detached
     ));
     desktop.output_until("size:45 150");
+    desktop.in_use_until(&Holder::Here);
 }
 
 #[test]

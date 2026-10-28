@@ -124,6 +124,9 @@ fn allowed(request: &Request) -> bool {
         // The Usage window is desktop only (add-usage-window D5).
         | Request::Resources {}
         | Request::Stop {}
+        // The gateway names the phone itself; a phone cannot name its own connection
+        // (fix-terminal-in-use-elsewhere D2).
+        | Request::Device { .. }
         | Request::Pair { .. }
         | Request::RemoteStatus {}
         | Request::RemoteSet { .. }
@@ -577,7 +580,7 @@ async fn serve_phone(
     let path = path_kind(&connection);
     host.log
         .line(&format!("remote connected device={name} path={path}"));
-    if let Ending::Unpaired = proxy(&host, &phone, first, send, recv).await {
+    if let Ending::Unpaired = proxy(&host, &phone, &name, first, send, recv).await {
         lock(&shared.connections).remove(&phone);
         // Closing at once would drop the answer on its way to the phone (D4 of
         // add-remote-gateway). The phone closes once it has it.
@@ -684,6 +687,7 @@ fn path_kind(connection: &Connection) -> &'static str {
 async fn proxy(
     host: &Host,
     phone: &str,
+    name: &str,
     first: Option<Frame>,
     mut send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
@@ -721,6 +725,10 @@ async fn proxy(
                 _ => break,
             },
         };
+        let greeting = matches!(
+            &frame,
+            Frame::Control(bytes) if matches!(Request::parse(bytes), Ok(Request::Hello { .. }))
+        );
         let pass = match &frame {
             Frame::Input(_) => true,
             Frame::Output(_) => break,
@@ -759,6 +767,14 @@ async fn proxy(
         if pass && hq_remote::write_frame(&mut to_host, &frame).await.is_err() {
             break;
         }
+        if greeting {
+            let named = Frame::request(&Request::Device {
+                name: name.to_owned(),
+            });
+            if hq_remote::write_frame(&mut to_host, &named).await.is_err() {
+                break;
+            }
+        }
     }
     drop(to_host);
     from_host_task.abort();
@@ -792,6 +808,9 @@ mod tests {
             },
             Request::RefreshUsage {},
             Request::Resources {},
+            Request::Device {
+                name: "MacBook".into(),
+            },
         ];
         for request in &closed {
             assert!(!allowed(request), "{request:?}");

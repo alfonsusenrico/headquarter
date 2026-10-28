@@ -2,6 +2,7 @@ package com.alfonsusenrico.headquarter.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -46,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -55,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -107,6 +110,7 @@ fun SessionScreen(
     val status = remember(version) { phone.status() }
     val screen = remember(version) { phone.screen() }
     val ended = remember(version) { phone.terminalEnded() }
+    val elsewhere = remember(version) { phone.inUseElsewhere() }
     var textSize by remember { mutableFloatStateOf(core.settings.textSize) }
     var grid by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var opened by remember { mutableStateOf(false) }
@@ -163,20 +167,23 @@ fun SessionScreen(
         if (status is LinkStatus.Reconnecting) Banner("Reconnecting…", info = false)
         problem?.let { Banner(it, info = false, action = "Try again") { problem = null } }
         if (ended) Banner("The agent exited.", info = true)
-        TerminalView(
-            screen = screen,
-            textSize = textSize,
-            onTextSize = {
-                textSize = it
-                core.settings.textSize = it
-            },
-            onGrid = { cols, rows ->
-                grid = cols to rows
-                if (opened) core.io { phone.resize(cols.toUShort(), rows.toUShort()) }
-            },
-            onScroll = { lines -> core.io { phone.scroll(lines) } },
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        )
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            TerminalView(
+                screen = screen,
+                textSize = textSize,
+                onTextSize = {
+                    textSize = it
+                    core.settings.textSize = it
+                },
+                onGrid = { cols, rows ->
+                    grid = cols to rows
+                    if (opened) core.io { phone.resize(cols.toUShort(), rows.toUShort()) }
+                },
+                onScroll = { lines -> core.io { phone.scroll(lines) } },
+                modifier = Modifier.fillMaxSize(),
+            )
+            elsewhere?.let { InUseElsewhere(it) { core.io { phone.focus() } } }
+        }
         val keys = if (shell) ShellKeys else SessionKeys
         val sendKey = { key: Key -> core.io { runCatching { phone.sendKey(key) } } }
         if (WindowInsets.isImeVisible) {
@@ -194,6 +201,37 @@ fun SessionScreen(
                 core.io { runCatching { phone.typeText(text) } }
             },
         )
+    }
+}
+
+/**
+ * Covers the terminal while another device has the session: the agent draws for that screen's
+ * size, which this grid cannot show (fix-terminal-in-use-elsewhere D3). Typing or a key still
+ * takes the session over.
+ */
+@Composable
+private fun InUseElsewhere(
+    holder: String,
+    onUseHere: () -> Unit,
+) {
+    val tokens = LocalTokens.current
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(tokens.page)
+            // Touches stop here, so the terminal under the cover does not scroll.
+            .pointerInput(Unit) { detectTapGestures {} }
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            "In use on $holder",
+            fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+        )
+        HqButton("Use here", primary = true, onClick = onUseHere)
     }
 }
 
