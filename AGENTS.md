@@ -99,6 +99,9 @@ Each crate and folder: [`docs/architecture.md`](docs/architecture.md).
   host key (`remote.key`, mode 600), pairing secrets, typed input and terminal output
   never reach logs. Relays default to n0's public ones; a personal relay is a setting,
   never a product default (owner, 2026-10-26).
+- Themes follow the framework's UI and UX rule (each theme designed for its own background). Here
+  that covers the chrome in `theme.rs`, theme files made in the creator, the agents' marks, the
+  phone app's two themes, and what agents draw in the terminal (owner, 2026-10-28).
 - The phone app keeps no session content: only its key (Keystore-wrapped, backups off), the
   paired computers' names, keys and relays, and its settings. Its logs carry connection
   events only. Kotlin formats with ktlint, and Android Lint runs with warnings as errors.
