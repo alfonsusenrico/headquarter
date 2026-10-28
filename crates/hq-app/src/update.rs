@@ -16,11 +16,19 @@ use hq_signals::status::Status;
 use sha2::{Digest, Sha256};
 
 const REPO_PAGE: &str = "https://github.com/alfonsusenrico/headquarter";
+/// The phone app's asset in every release (`build-android.yml`).
+const PHONE_APP_ASSET: &str = "headquarter-android.apk";
 const REPO_API: &str = "https://api.github.com/repos/alfonsusenrico/headquarter";
 /// How often a running app looks for a newer release (owner, 2026-10-24).
 pub const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// How often the installer's output is read while it runs.
 pub const PROGRESS_POLL: Duration = Duration::from_millis(200);
+
+/// Where a phone downloads the newest stable phone app: GitHub sends `latest` to the
+/// latest release, which leaves out pre-releases and drafts (add-phone-app-download D1).
+pub fn phone_app_link() -> String {
+    format!("{REPO_PAGE}/releases/latest/download/{PHONE_APP_ASSET}")
+}
 
 /// A release version, `major.minor.patch`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -746,5 +754,13 @@ mod tests {
             .map(|session| session.id.as_str())
             .collect();
         assert_eq!(busy, ["working", "asking"]);
+    }
+
+    #[test]
+    fn the_phone_app_link_names_the_latest_stable_apk() {
+        assert_eq!(
+            phone_app_link(),
+            "https://github.com/alfonsusenrico/headquarter/releases/latest/download/headquarter-android.apk"
+        );
     }
 }

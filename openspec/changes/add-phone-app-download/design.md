@@ -47,8 +47,8 @@ The QR code is encoded once when the window opens, not on every frame.
 
 ### D3. Folding once a phone is paired
 
-With one or more paired phones the step is a single row: "Get the phone app" with "For another
-phone" in muted text and a Show button. Show opens the full step until the window closes. With
+With one or more paired phones the step is a single row under its heading: "For another phone"
+with "Shows the QR code and the link to the app." in muted text and a Show button. Show opens the full step until the window closes. With
 no paired phone it is always open.
 
 Rejected: always open (it pushes the paired phones down for someone who already has the app),
@@ -68,5 +68,6 @@ the pairing code is, since phone cameras read it reliably that way.
   every install source worldwide in 2027. Then the APK would need the owner registered as a
   verified developer, or users would go through Android's extra warning flow. To be decided
   before 2027, outside this change.
-- GitHub can change its redirect. The README depends on the same address, and a check that the
-  link still answers 302 with an APK belongs to the release's verify step.
+- GitHub can change its redirect. The README depends on the same address. The release's Verify
+  step already checks what the link resolves from: `releases/latest` is the new tag and its
+  assets include `headquarter-android.apk`.

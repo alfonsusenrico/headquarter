@@ -1,15 +1,16 @@
 //! The Remote Control window (add-remote-gateway D12): Headquarter ▸ Remote Control…
-//! opens it over the session. A switch for remote control, how the computer is reached,
-//! Pair a Phone with the code as an image QR code, and the paired phones with Remove.
+//! opens it over the session. Getting the phone app (add-phone-app-download), a switch for
+//! remote control, how the computer is reached, Pair a Phone with the code as an image QR
+//! code, and the paired phones with Remove.
 
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, Bounds, Context, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement, StatefulInteractiveElement, Styled, Task, Window,
-    canvas, div, fill, point, px, size,
+    AnyElement, Bounds, ClipboardItem, Context, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement, StatefulInteractiveElement, Styled,
+    Task, Window, canvas, div, fill, point, px, size,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use hq_client::HostPaths;
@@ -24,6 +25,11 @@ const BUTTON_WIDTH: f32 = 132.0;
 const REFRESH: Duration = Duration::from_secs(5);
 /// The QR code's drawn size, quiet zone included.
 const QR_SIDE: f32 = 224.0;
+/// The phone app's QR code is smaller: a phone's camera reads a link from further away than
+/// it needs to for a pairing code (add-phone-app-download D2).
+const APP_QR_SIDE: f32 = 132.0;
+/// How long Copy link reads "Copied".
+const COPIED_FOR: Duration = Duration::from_secs(2);
 
 pub(super) struct RemoteWindow {
     focus: FocusHandle,
@@ -31,7 +37,32 @@ pub(super) struct RemoteWindow {
     devices: Vec<RemoteDevice>,
     pairing: Pairing,
     problem: Option<String>,
+    /// The phone app link's QR code: its modules, row by row, and its width.
+    app_qr: Option<(Vec<bool>, usize)>,
+    /// Whether the owner opened the folded phone app step.
+    app_shown: bool,
+    /// While set, Copy link reads "Copied"; it clears itself.
+    copied: Option<Task<()>>,
     _refresh: Task<()>,
+}
+
+/// Whether the phone app step shows in full: always until a phone is paired, then only
+/// once the owner asks (add-phone-app-download D3). Before the first listing it stays
+/// folded, so it does not open and close again.
+fn app_step_open(listed: bool, phones: usize, shown: bool) -> bool {
+    shown || (listed && phones == 0)
+}
+
+/// A QR code's modules, row by row, true for dark, and its width.
+fn qr_modules(text: &str) -> Option<(Vec<bool>, usize)> {
+    let qr = qrcode::QrCode::new(text.as_bytes()).ok()?;
+    let width = qr.width();
+    let modules = qr
+        .to_colors()
+        .into_iter()
+        .map(|color| color == qrcode::Color::Dark)
+        .collect();
+    Some((modules, width))
 }
 
 struct Status {
@@ -95,6 +126,9 @@ impl Workspace {
             devices: Vec::new(),
             pairing: Pairing::Idle,
             problem: None,
+            app_qr: qr_modules(&crate::update::phone_app_link()),
+            app_shown: false,
+            copied: None,
             _refresh: refresh,
         });
         cx.notify();
@@ -242,16 +276,10 @@ impl Workspace {
             // Closed meanwhile: dropping the client withdraws the code.
             return;
         };
-        let Ok(qr) = qrcode::QrCode::new(code.as_bytes()) else {
+        let Some((modules, width)) = qr_modules(&code) else {
             remote.pairing = Pairing::Ended("cannot draw the QR code".into());
             return;
         };
-        let width = qr.width();
-        let modules = qr
-            .to_colors()
-            .into_iter()
-            .map(|color| color == qrcode::Color::Dark)
-            .collect();
         let Ok(holder) = client.writer.try_clone() else {
             remote.pairing = Pairing::Ended("lost the connection to the host".into());
             return;
@@ -329,6 +357,24 @@ impl Workspace {
             move |paths| hq_client::remote(paths, &Request::RemoteRemove { device: id }),
             |this, _, window, cx| this.refresh_remote(window, cx),
         );
+    }
+
+    /// Puts the phone app link on the clipboard; the button reads "Copied" for a moment.
+    fn copy_phone_app_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(crate::update::phone_app_link()));
+        let Some(remote) = self.remote_window.as_mut() else {
+            return;
+        };
+        remote.copied = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(COPIED_FOR).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(remote) = this.remote_window.as_mut() {
+                    remote.copied = None;
+                    cx.notify();
+                }
+            });
+        }));
+        cx.notify();
     }
 
     pub(super) fn render_remote_window(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -452,7 +498,7 @@ impl Workspace {
                         .flex()
                         .gap(px(20.))
                         .p(px(16.))
-                        .child(qr_code(modules.clone(), *width))
+                        .child(qr_code(modules.clone(), *width, QR_SIDE))
                         .child(
                             div()
                                 .flex_1()
@@ -512,6 +558,76 @@ impl Workspace {
             ),
         };
 
+        let listed = remote.status.is_some();
+        let app_step =
+            if app_step_open(listed, remote.devices.len(), remote.app_shown) {
+                let copied = remote.copied.is_some();
+                card().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(20.))
+                        .p(px(16.))
+                        .children(
+                            remote
+                                .app_qr
+                                .clone()
+                                .map(|(modules, width)| qr_code(modules, width, APP_QR_SIDE)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(px(6.))
+                                .child(
+                                    div()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child("Scan with your phone's camera"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(12.5))
+                                        .text_color(muted)
+                                        .child("Headquarter for Android, Android 10 or later."),
+                                )
+                                .child(div().text_size(px(12.5)).text_color(muted).child(
+                                    "Your phone asks once to let your browser install apps.",
+                                ))
+                                .child(
+                                    div().pt(px(6.)).child(
+                                        Button::new("remote-app-copy")
+                                            .w(px(BUTTON_WIDTH))
+                                            .label(if copied { "Copied" } else { "Copy link" })
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.copy_phone_app_link(window, cx)
+                                            })),
+                                    ),
+                                ),
+                        ),
+                )
+            } else {
+                card().child(
+                    item()
+                        .child(lines(
+                            "For another phone".into(),
+                            "Shows the QR code and the link to the app.".into(),
+                        ))
+                        .child(
+                            Button::new("remote-app-show")
+                                .w(px(BUTTON_WIDTH))
+                                .label("Show")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if let Some(remote) = this.remote_window.as_mut() {
+                                        remote.app_shown = true;
+                                        cx.notify();
+                                    }
+                                })),
+                        ),
+                )
+            };
+
         let now = hq_signals::now_ms();
         let mut phones = card();
         if remote.devices.is_empty() {
@@ -568,6 +684,14 @@ impl Workspace {
                             .text_color(muted)
                             .child("Control Headquarter from your phone"),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(heading("GET THE PHONE APP"))
+                    .child(app_step),
             )
             .child(status_card)
             .when(running, |body| {
@@ -650,8 +774,8 @@ impl Workspace {
     }
 }
 
-/// The QR code as squares on white, with the standard 4-module quiet zone.
-fn qr_code(modules: Vec<bool>, width: usize) -> impl IntoElement {
+/// The QR code as squares on white, with the standard 4-module quiet zone, `side` wide.
+fn qr_code(modules: Vec<bool>, width: usize, side: f32) -> impl IntoElement {
     canvas(
         |_, _, _| (),
         move |bounds, (), window, _| {
@@ -676,6 +800,32 @@ fn qr_code(modules: Vec<bool>, width: usize) -> impl IntoElement {
         },
     )
     .flex_none()
-    .size(px(QR_SIDE))
+    .size(px(side))
     .rounded(px(10.))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_app_step_folds_once_a_phone_is_paired() {
+        assert!(app_step_open(true, 0, false), "no phone: open");
+        assert!(!app_step_open(true, 1, false), "a phone paired: folded");
+        assert!(app_step_open(true, 2, true), "Show opens it");
+        assert!(
+            !app_step_open(false, 0, false),
+            "folded until the phones are listed"
+        );
+    }
+
+    #[test]
+    fn the_phone_app_link_fits_a_small_qr_code() {
+        let (modules, width) = qr_modules(&crate::update::phone_app_link()).unwrap();
+        assert_eq!(modules.len(), width * width);
+        assert!(
+            width <= 41,
+            "version 6 or lower reads well at 132 px: {width}"
+        );
+    }
 }
