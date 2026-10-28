@@ -12,10 +12,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -27,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -35,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alfonsusenrico.headquarter.Core
+import com.alfonsusenrico.headquarter.R
 import uniffi.hq_mobile.MobileException
 
 /** Past conversations the computer knows, to put in the sidebar. New sessions start only there. */
@@ -56,26 +61,33 @@ fun AddScreen(
         }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Crumb("Add sessions", "Past conversations on your computer", onBack)
-        val shape = RoundedCornerShape(12.dp)
-        Box(
+        Row(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp)
                 .heightIn(min = 48.dp)
-                .clip(shape)
+                .clip(CircleShape)
                 .background(tokens.card)
-                .border(1.dp, tokens.line, shape)
-                .padding(12.dp),
+                .border(1.dp, tokens.line, CircleShape)
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (query.isEmpty()) Text("Find a conversation or folder…", color = tokens.muted)
-            BasicTextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                textStyle = TextStyle(color = tokens.text, fontSize = 15.sp),
-                cursorBrush = SolidColor(tokens.accent),
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Find a conversation or folder" },
-            )
+            Icon(painterResource(R.drawable.ic_search), null, tint = tokens.muted, modifier = Modifier.size(20.dp))
+            Box(Modifier.weight(1f)) {
+                if (query.isEmpty()) Text("Find a conversation or folder…", color = tokens.muted)
+                BasicTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    textStyle = TextStyle(color = tokens.text, fontSize = 15.sp),
+                    cursorBrush = SolidColor(tokens.accent),
+                    modifier =
+                        Modifier.fillMaxWidth().semantics {
+                            contentDescription = "Find a conversation or folder"
+                        },
+                )
+            }
         }
         problem?.let { Banner(it, info = false) }
         LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
@@ -108,30 +120,21 @@ fun AddScreen(
                                     )
                                 }
                                 val done = conversation.id in added
-                                val chip = RoundedCornerShape(9.dp)
-                                Box(
-                                    Modifier
-                                        .heightIn(min = 40.dp)
-                                        .clip(chip)
-                                        .border(1.dp, if (done) tokens.line else tokens.accent, chip)
-                                        .clickable(enabled = !done, role = Role.Button) {
-                                            added += conversation.id
-                                            core.io {
-                                                try {
-                                                    core.phone.add(conversation.id)
-                                                } catch (error: MobileException) {
-                                                    added -= conversation.id
-                                                    problem = error.message
-                                                }
-                                            }
-                                        }.padding(horizontal = 12.dp),
-                                    contentAlignment = Alignment.Center,
+                                RowPill(
+                                    if (done) "Added" else "Add",
+                                    color = if (done) tokens.muted else tokens.accent,
+                                    outline = if (done) tokens.line else tokens.accent,
+                                    enabled = !done,
                                 ) {
-                                    Text(
-                                        if (done) "Added" else "Add",
-                                        color = if (done) tokens.muted else tokens.accent,
-                                        fontSize = 13.sp,
-                                    )
+                                    added += conversation.id
+                                    core.io {
+                                        try {
+                                            core.phone.add(conversation.id)
+                                        } catch (error: MobileException) {
+                                            added -= conversation.id
+                                            problem = error.message
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -11,12 +11,14 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -41,10 +44,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -130,33 +135,38 @@ fun PairScreen(
     ) {
         Crumb(if (canGoBack) "Pair another computer" else "Headquarter", null, if (canGoBack) onBack else null)
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(
+                    rememberScrollState(),
+                ).padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Pair with your computer", fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+            Text("Pair with your computer", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
             if (core.keyReplaced) {
                 Text(
                     "This phone's key had to be replaced, so the computers it knew must be paired again.",
                     color = tokens.amber,
                 )
             }
+            // The steps say what the computer shows (refresh-phone-screens D7).
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Step(1, "Open Headquarter on your computer.")
+                Step(2, "Choose Headquarter ▸ Remote Control… ▸ Pair a Phone.")
+                Step(3, if (typing) "Enter the code shown under the QR code." else "Point the camera at the code.")
+            }
             if (cameraAllowed && !typing) {
                 Box(
                     Modifier
-                        .size(250.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .border(3.dp, tokens.accent, RoundedCornerShape(22.dp))
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(20.dp))
                         .semantics { contentDescription = "Camera" },
-                ) { Scanner(onCode = { if (it.startsWith("hqp")) pair(it) }) }
+                ) {
+                    Scanner(onCode = { if (it.startsWith("hqp")) pair(it) })
+                    Viewfinder(Modifier.fillMaxSize(0.62f).align(Alignment.Center))
+                }
             }
-            val then =
-                if (typing) "then enter the code shown under the QR code." else "then point the camera at the code."
-            Text(
-                "In Headquarter on your computer, choose Headquarter ▸ Remote Control… ▸ Pair a Phone, $then",
-                color = tokens.muted,
-                textAlign = TextAlign.Center,
-            )
             if (cameraRefused) Text("The camera is off for this app, so enter the code instead.", color = tokens.muted)
             if (typing) {
                 val shape = RoundedCornerShape(12.dp)
@@ -185,24 +195,71 @@ fun PairScreen(
                         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Pairing code" },
                     )
                 }
-                HqButton(
-                    if (busy) "Pairing…" else "Pair",
-                    onClick = { pair(typed) },
-                    primary = true,
-                    enabled =
-                        !busy && typed.isNotBlank(),
-                )
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    HqButton(
+                        if (busy) "Pairing…" else "Pair",
+                        onClick = { pair(typed) },
+                        primary = true,
+                        enabled =
+                            !busy && typed.isNotBlank(),
+                    )
+                }
             } else {
-                Text(
-                    "Enter the code instead",
-                    color = tokens.accent,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.clickable(role = Role.Button) { typing = true }.padding(12.dp),
-                )
+                HqButton("Enter the code instead", onClick = { typing = true }, modifier = Modifier.fillMaxWidth())
             }
             if (busy && !typing) Text("Pairing…", color = tokens.muted)
-            problem?.let { Text(it, color = tokens.danger, textAlign = TextAlign.Center) }
-            Text("The code works once and expires in 2 minutes.", color = tokens.muted, fontSize = 12.sp)
+            problem?.let {
+                Text(
+                    it,
+                    color = tokens.danger,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Text(
+                "The code works once and expires in 2 minutes.",
+                color = tokens.muted,
+                fontSize = 12.5.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/** A numbered step, the number on the accent-soft circle. */
+@Composable
+private fun Step(
+    number: Int,
+    text: String,
+) {
+    val tokens = LocalTokens.current
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+        Box(
+            Modifier.size(26.dp).clip(CircleShape).background(tokens.accentSoft),
+            contentAlignment = Alignment.Center,
+        ) { Text("$number", color = tokens.accent, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+        Text(text, fontSize = 14.5.sp, modifier = Modifier.padding(top = 3.dp))
+    }
+}
+
+/** Four white corner marks over the camera, where the code should sit. */
+@Composable
+private fun Viewfinder(modifier: Modifier) {
+    Canvas(modifier) {
+        val arm = 34.dp.toPx()
+        val width = 4.dp.toPx()
+        val inset = width / 2
+        val corners =
+            listOf(
+                Offset(inset, inset) to Offset(1f, 1f),
+                Offset(size.width - inset, inset) to Offset(-1f, 1f),
+                Offset(inset, size.height - inset) to Offset(1f, -1f),
+                Offset(size.width - inset, size.height - inset) to Offset(-1f, -1f),
+            )
+        corners.forEach { (corner, direction) ->
+            drawLine(Color.White, corner, corner + Offset(arm * direction.x, 0f), width, StrokeCap.Round)
+            drawLine(Color.White, corner, corner + Offset(0f, arm * direction.y), width, StrokeCap.Round)
         }
     }
 }

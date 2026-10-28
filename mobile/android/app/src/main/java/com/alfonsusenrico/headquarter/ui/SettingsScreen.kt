@@ -1,5 +1,6 @@
 package com.alfonsusenrico.headquarter.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,10 +13,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -33,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.alfonsusenrico.headquarter.BuildConfig
 import com.alfonsusenrico.headquarter.Core
+import com.alfonsusenrico.headquarter.R
 import com.alfonsusenrico.headquarter.Route
 import com.alfonsusenrico.headquarter.ThemeChoice
 import uniffi.hq_mobile.ComputerInfo
@@ -109,7 +114,13 @@ fun SettingsScreen(
                         confirming = computer
                     }
                 }
-                SettingRow("+ Pair another computer", null, accent = true, onClick = { go(Route.Pair) })
+                SettingRow(
+                    "Pair another computer",
+                    null,
+                    accent = true,
+                    icon = R.drawable.ic_add,
+                    onClick = { go(Route.Pair) },
+                )
             }
             SectionLabel("Security")
             Card {
@@ -220,16 +231,7 @@ private fun ComputerRow(
             Text(computer.name, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             Text(connection ?: seenText(computer.lastSeenAt), color = tokens.muted, fontSize = 12.5.sp)
         }
-        val shape = RoundedCornerShape(9.dp)
-        Box(
-            Modifier
-                .heightIn(min = 48.dp)
-                .clip(shape)
-                .border(1.dp, tokens.line, shape)
-                .clickable(role = Role.Button, onClick = onUnpair)
-                .padding(horizontal = 12.dp),
-            contentAlignment = Alignment.Center,
-        ) { Text("Unpair", color = tokens.danger, fontSize = 13.sp) }
+        RowPill("Unpair", color = tokens.danger, outline = tokens.line, onClick = onUnpair)
     }
 }
 
@@ -238,6 +240,7 @@ private fun SettingRow(
     title: String,
     detail: String?,
     accent: Boolean = false,
+    @DrawableRes icon: Int? = null,
     onClick: (() -> Unit)? = null,
     trailing: @Composable () -> Unit = {},
 ) {
@@ -250,6 +253,7 @@ private fun SettingRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        icon?.let { Icon(painterResource(it), null, tint = tokens.accent, modifier = Modifier.size(20.dp)) }
         Column(Modifier.weight(1f)) {
             Text(
                 title,

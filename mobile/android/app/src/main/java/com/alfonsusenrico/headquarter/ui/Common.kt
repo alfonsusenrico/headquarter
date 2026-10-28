@@ -18,12 +18,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -38,12 +45,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.alfonsusenrico.headquarter.R
+import kotlinx.coroutines.delay
 import uniffi.hq_mobile.RowStatus
 
 /** Buttons shown together share this width, so a group reads as one choice. */
 val ButtonWidth = 168.dp
 
-/** A screen's header: back, the title and its subtitle, and an action. */
+/** A screen's header: back, the title and its subtitle, and an action (refresh-phone-screens D1). */
 @Composable
 fun Crumb(
     title: String,
@@ -53,17 +62,11 @@ fun Crumb(
 ) {
     val tokens = LocalTokens.current
     Row(
-        Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 4.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) {
-            Box(
-                Modifier
-                    .size(48.dp)
-                    .clickable(role = Role.Button, onClick = onBack)
-                    .semantics { contentDescription = "Back" },
-                contentAlignment = Alignment.Center,
-            ) { Text("‹", color = tokens.accent, fontSize = 28.sp) }
+            IconAction(R.drawable.ic_back, "Back", tint = tokens.accent, onClick = onBack)
         } else {
             Spacer(Modifier.width(12.dp))
         }
@@ -71,12 +74,12 @@ fun Crumb(
             Text(
                 title,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp,
+                fontSize = 17.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (subtitle != null) {
-                Text(subtitle, color = tokens.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, color = tokens.muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         action()
@@ -87,13 +90,14 @@ fun Crumb(
 fun HqButton(
     label: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     primary: Boolean = false,
     danger: Boolean = false,
     enabled: Boolean = true,
     width: Dp = ButtonWidth,
 ) {
     val tokens = LocalTokens.current
-    val shape = RoundedCornerShape(12.dp)
+    val shape = CircleShape
     val background = if (primary) tokens.accent else tokens.card
     val foreground =
         when {
@@ -102,7 +106,7 @@ fun HqButton(
             else -> tokens.text
         }
     Box(
-        Modifier
+        modifier
             .widthIn(min = width)
             .heightIn(min = 48.dp)
             .clip(shape)
@@ -148,7 +152,7 @@ fun IconAction(
 @Composable
 fun Card(content: @Composable ColumnScope.() -> Unit) {
     val tokens = LocalTokens.current
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(16.dp)
     Column(
         Modifier
             .fillMaxWidth()
@@ -165,7 +169,7 @@ fun SectionLabel(text: String) {
     Text(
         text.uppercase(),
         color = LocalTokens.current.muted,
-        fontSize = 11.5.sp,
+        fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.5.sp,
         modifier = Modifier.padding(start = 4.dp, top = 14.dp, bottom = 6.dp),
@@ -203,6 +207,64 @@ fun Banner(
         }
     }
 }
+
+/** A small pill for an action inside a row, such as Add or Unpair. */
+@Composable
+fun RowPill(
+    label: String,
+    color: Color,
+    outline: Color,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .heightIn(min = 48.dp)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .heightIn(min = 36.dp)
+                .clip(CircleShape)
+                .border(1.dp, outline, CircleShape)
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) { Text(label, color = color, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+    }
+}
+
+/**
+ * "working" or "starting" with three dots that light in turn, then rest for a step, four steps a
+ * second, as the desktop's sidebar (refresh-pane-and-status D1).
+ */
+@Composable
+fun WorkingDots(
+    word: String,
+    color: Color,
+) {
+    var step by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(DOTS_STEP_MS)
+            step = (step + 1) % 4
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(word, color = color, fontSize = 12.5.sp, modifier = Modifier.padding(end = 2.dp))
+        repeat(3) { index ->
+            Box(
+                Modifier
+                    .size(4.dp)
+                    .alpha(if (index == step) 1f else 0.3f)
+                    .clip(CircleShape)
+                    .background(color),
+            )
+        }
+    }
+}
+
+private const val DOTS_STEP_MS = 250L
 
 /** A status glyph as the desktop paints it: needs you, unread, idle, inactive. */
 @Composable
