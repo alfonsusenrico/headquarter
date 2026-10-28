@@ -12,9 +12,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,15 +25,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,8 +50,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -53,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import com.alfonsusenrico.headquarter.Core
+import com.alfonsusenrico.headquarter.R
 import com.alfonsusenrico.headquarter.Route
 import uniffi.hq_mobile.ComputerInfo
 import uniffi.hq_mobile.GroupRows
@@ -60,6 +73,7 @@ import uniffi.hq_mobile.LinkStatus
 import uniffi.hq_mobile.Row
 import uniffi.hq_mobile.RowStatus
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     core: Core,
@@ -86,23 +100,34 @@ fun HomeScreen(
     val open: (Row) -> Unit = { row ->
         if (row.status == RowStatus.INACTIVE) go(Route.Inactive(row.id)) else go(Route.Session(row.id))
     }
+    // The title row folds away as the list scrolls down and returns at the top (D2).
+    val folding = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val titleHeight = with(LocalDensity.current) { TITLE_HEIGHT.toPx() }
+    SideEffect { folding.state.heightOffsetLimit = -titleHeight }
+    val list = rememberLazyListState()
+    // Add shows its label at the top and while scrolling up, and shrinks while scrolling down (D5).
+    val addExpanded by remember { derivedStateOf { !list.canScrollBackward || !list.lastScrolledForward } }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().nestedScroll(folding.nestedScrollConnection)) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            val shown = 1f - folding.state.collapsedFraction
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(TITLE_HEIGHT * shown)
+                    .clipToBounds()
+                    .alpha(shown),
+                contentAlignment = Alignment.CenterStart,
             ) {
-                Text("Headquarter", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Switcher(current?.name ?: "", status) { sheet = true }
-                Box(
-                    Modifier
-                        .size(48.dp)
-                        .clickable(role = Role.Button) { go(Route.Settings) }
-                        .semantics { contentDescription = "Settings" },
-                    contentAlignment = Alignment.Center,
-                ) { Text("⚙", fontSize = 20.sp, color = tokens.muted) }
+                Text(
+                    "Headquarter",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 20.dp),
+                )
             }
+            ComputerRow(current?.name ?: "", status, onSwitch = { sheet = true }, onSettings = { go(Route.Settings) })
             newer?.let { release ->
                 Banner("Headquarter v${release.version} is available", info = true, action = "Download") {
                     context.startActivity(Intent(Intent.ACTION_VIEW, release.page.toUri()))
@@ -140,29 +165,30 @@ fun HomeScreen(
 
                 else -> {
                     ConnectionBanner(core, status, version, current)
-                    Sessions(home, status, folded, open)
+                    Sessions(home, status, folded, list, open)
                 }
             }
         }
         if (status == LinkStatus.Connected || status is LinkStatus.Reconnecting) {
-            Box(
-                Modifier
-                    .align(Alignment.BottomEnd)
-                    .navigationBarsPadding()
-                    .padding(18.dp)
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(tokens.accent)
-                    .clickable(role = Role.Button) { go(Route.Add) }
-                    .padding(horizontal = 20.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "+ Add",
-                    color = if (tokens.dark) tokens.terminalBackground else tokens.card,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
+            ExtendedFloatingActionButton(
+                text = { Text("Add", fontWeight = FontWeight.SemiBold) },
+                icon = {
+                    Icon(
+                        painterResource(R.drawable.ic_add),
+                        contentDescription = if (addExpanded) null else "Add",
+                    )
+                },
+                onClick = { go(Route.Add) },
+                expanded = addExpanded,
+                shape = RoundedCornerShape(16.dp),
+                containerColor = tokens.accent,
+                contentColor = onAccent(tokens),
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
+                        .padding(18.dp),
+            )
         }
         if (sheet) {
             ComputersSheet(
@@ -181,31 +207,66 @@ fun HomeScreen(
     }
 }
 
+/** The computer on screen, its link and the way to the switcher, with Settings beside it (D2). */
 @Composable
-private fun Switcher(
+private fun ComputerRow(
     name: String,
     status: LinkStatus,
-    onClick: () -> Unit,
+    onSwitch: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     val tokens = LocalTokens.current
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(14.dp)
+    val state = linkWord(status)
     Row(
-        Modifier
-            .heightIn(min = 40.dp)
-            .clip(shape)
-            .background(tokens.card)
-            .border(1.dp, tokens.line, shape)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
-            .semantics { contentDescription = "Computer: $name. Switch computers" },
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Dot(status == LinkStatus.Connected, breathing = status != LinkStatus.Connected)
-        Text(name, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("⌄", fontSize = 13.sp, color = tokens.muted)
+        Row(
+            Modifier
+                .weight(1f)
+                .heightIn(min = 48.dp)
+                .clip(shape)
+                .background(tokens.card)
+                .border(1.dp, tokens.line, shape)
+                .clickable(role = Role.Button, onClick = onSwitch)
+                .padding(horizontal = 14.dp)
+                .semantics { contentDescription = "Computer: $name, $state. Switch computers" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Dot(status == LinkStatus.Connected, breathing = status != LinkStatus.Connected)
+            Text(
+                name,
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Text(state, fontSize = 12.5.sp, color = tokens.muted, maxLines = 1, modifier = Modifier.weight(1f))
+            Icon(
+                painterResource(R.drawable.ic_chevron_down),
+                null,
+                tint = tokens.muted,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        IconAction(R.drawable.ic_settings, "Settings", tint = tokens.muted, onClick = onSettings)
     }
 }
+
+private fun linkWord(status: LinkStatus): String =
+    when (status) {
+        LinkStatus.Connected -> "connected"
+        LinkStatus.Connecting -> "connecting…"
+        is LinkStatus.Reconnecting -> "reconnecting…"
+        LinkStatus.NotKnown -> "no longer knows this phone"
+        is LinkStatus.ComputerTooOld -> "needs an update"
+        is LinkStatus.AppTooOld -> "newer than this app"
+        LinkStatus.Off, LinkStatus.NoComputer -> "not connected"
+    }
 
 @Composable
 fun Dot(
@@ -275,16 +336,18 @@ private fun Sessions(
     home: uniffi.hq_mobile.Home,
     status: LinkStatus,
     folded: MutableMap<Long, Boolean>,
+    list: LazyListState,
     open: (Row) -> Unit,
 ) {
     val dim = if (status is LinkStatus.Reconnecting || status == LinkStatus.Off) 0.6f else 1f
     LazyColumn(
         Modifier.fillMaxSize().alpha(dim).padding(horizontal = 12.dp),
+        state = list,
         contentPadding =
             androidx.compose.foundation.layout
                 .PaddingValues(bottom = 96.dp),
     ) {
-        if (home.usage.isNotEmpty()) item { UsageStrip(home.usage) }
+        if (home.usage.isNotEmpty()) item { UsageTiles(home.usage) }
         items(home.alerts, key = { "alert-${it.id}" }) { AlertRow(it) { open(it) } }
         home.groups.forEach { group ->
             val isOpen = !(folded[group.id] ?: !group.active)
@@ -300,7 +363,7 @@ private fun Sessions(
         ) {
             item {
                 Text(
-                    "No sessions in the sidebar. + Add puts a past conversation here.",
+                    "No sessions in the sidebar. Add puts a past conversation here.",
                     color = LocalTokens.current.muted,
                     modifier = Modifier.padding(vertical = 24.dp, horizontal = 4.dp),
                 )
@@ -309,53 +372,60 @@ private fun Sessions(
     }
 }
 
+/** One tile per agent's tightest window, three to a row (D3). */
 @Composable
-private fun UsageStrip(usage: List<uniffi.hq_mobile.UsageMeter>) {
-    val tokens = LocalTokens.current
-    val shape = RoundedCornerShape(12.dp)
-    // Meters wrap to a new line rather than squeeze, since three rarely fit a phone's width.
-    FlowRow(
-        Modifier
-            .fillMaxWidth()
-            .padding(bottom = 8.dp)
-            .clip(shape)
-            .background(tokens.card)
-            .border(1.dp, tokens.line, shape)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        usage.forEach { meter ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(agentName(meter.agent), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, softWrap = false)
-                Text(
-                    meter.window,
-                    fontSize = 12.5.sp,
-                    color = tokens.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 140.dp),
-                )
-                Box(
-                    Modifier
-                        .width(46.dp)
-                        .height(5.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(tokens.track),
-                ) {
-                    val near = meter.percent >= 80.0
-                    Box(
-                        Modifier
-                            .fillMaxWidth((meter.percent / 100.0).toFloat())
-                            .height(5.dp)
-                            .background(if (near) tokens.ansi[1] else tokens.accent),
-                    )
-                }
-                Text("${meter.percent.toInt()}%", fontSize = 12.5.sp, color = tokens.muted, softWrap = false)
+private fun UsageTiles(usage: List<uniffi.hq_mobile.UsageMeter>) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        usage.chunked(TILES_PER_ROW).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { meter -> UsageTile(meter, Modifier.weight(1f)) }
             }
         }
     }
 }
+
+@Composable
+private fun UsageTile(
+    meter: uniffi.hq_mobile.UsageMeter,
+    modifier: Modifier,
+) {
+    val tokens = LocalTokens.current
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        modifier
+            .clip(shape)
+            .background(tokens.card)
+            .border(1.dp, tokens.line, shape)
+            .padding(start = 10.dp, end = 10.dp, top = 9.dp, bottom = 10.dp),
+    ) {
+        Text(agentName(meter.agent), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(
+            "${meter.window} · ${meter.percent.toInt()}%",
+            fontSize = 12.sp,
+            color = tokens.muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Box(
+            Modifier
+                .padding(top = 6.dp)
+                .fillMaxWidth()
+                .height(5.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(tokens.track),
+        ) {
+            val near = meter.percent >= 80.0
+            Box(
+                Modifier
+                    .fillMaxWidth((meter.percent / 100.0).coerceIn(0.0, 1.0).toFloat())
+                    .height(5.dp)
+                    .background(if (near) tokens.ansi[1] else tokens.accent),
+            )
+        }
+    }
+}
+
+private const val TILES_PER_ROW = 3
 
 @Composable
 private fun AlertRow(
@@ -364,18 +434,20 @@ private fun AlertRow(
 ) {
     val tokens = LocalTokens.current
     val edge = if (row.status == RowStatus.NEEDS_YOU) tokens.glyphAmber else tokens.accent
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(16.dp)
     Row(
         Modifier
             .fillMaxWidth()
             .padding(bottom = 8.dp)
+            .heightIn(min = 68.dp)
+            .height(IntrinsicSize.Min)
             .clip(shape)
             .background(tokens.card)
             .border(1.dp, tokens.line, shape)
             .clickable(role = Role.Button, onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(4.dp).height(64.dp).background(edge))
+        Box(Modifier.width(4.dp).fillMaxHeight().background(edge))
         Spacer(Modifier.width(10.dp))
         StatusGlyph(row.status)
         Column(Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 10.dp)) {
@@ -394,7 +466,12 @@ private fun AlertRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text("›", color = tokens.muted, modifier = Modifier.padding(end = 12.dp))
+        Icon(
+            painterResource(R.drawable.ic_chevron_right),
+            null,
+            tint = tokens.muted,
+            modifier = Modifier.padding(end = 10.dp).size(20.dp),
+        )
     }
 }
 
@@ -421,7 +498,12 @@ private fun GroupHeader(
         Box(Modifier.size(9.dp).clip(CircleShape).background(tokens.groups[group.color] ?: tokens.muted))
         Text(group.name, fontWeight = FontWeight.SemiBold, color = tokens.group, modifier = Modifier.weight(1f))
         Text("${group.rows.size}", color = tokens.muted, fontSize = 12.5.sp)
-        Text(if (open) "⌄" else "›", color = tokens.muted)
+        Icon(
+            painterResource(if (open) R.drawable.ic_chevron_down else R.drawable.ic_chevron_right),
+            null,
+            tint = tokens.muted,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -435,8 +517,8 @@ private fun SessionRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .heightIn(min = 52.dp)
+            .clip(RoundedCornerShape(12.dp))
             .clickable(role = Role.Button, enabled = row.status != RowStatus.ELSEWHERE, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -453,11 +535,11 @@ private fun SessionRow(
         )
         when (row.status) {
             RowStatus.WORKING -> {
-                Breathing("working")
+                WorkingDots("working", tokens.accent)
             }
 
             RowStatus.STARTING -> {
-                Breathing("starting")
+                WorkingDots("starting", tokens.muted)
             }
 
             RowStatus.ELSEWHERE -> {
@@ -470,13 +552,6 @@ private fun SessionRow(
             }
         }
     }
-}
-
-@Composable
-private fun Breathing(word: String) {
-    val transition = rememberInfiniteTransition(label = word)
-    val alpha by transition.animateFloat(1f, 0.35f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = word)
-    Text(word, color = LocalTokens.current.muted, fontSize = 12.5.sp, modifier = Modifier.alpha(alpha))
 }
 
 private const val LATEST_RELEASE = "https://github.com/alfonsusenrico/headquarter/releases/latest"
@@ -555,8 +630,29 @@ private fun ComputersSheet(
                     }
                 }
             }
-            Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
-                HqButton("+ Pair another computer", onClick = onPair)
+            Card {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .clickable(role = Role.Button, onClick = onPair)
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_add),
+                        null,
+                        tint = tokens.accent,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        "Pair another computer",
+                        color = tokens.accent,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                    )
+                }
             }
         }
     }
@@ -591,3 +687,6 @@ fun ageText(elapsedMs: Long): String {
 }
 
 private const val CANT_REACH_MS = 120_000L
+
+/** Home's title row, folded away while the list is scrolled (D2). */
+private val TITLE_HEIGHT = 56.dp
