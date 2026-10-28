@@ -1,6 +1,6 @@
 # The phone's other screens in direction A
 
-Status: proposed 2026-10-28, waiting for the owner's approval.
+Status: approved by the owner on 2026-10-28 ("ok, phone connected", in reply to the plan with the folding title).
 
 ## Why
 
