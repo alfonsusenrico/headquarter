@@ -1,8 +1,9 @@
 # Showing background work and reviews in a session's status
 
-Status: proposed 2026-10-28, waiting for the owner's approval. The owner asked for plans only:
-no implementation until approved, after a few days of using 0.1.17. The design is chosen from an
-options page first (owner: "of course in design variance").
+Status: proposed 2026-10-28, revised the same day; waiting for the owner's approval. The owner
+asked for plans only: no implementation until approved, after a few days of using 0.1.17. The
+design is chosen from an options page first, with many variants (owner: "I would need much design
+options preview for this to make decision").
 
 ## Why
 
@@ -13,11 +14,15 @@ The owner's findings (2026-10-28):
 - An agy session shows idle (since fix-agy-artifact-review, unread then idle) while an artifact
   waits that the owner can open, approve or reject. The review is optional, but worth flagging.
 - Codex, and other agents, may have similar cases not seen yet.
+- This revisits Background work counts as working: it may become its own status or statuses,
+  decided on the options page.
 
 Today's statuses are five words (working, needs you, idle not read yet, idle, not running). The
 spec already counts Claude background shells and Codex sub-agents as working (Background work
-counts as working), but the owner sees idle in cases it misses, and "working" alone does not say
-that the prompt is free while something runs behind it.
+counts as working). That was a deliberate choice to keep one word. After using it, the owner
+prefers more detailed statuses (2026-10-28): "working" alone does not say whether the agent is on
+a turn or waiting at its prompt while something runs behind it, and the owner still sees idle in
+cases the current signals miss.
 
 ## Expected Outcome
 
@@ -43,7 +48,8 @@ Final shape decided after research and the options page:
 
 ## Non-goals
 
-- Changing the five statuses' meaning or the needs-you rules.
+- The needs-you rules and the unread rules, except where the owner's chosen design adds a status
+  that needs its own place in them.
 - Acting on the background work (stopping a shell or approving an artifact from Headquarter).
 - Agents beyond Claude Code, Codex and agy (new agents come with add-more-providers).
 
