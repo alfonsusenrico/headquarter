@@ -12,11 +12,15 @@ Light themes SHALL meet their contrast targets on every surface Headquarter draw
 - **THEN** the chrome and the marks look as they did before the change
 
 ### Requirement: Minimum contrast in the terminal
-In light themes the terminal SHALL keep text an agent draws at a minimum contrast against its background by shifting the text's lightness, and the owner SHALL be able to change or turn off that minimum.
+In light and dark themes the terminal SHALL keep text an agent draws at a minimum contrast against its background by shifting the text's lightness, and the owner SHALL be able to change or turn off that minimum.
 
 #### Scenario: Dark-theme colours on a light background
 - **WHEN** an agent draws light grey text on the light terminal background
 - **THEN** the text shows darker, at least at the minimum contrast, in the same hue
+
+#### Scenario: Too dark on a dark background
+- **WHEN** an agent draws dark blue text on the dark terminal background
+- **THEN** the text shows lighter, at least at the minimum contrast, in the same hue
 
 #### Scenario: Turned off
 - **WHEN** the owner turns the minimum contrast off

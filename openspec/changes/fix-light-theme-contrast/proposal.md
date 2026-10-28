@@ -36,11 +36,12 @@ What the screenshots show, to be confirmed by the diagnosis:
   by surfaces and lines rather than by text alone.
 - Agents that choose their own colours draw their light colours in a light theme, where
   Headquarter can say so per launch. Where an agent's colour still lands on the wrong background,
-  the terminal keeps its text readable (a minimum contrast).
+  the terminal keeps its text readable (a minimum contrast, in light and dark themes alike).
 - The agents' marks keep their brand colours in both modes.
 - Dark themes look as they do today.
-- The UI and UX rules gain a rule for designing each theme for its own background, to be placed
-  where the owner chooses (open question).
+- The rule for designing each theme for its own background lives in both places the owner chose
+  (2026-10-28): the framework's UI and UX skill (a Pakem proposal) and this project's
+  `AGENTS.md` (branch `docs/theme-contrast-rule`).
 
 ## What Changes
 
@@ -70,8 +71,7 @@ capability.
 Desktop app and host launch specs. Verified against Claude Code, Codex and agy as installed when
 built.
 
-## Open questions for the owner
+## Owner decisions (2026-10-28)
 
-- Where should the new rule live: the shared framework's UI and UX skill (a Pakem proposal, the
-  framework is public), this project's `AGENTS.md`, or both?
-- Should the terminal's minimum contrast also apply to dark themes?
+- The rule goes in both the framework's UI and UX skill and `AGENTS.md`.
+- The terminal's minimum contrast applies to dark themes too.

@@ -12,14 +12,14 @@ Expected Result: the causes are known and the fix confirmed.
 
 - [ ] 2.1 Light tokens and a theme test for every chrome pair (D1). Evidence: the test, before and after captures.
 - [ ] 2.2 Per-launch mode for agents that accept one (D2). Evidence: launch spec tests, on screen with Claude Code.
-- [ ] 2.3 Minimum contrast in the terminal and its setting (D3). Evidence: unit tests of the lightness shift, on screen with Claude Code's dark colours on a light background.
+- [ ] 2.3 Minimum contrast in the terminal and its setting, in both modes (D3). Evidence: unit tests of the lightness shift both ways, on screen with Claude Code's dark colours on a light background and a dark colour on a dark background.
 - [ ] 2.4 Marks in their colours (D4). Evidence: theme test, captures in both modes.
 
 Expected Result: light themes read as light, dark themes are unchanged.
 
 ## 3. Rule
 
-- [ ] 3.1 Draft the rule for designing each theme for its own background and place it where the owner chose (a Pakem proposal for the framework's UI and UX skill, and or `AGENTS.md`). Evidence: the owner approves the text, then the proposal or the diff.
+- [ ] 3.1 The rule in both places the owner chose: the framework's UI and UX skill (Pakem proposal) and `AGENTS.md` (`docs/theme-contrast-rule`). Evidence: the proposal's pull request and the docs pull request, both merged by the owner.
 
 ## 4. Verification and delivery
 

@@ -48,8 +48,9 @@ sets `COLORFGBG` per launch if the agent reads it. Never by editing the agent's 
 
 When a cell's foreground and background fall under a minimum contrast (about 3:1, as Ghostty's
 `minimum-contrast` and iTerm2's Minimum contrast do), the terminal shifts the foreground's
-lightness until it meets it, keeping its hue. On by default in light themes, a setting to change
-or turn it off. Rejected: remapping agents' colours to the palette (it breaks colours they chose
+lightness until it meets it, keeping its hue. On by default in light and dark themes alike (owner,
+2026-10-28), with a setting to change the minimum or turn it off. In dark themes it lifts text
+an agent drew too dark for the background, the mirror of the light case. Rejected: remapping agents' colours to the palette (it breaks colours they chose
 on purpose).
 
 ### D4. Marks keep their colours
