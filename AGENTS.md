@@ -1,6 +1,6 @@
 # Headquarter
 
-<!-- pakem:profile name=personal version=1.0.0 sha256=1c6beb9c1bcc7e2717cc2783f1aa19692ba35b99ba577fdb9e0b548ddbd4bf22 -->
+<!-- pakem:profile name=personal version=1.0.1 sha256=1c6beb9c1bcc7e2717cc2783f1aa19692ba35b99ba577fdb9e0b548ddbd4bf22 -->
 Personal project rules (Pakem profile `personal`):
 
 - Prefer free services and tiers, weighed against quality (`default:free-first`). When
