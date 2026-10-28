@@ -12,9 +12,9 @@ icon, with a Copy link button.
 
 ## Expected Outcome
 
-- Headquarter ▸ Remote Control… shows "Get the phone app" as the first step, above "Pair a
-  phone" and the switch: a QR code, "Scan with your phone's camera", the Android version it needs, a line on
-  what Android asks during the install, and Copy link.
+- Headquarter ▸ Remote Control… shows "Get the phone app" as the first step, above the switch
+  and "Pair a phone": a QR code, "Scan with your phone's camera", the Android version it needs,
+  a line on what Android asks during the install, and Copy link.
 - Scanning the QR code with the phone's camera opens the download of the newest stable
   `headquarter-android.apk`. A new release needs no change in the app: the link always names
   the latest one, and pre-releases are skipped.
