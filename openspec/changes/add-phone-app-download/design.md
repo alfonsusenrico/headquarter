@@ -32,8 +32,10 @@ network call for an address that never changes), a URL shortener (a third party 
 
 ### D2. The step, first in the window
 
-A "GET THE PHONE APP" section under the status card and above "PAIR A PHONE", shown whether remote control is on or off,
-because getting the app comes before turning anything on. Its card holds:
+A "GET THE PHONE APP" section between the window's header and the status card with the switch,
+shown whether remote control is on or off, because getting the app comes before turning
+anything on. The window then reads in order: get the app, turn remote control on, pair a phone.
+Its card holds:
 
 - the QR code of the link, 132 px, drawn by `qr_code` with the same quiet zone as the pairing
   code (version 4 or 5 at medium error correction, about 33 to 37 modules);
