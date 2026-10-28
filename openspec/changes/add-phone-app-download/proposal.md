@@ -1,6 +1,6 @@
 # Getting the phone app from Remote Control
 
-Status: proposed 2026-10-28, waiting for the owner's approval.
+Status: approved by the owner on 2026-10-28 ("approve, free the Mac, you drive it").
 
 ## Why
 
