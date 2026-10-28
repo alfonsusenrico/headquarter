@@ -11,7 +11,7 @@ Expected Result: each agent's signals are known, with versions.
 ## 2. Design with the owner
 
 - [ ] 2.1 Options page with many variants across the families in the design, every case on every surface (sidebar row, folded group, header, Usage row, phone row and header), light and dark. Evidence: `research/prototypes/background-work-status/index.html`, contrast table per variant.
-- [ ] 2.2 The owner chooses, and answers the open questions (notifications, when the review flag clears). Record the decisions in the design, the spec delta and these tasks, then ask for approval of the build.
+- [ ] 2.2 The owner chooses, and answers the open questions (notifications, when the review flag clears, whether background work rises in the sidebar order). Record the decisions in the design, the spec delta and these tasks, then ask for approval of the build.
 
 Expected Result: an approved design.
 

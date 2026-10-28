@@ -67,3 +67,5 @@ when built (Claude Code 2.1.31x, Codex 0.164.x, agy 1.4.x at the time of writing
 - Should finishing background work notify, like a finished turn does?
 - Should the agy review flag stay until the artifact is reviewed, or clear once the owner opens
   the session?
+- Should a session with background work rise to the top of its group like a working one
+  (`add-working-sessions-first`)? Deferred to this change by the owner, 2026-10-28.
