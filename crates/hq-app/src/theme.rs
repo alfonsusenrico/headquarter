@@ -409,6 +409,29 @@ mod tests {
         }
     }
 
+    /// The folder browser's tag, counts and arrows (add-folder-sessions D5): muted on a
+    /// plain or hovered row, the group colour on the highlighted row's accent tint,
+    /// hovered or not.
+    #[test]
+    fn folder_row_labels_meet_wcag_aa() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let chrome = theme.chrome;
+            let tinted = |strength| mix(chrome.selected.rgb, chrome.accent.rgb, strength);
+            for (name, color, background) in [
+                ("muted on a hovered row", chrome.muted, tinted(0.06)),
+                ("group on the highlighted row", chrome.group, tinted(0.16)),
+                (
+                    "group on the hovered highlighted row",
+                    chrome.group,
+                    tinted(0.2),
+                ),
+            ] {
+                let ratio = contrast(color, background);
+                assert!(ratio >= AA, "{:?} {name}: {ratio:.2}", theme.mode);
+            }
+        }
+    }
+
     #[test]
     fn ansi_text_colours_meet_wcag_aa() {
         for theme in [Theme::light(), Theme::dark()] {

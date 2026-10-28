@@ -1,6 +1,7 @@
 //! The two session windows, Open sessions (⌘O) and New session (⌘N), in one frame
 //! (`openspec/changes/redesign-session-modal/design.md`, D1 and D2).
 
+pub mod folder_sessions;
 pub mod folders;
 pub mod new_session;
 pub mod open_sessions;
@@ -148,6 +149,14 @@ pub fn tick(picked: bool, chrome: Chrome) -> Div {
     } else {
         circle.border_color(hsla(chrome.track))
     }
+}
+
+/// Dims a window under a dialog of its own.
+pub fn shade(chrome: Chrome) -> gpui::Hsla {
+    let mut shade = hsla(chrome.text);
+    shade.l = 0.08;
+    shade.a = 0.4;
+    shade
 }
 
 /// A small outlined label, such as "ext" or "Open here".
