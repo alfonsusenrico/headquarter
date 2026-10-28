@@ -91,6 +91,9 @@ pub struct Row {
     pub external: bool,
     pub age: String,
     pub glyph: Glyph,
+    /// The paired phone that has the session, shown with a phone mark in place of the
+    /// age (refine-in-use-elsewhere D2).
+    pub phone: Option<String>,
 }
 
 impl Row {
@@ -199,6 +202,7 @@ pub fn items(
             external: session.external.is_some(),
             age: age(now_ms.saturating_sub(session.last_activity_at)),
             glyph: Glyph::of(session),
+            phone: session.phone.clone(),
         })
     };
     let mut items = Vec::new();
@@ -504,7 +508,19 @@ mod tests {
             starting: false,
             start_error: None,
             offered: true,
+            phone: None,
         }
+    }
+
+    #[test]
+    fn a_session_a_phone_has_names_the_phone() {
+        let mut on_phone = session("p", "/u/api", Status::Working, 0);
+        on_phone.phone = Some("Pixel 8".into());
+        let sessions = [on_phone, session("d", "/u/web", Status::Done, 0)];
+        let items = items(&sessions, &[], None, NOW);
+        assert_eq!(rows(&items, "p")[0].phone.as_deref(), Some("Pixel 8"));
+        assert_eq!(rows(&items, "p")[0].status_word(), Some("working"), "kept");
+        assert_eq!(rows(&items, "d")[0].phone, None);
     }
 
     #[test]

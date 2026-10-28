@@ -221,13 +221,21 @@ impl TerminalSession {
     }
 }
 
-/// What the pane says while another client has the session, or nothing while this
-/// window has it (fix-terminal-in-use-elsewhere D4).
-pub fn in_use_note(holder: Option<&Holder>) -> Option<String> {
+/// The heading and note of the page shown in place of the terminal while another
+/// client has the session or, with `shell`, its shell; nothing while this window has it
+/// (refine-in-use-elsewhere D1).
+pub fn in_use_page(holder: Option<&Holder>, shell: bool) -> Option<(String, String)> {
+    let program = if shell { "The shell" } else { "The agent" };
     match holder? {
         Holder::Here => None,
-        Holder::Computer => Some("In use in another terminal · Click to use here".to_owned()),
-        Holder::Phone { name } => Some(format!("In use on {name} · Click to use here")),
+        Holder::Computer => Some((
+            "Open in another terminal".to_owned(),
+            format!("{program} is drawing for that terminal's size."),
+        )),
+        Holder::Phone { name } => Some((
+            format!("Open on {name}"),
+            format!("{program} is drawing for the phone's screen."),
+        )),
     }
 }
 
@@ -342,20 +350,19 @@ mod tests {
     };
 
     #[test]
-    fn the_pane_names_the_client_in_use_elsewhere() {
-        assert_eq!(in_use_note(None), None, "before the host says");
-        assert_eq!(in_use_note(Some(&Holder::Here)), None);
-        assert_eq!(
-            in_use_note(Some(&Holder::Phone {
-                name: "Pixel 8".into()
-            }))
-            .as_deref(),
-            Some("In use on Pixel 8 · Click to use here")
-        );
-        assert_eq!(
-            in_use_note(Some(&Holder::Computer)).as_deref(),
-            Some("In use in another terminal · Click to use here")
-        );
+    fn the_page_names_the_client_in_use_elsewhere() {
+        assert_eq!(in_use_page(None, false), None, "before the host says");
+        assert_eq!(in_use_page(Some(&Holder::Here), false), None);
+        let phone = Holder::Phone {
+            name: "Pixel 8".into(),
+        };
+        let (heading, note) = in_use_page(Some(&phone), false).unwrap();
+        assert_eq!(heading, "Open on Pixel 8");
+        assert_eq!(note, "The agent is drawing for the phone's screen.");
+        let (_, note) = in_use_page(Some(&phone), true).unwrap();
+        assert_eq!(note, "The shell is drawing for the phone's screen.");
+        let (heading, _) = in_use_page(Some(&Holder::Computer), false).unwrap();
+        assert_eq!(heading, "Open in another terminal");
     }
 
     #[test]

@@ -737,6 +737,7 @@ mod tests {
             starting: false,
             start_error: None,
             offered: true,
+            phone: None,
         }
     }
 

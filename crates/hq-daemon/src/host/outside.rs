@@ -366,6 +366,7 @@ fn unlinked_entry(session: &ExternalSession, external: External) -> SessionInfo 
         starting: false,
         start_error: None,
         offered: true,
+        phone: None,
     }
 }
 

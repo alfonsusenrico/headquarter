@@ -24,7 +24,8 @@ Rejected: D2 (live chips) and D3 (preview), owner, 2026-10-28.
 
 `SessionInfo` gains `phone: Option<String>`, the name of the paired phone in use for the session,
 or `None`. The host sends the session again whenever it changes. The sidebar row shows a phone mark
-in place of its age, with the tooltip "Open on <phone>". The status word and glyph stay.
+after its title, with the tooltip "Open on <phone>", and hides its age. The status word and glyph
+stay, so a working session still says so.
 
 Rejected: only marking the shown session (the owner looks for the flag in the sidebar first).
 

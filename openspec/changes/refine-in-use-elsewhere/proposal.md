@@ -1,6 +1,6 @@
 # The desktop first, the phone second, while both have a session
 
-Status: proposed 2026-10-28, waiting for the owner's approval. A follow-up to
+Status: approved by the owner 2026-10-28 ("approve"). A follow-up to
 `fix-terminal-in-use-elsewhere` on the same branch and pull request (#86, held by the owner).
 
 ## Why

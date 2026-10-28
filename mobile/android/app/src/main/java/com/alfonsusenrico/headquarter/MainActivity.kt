@@ -122,11 +122,11 @@ private fun App(
                 }
 
                 is Route.Session -> {
-                    SessionScreen(core, version, route.id, shell = false, go = go, onBack = back)
+                    SessionScreen(core, version, route.id, shell = false, go = go, onBack = back, onTaken = home)
                 }
 
                 is Route.Shell -> {
-                    SessionScreen(core, version, route.id, shell = true, go = go, onBack = back)
+                    SessionScreen(core, version, route.id, shell = true, go = go, onBack = back, onTaken = home)
                 }
 
                 is Route.Inactive -> {

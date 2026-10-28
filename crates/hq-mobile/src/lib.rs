@@ -704,7 +704,7 @@ impl Phone {
     }
 
     /// Where the open session is in use when it is not this phone: the computer's name, or
-    /// another phone's. The app then covers the terminal (fix-terminal-in-use-elsewhere D3).
+    /// another phone's. The app then leaves the session for home (refine-in-use-elsewhere D4).
     pub fn in_use_elsewhere(&self) -> Option<String> {
         let state = self.shared.lock();
         match state.holder.as_ref()? {

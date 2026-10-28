@@ -603,6 +603,10 @@ pub struct SessionInfo {
     /// Hosts that predate it send nothing, which counts as offered.
     #[serde(default = "offered_by_default")]
     pub offered: bool,
+    /// The paired phone in use for the session, by name, while a phone has it
+    /// (refine-in-use-elsewhere D2).
+    #[serde(default)]
+    pub phone: Option<String>,
 }
 
 fn offered_by_default() -> bool {

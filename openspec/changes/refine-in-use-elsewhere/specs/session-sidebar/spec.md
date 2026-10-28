@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Sessions open on a phone
-While a paired phone is the client in use for a sidebar session, its row SHALL show a phone mark in place of its age, with the tooltip "Open on <phone>", and SHALL keep its status word and glyph.
+While a paired phone is the client in use for a sidebar session, its row SHALL show a phone mark after its title, with the tooltip "Open on <phone>", SHALL hide its age, and SHALL keep its status word and glyph.
 
 #### Scenario: Opened on the phone
 - **WHEN** the owner opens "cash flow tracker dev" on the phone "Pixel 8" and the desktop shows another session

@@ -760,7 +760,6 @@ impl Render for TerminalView {
         };
         let focused = self.focus.is_focused(window) && window.is_window_active();
         let ended = self.session.read(cx).ended.clone();
-        let elsewhere = super::session::in_use_note(self.session.read(cx).holder.as_ref());
         let view = cx.entity();
         let session = self.session.clone();
         let focus = self.focus.clone();
@@ -772,7 +771,6 @@ impl Render for TerminalView {
         let fade = if focused { 0.0 } else { options.dim_unfocused };
         let background = hsla(frame.background);
         let badge = hsla(frame.cursor_color);
-        let text = hsla(frame.foreground);
         let mut see_through = background;
         // The window's background opacity and the terminal background's own multiply.
         see_through.a = options.opacity * background.a;
@@ -874,31 +872,6 @@ impl Render for TerminalView {
                     .bg(badge)
                     .text_color(background)
                     .text_size(px(13.))
-                    .child(note)
-            }))
-            .children(elsewhere.map(|note| {
-                // Top right, clear of the narrower drawing, which starts at the left. The
-                // terminal's own colours swapped: as readable as its text, in any theme.
-                div()
-                    .id("in-use-elsewhere")
-                    .absolute()
-                    .top(px(8.))
-                    .right(px(12.))
-                    .px(px(12.))
-                    .py(px(6.))
-                    .rounded(px(8.))
-                    .bg(text)
-                    .text_color(background)
-                    .text_size(px(13.))
-                    .cursor(CursorStyle::PointingHand)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            window.focus(&this.focus, cx);
-                            this.session.read(cx).focus();
-                        }),
-                    )
                     .child(note)
             }))
             .children(ended.map(|message| {
