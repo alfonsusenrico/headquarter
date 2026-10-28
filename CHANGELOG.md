@@ -2,6 +2,33 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.16 (2026-10-28)
+
+- See what your sessions cost. ⌘U (Ctrl+Shift+U on Linux) opens a Usage popover with the
+  CPU and memory of Headquarter and the five busiest sessions, counting every process an
+  agent started. Show all, or Window ▸ Usage, lists every session, sortable by CPU or
+  memory. It measures only while it is open.
+- Every shortcut in one place. ⌘/ (Ctrl+Shift+/ on Linux), or Headquarter ▸ Keyboard
+  Shortcuts…, lists the keys the app uses, by area, and filters as you type.
+- Find forgotten sessions. New session shows how many sessions each folder holds, and
+  starting in a folder with past conversations not in your sidebar offers them first:
+  Continue one, start a new session, or tick "Don't ask again for these".
+- Quit asks how. ⌘Q, Quit and the window's close button offer Quit, which stops your
+  sessions and resumes them when you open Headquarter again, or Keep Running, which
+  leaves them working as before.
+- A cleaner session screen on the phone: the terminal edge to edge, a key grid with a
+  tall ⏎, a text box that grows as you type, and a Live button when you scroll back.
+  Scrolling output draws about six times faster on our test phone.
+- Coming back to a session no longer leaves its screen garbled until you resize the
+  window.
+- Claude Code sessions stay on their own conversation. A conversation Claude Code carries
+  on under a new id is followed, and one still running in Claude Code's background offers
+  Bring into Headquarter instead of resuming a second copy.
+- A hidden background Claude Code session no longer makes one of yours read "needs you".
+- The context meter in the session header fills to the percentage it reports.
+- Update the phone app with the computer: a 0.1.15 phone says the app is too old for a
+  0.1.16 computer.
+
 ## 0.1.15 (2026-10-27)
 
 - "working" is easier to spot. The word now shows in the accent colour with three dots
