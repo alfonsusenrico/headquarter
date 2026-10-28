@@ -16,7 +16,7 @@ pub use hq_signals::resources::Footprint;
 use hq_signals::status::Status;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;
 pub const MAX_PAYLOAD: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,6 +263,12 @@ pub enum Request {
     /// The owner brought the attached session to the front on this client: its terminal
     /// takes this client's size (add-remote-gateway D6).
     Focus {},
+    /// Names the paired phone behind this connection, for other clients' "In use on"
+    /// notices. Sent only by the remote gateway; a phone's own is refused
+    /// (fix-terminal-in-use-elsewhere D2).
+    Device {
+        name: String,
+    },
     /// A phone that is not paired yet presents the pairing code's secret; handled by the
     /// remote gateway, never forwarded to the host.
     Pair {
@@ -441,6 +447,11 @@ pub enum Response {
         host: Footprint,
         sessions: Vec<SessionFootprint>,
     },
+    /// Which client the attached session's terminal is sized for, sent on attaching and
+    /// whenever it changes (fix-terminal-in-use-elsewhere D1).
+    InUse {
+        holder: Holder,
+    },
     /// The attached session's agent exited.
     Ended {
         session: String,
@@ -463,6 +474,18 @@ impl Response {
             message: message.into(),
         }
     }
+}
+
+/// The client a session's terminal is sized for, as one attached client sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Holder {
+    /// This client.
+    Here,
+    /// Another client on the computer itself, such as the app or `hq attach`.
+    Computer,
+    /// A paired phone, by the name it was paired with.
+    Phone { name: String },
 }
 
 /// The host's answer to a client's `Hello`.
@@ -1050,6 +1073,9 @@ mod tests {
                 device: "pixel".into(),
             },
             Request::Unpair {},
+            Request::Device {
+                name: "Pixel 8".into(),
+            },
         ] {
             let bytes = serde_json::to_vec(&request).unwrap();
             assert_eq!(Request::parse(&bytes).unwrap(), request);
@@ -1088,6 +1114,17 @@ mod tests {
                     last_seen_at: Some(2),
                     connected: true,
                 }],
+            },
+            Response::InUse {
+                holder: Holder::Here,
+            },
+            Response::InUse {
+                holder: Holder::Computer,
+            },
+            Response::InUse {
+                holder: Holder::Phone {
+                    name: "Pixel 8".into(),
+                },
             },
         ] {
             let bytes = serde_json::to_vec(&response).unwrap();

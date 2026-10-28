@@ -8,7 +8,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use hq_protocol::{Frame, Response};
+use hq_protocol::{Frame, Holder, Response};
 use hq_signals::event::{Agent, EventKind, NeedsReason};
 use hq_signals::helpers::is_terminal_report;
 use hq_signals::status::{SessionTracker, Status};
@@ -64,6 +64,32 @@ pub struct Viewer {
     pub tx: Sender<Outgoing>,
     pub cols: u16,
     pub rows: u16,
+    /// The paired phone this viewer is on, named by the remote gateway; `None` for a
+    /// client on the computer (fix-terminal-in-use-elsewhere D2).
+    pub device: Option<String>,
+}
+
+/// Tells every viewer which of them the terminal is sized for, each from its own side
+/// (fix-terminal-in-use-elsewhere D1).
+fn announce_in_use(viewers: &[Viewer], active: Option<u64>) {
+    let Some(holder) = active.and_then(|id| viewers.iter().find(|viewer| viewer.id == id)) else {
+        return;
+    };
+    for viewer in viewers {
+        let seen = if viewer.id == holder.id {
+            Holder::Here
+        } else {
+            match &holder.device {
+                Some(name) => Holder::Phone { name: name.clone() },
+                None => Holder::Computer,
+            }
+        };
+        let _ = viewer
+            .tx
+            .send(Outgoing::Frame(Frame::response(&Response::InUse {
+                holder: seen,
+            })));
+    }
 }
 
 /// Which viewer is in use, and the order viewers were used in (add-remote-gateway D6).
@@ -296,7 +322,11 @@ impl Hosted {
             let mut in_use = lock(&self.in_use);
             let was = in_use.active;
             in_use.use_viewer(viewer_id);
-            (was != Some(viewer_id)).then_some((viewer.cols, viewer.rows))
+            let changed = was != Some(viewer_id);
+            if changed {
+                announce_in_use(&viewers, in_use.active);
+            }
+            changed.then_some((viewer.cols, viewer.rows))
         };
         if let Some((cols, rows)) = new_size {
             self.set_size(cols, rows);
@@ -451,7 +481,9 @@ impl Hosted {
             }
             let viewers = &mut *lock(&self.viewers);
             viewers.push(viewer);
-            lock(&self.in_use).use_viewer(id);
+            let mut in_use = lock(&self.in_use);
+            in_use.use_viewer(id);
+            announce_in_use(viewers, in_use.active);
         }
         self.redraw_at(cols, rows);
         lock(&self.tracker).viewed();
@@ -477,6 +509,7 @@ impl Hosted {
                     .find_map(|id| viewers.iter().find(|viewer| viewer.id == *id))
                     .or_else(|| viewers.last());
                 in_use.active = next.map(|viewer| viewer.id);
+                announce_in_use(&viewers, in_use.active);
                 next.map(|viewer| (viewer.cols, viewer.rows))
             }
         };

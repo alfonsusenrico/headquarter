@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use hq_protocol::{AgentUsage, Frame, GroupInfo, Request, Response, SessionInfo};
+use hq_protocol::{AgentUsage, Frame, GroupInfo, Holder, Request, Response, SessionInfo};
 use hq_remote::PairingCode;
 use hq_signals::status::Status;
 use iroh::SecretKey;
@@ -117,6 +117,9 @@ struct State {
     terminal: Option<Terminal>,
     /// The open session's agent exited.
     ended: bool,
+    /// The client the open terminal is sized for, once the host says
+    /// (fix-terminal-in-use-elsewhere D1).
+    holder: Option<Holder>,
     /// The owner looks at the open terminal: replies arriving there are read.
     watching: bool,
 }
@@ -225,6 +228,7 @@ impl Shared {
         let open = state.open.clone()?;
         state.terminal = Some(Terminal::new(open.cols, open.rows));
         state.ended = false;
+        state.holder = None;
         Some(open)
     }
 
@@ -264,6 +268,14 @@ impl Shared {
                 Taken::Change
             }
             Response::DetailsChanged { .. } | Response::RemoteWelcome { .. } => Taken::Change,
+            Response::InUse { holder } => {
+                if state.open.is_some() {
+                    state.holder = Some(holder);
+                }
+                drop(state);
+                self.changed();
+                Taken::Change
+            }
             Response::Ended { session, .. } => {
                 if state
                     .open
@@ -358,6 +370,7 @@ impl Phone {
             state.terminal = Some(Terminal::new(open.cols, open.rows));
             state.open = Some(open.clone());
             state.ended = false;
+            state.holder = None;
             state.watching = true;
         }
         if let Err(error) = self.ask(request) {
@@ -418,6 +431,7 @@ impl Phone {
                     open: None,
                     terminal: None,
                     ended: false,
+                    holder: None,
                     watching: false,
                 }),
             }),
@@ -671,6 +685,7 @@ impl Phone {
             let mut state = self.shared.lock();
             state.terminal = None;
             state.ended = false;
+            state.holder = None;
             state.open.take().is_some()
         };
         if was_open {
@@ -686,6 +701,20 @@ impl Phone {
     /// The open session's agent exited.
     pub fn terminal_ended(&self) -> bool {
         self.shared.lock().ended
+    }
+
+    /// Where the open session is in use when it is not this phone: the computer's name, or
+    /// another phone's. The app then covers the terminal (fix-terminal-in-use-elsewhere D3).
+    pub fn in_use_elsewhere(&self) -> Option<String> {
+        let state = self.shared.lock();
+        match state.holder.as_ref()? {
+            Holder::Here => None,
+            Holder::Computer => Some(state.computers.selected().map_or_else(
+                || "the computer".to_owned(),
+                |computer| computer.name.clone(),
+            )),
+            Holder::Phone { name } => Some(name.clone()),
+        }
     }
 
     /// The owner looks at the open terminal, or left it for another screen.
@@ -876,6 +905,57 @@ mod tests {
         assert_eq!(computer.name, "MacBook");
         assert_eq!(computer.relay.as_deref(), Some("https://new.example.com./"));
         assert!(computer.last_seen_at.is_some());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn the_open_terminal_says_where_it_is_in_use() {
+        let folder = std::env::temp_dir().join(format!("hq-mobile-in-use-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let phone = Phone::new(new_phone_key(), folder.to_string_lossy().into_owned()).unwrap();
+        let mut computers = Computers::default();
+        computers.upsert(Computer {
+            id: "host".into(),
+            name: "MacBook".into(),
+            relay: None,
+            addrs: Vec::new(),
+            paired_at: 1,
+            last_seen_at: None,
+        });
+        phone.shared.lock().computers = computers;
+        let in_use = |holder: Holder| Response::InUse { holder };
+
+        // Nothing open: nothing to cover.
+        assert!(matches!(
+            phone.shared.take_in(in_use(Holder::Computer)),
+            Taken::Change
+        ));
+        assert_eq!(phone.in_use_elsewhere(), None);
+
+        phone.shared.lock().open = Some(Open {
+            session: "s".into(),
+            shell: false,
+            cols: 54,
+            rows: 40,
+        });
+        assert_eq!(phone.in_use_elsewhere(), None, "before the host says");
+        // A notice is never taken for the answer to a request.
+        assert!(matches!(
+            phone.shared.take_in(in_use(Holder::Computer)),
+            Taken::Change
+        ));
+        assert_eq!(phone.in_use_elsewhere().as_deref(), Some("MacBook"));
+        phone.shared.take_in(in_use(Holder::Phone {
+            name: "Pixel 8".into(),
+        }));
+        assert_eq!(phone.in_use_elsewhere().as_deref(), Some("Pixel 8"));
+        phone.shared.take_in(in_use(Holder::Here));
+        assert_eq!(phone.in_use_elsewhere(), None);
+
+        phone.shared.take_in(in_use(Holder::Computer));
+        phone.close_terminal();
+        assert_eq!(phone.in_use_elsewhere(), None, "closing forgets it");
         std::fs::remove_dir_all(folder).unwrap();
     }
 }

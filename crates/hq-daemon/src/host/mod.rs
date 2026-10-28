@@ -431,6 +431,8 @@ impl Host {
         };
 
         let mut attached: Option<(Arc<Hosted>, u64)> = None;
+        // The paired phone behind this connection, when the remote gateway names one.
+        let mut device: Option<String> = None;
         let mut stop_requested = false;
         loop {
             if !greeted {
@@ -512,6 +514,7 @@ impl Host {
                                         tx: tx.clone(),
                                         cols,
                                         rows,
+                                        device: device.clone(),
                                     });
                                     self.refresh(&hosted);
                                     attached = Some((hosted, viewer));
@@ -542,6 +545,7 @@ impl Host {
                                         tx: tx.clone(),
                                         cols,
                                         rows,
+                                        device: device.clone(),
                                     });
                                     attached = Some((shell, viewer));
                                 }
@@ -691,6 +695,7 @@ impl Host {
                                 hosted.focus(*viewer);
                             }
                         }
+                        Request::Device { name } => device = Some(name),
                         Request::Pair { .. } => send(Response::error(
                             ErrorCode::BadRequest,
                             "pairing is for phones, through remote control",
