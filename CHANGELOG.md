@@ -2,6 +2,20 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.17 (2026-10-28)
+
+- A finished look for the phone app. Home has a large title that folds away as you scroll, a
+  full-width row for the computer with its connection and Settings beside it, usage as one
+  tile per agent, and an Add button that shrinks while you scroll. Pairing walks through three
+  numbered steps, and Settings and Add sessions match.
+- Get the phone app from your computer. Headquarter ▸ Remote Control… now starts with a QR code:
+  scan it with your phone's camera and the newest Headquarter for Android downloads straight
+  away. Copy link gives you the same address.
+- Quit's question always shows on top, even with Remote Control, Usage or an update notice
+  open, and Esc after cancelling goes back to the window you had open.
+- The update window takes the keyboard while it is open. Esc closes it, and nothing you type
+  there reaches the session behind it.
+
 ## 0.1.16 (2026-10-28)
 
 - See what your sessions cost. ⌘U (Ctrl+Shift+U on Linux) opens a Usage popover with the

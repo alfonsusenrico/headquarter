@@ -1,6 +1,6 @@
 [package]
 name = "hq-mobile"
-version = "0.1.16"
+version = "0.1.17"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
@@ -21,9 +21,9 @@ bindgen = ["uniffi/cli"]
 
 [dependencies]
 alacritty_terminal = "=0.26.0"
-hq-protocol = { version = "0.1.16", path = "../hq-protocol" }
-hq-remote = { version = "0.1.16", path = "../hq-remote" }
-hq-signals = { version = "0.1.16", path = "../hq-signals" }
+hq-protocol = { version = "0.1.17", path = "../hq-protocol" }
+hq-remote = { version = "0.1.17", path = "../hq-remote" }
+hq-signals = { version = "0.1.17", path = "../hq-signals" }
 iroh = "1.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
