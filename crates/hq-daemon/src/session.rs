@@ -333,6 +333,16 @@ impl Hosted {
         }
     }
 
+    /// The paired phone the terminal is sized for, while a phone has it.
+    pub fn phone_in_use(&self) -> Option<String> {
+        let viewers = lock(&self.viewers);
+        let active = lock(&self.in_use).active?;
+        viewers
+            .iter()
+            .find(|viewer| viewer.id == active)
+            .and_then(|viewer| viewer.device.clone())
+    }
+
     pub fn input(&self, bytes: &[u8], now_ms: u64) {
         self.write_to_agent(bytes);
         if !is_terminal_report(bytes) {

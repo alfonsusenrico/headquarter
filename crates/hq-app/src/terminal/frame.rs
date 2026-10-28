@@ -54,8 +54,6 @@ pub struct Frame {
     pub rows: Vec<Vec<StyledCell>>,
     pub cursor: Option<Cursor>,
     pub background: Paint,
-    /// The terminal's default text colour, for notices drawn over it.
-    pub foreground: Paint,
     pub cursor_color: Paint,
 }
 
@@ -193,7 +191,6 @@ pub fn build(model: &TerminalModel, hovered: Option<&Link>) -> Frame {
         rows,
         cursor,
         background,
-        foreground: resolve(Color::Named(NamedColor::Foreground)),
         cursor_color: resolve(Color::Named(NamedColor::Cursor)),
     }
 }

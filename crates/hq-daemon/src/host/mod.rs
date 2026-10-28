@@ -449,7 +449,9 @@ impl Host {
             match frame {
                 Frame::Input(bytes) => {
                     if let Some((hosted, viewer)) = &attached {
-                        hosted.input_from(*viewer, &bytes, now_ms());
+                        self.tracking_phone(hosted, || {
+                            hosted.input_from(*viewer, &bytes, now_ms());
+                        });
                         self.refresh(hosted);
                     }
                 }
@@ -497,7 +499,7 @@ impl Host {
                             rows,
                         } => {
                             if let Some((hosted, viewer)) = attached.take() {
-                                hosted.detach(viewer);
+                                self.tracking_phone(&hosted, || hosted.detach(viewer));
                             }
                             match self.live_session(&session) {
                                 Ok(hosted) => {
@@ -509,12 +511,14 @@ impl Host {
                                             continue;
                                         }
                                     }
-                                    hosted.attach(Viewer {
-                                        id: viewer,
-                                        tx: tx.clone(),
-                                        cols,
-                                        rows,
-                                        device: device.clone(),
+                                    self.tracking_phone(&hosted, || {
+                                        hosted.attach(Viewer {
+                                            id: viewer,
+                                            tx: tx.clone(),
+                                            cols,
+                                            rows,
+                                            device: device.clone(),
+                                        });
                                     });
                                     self.refresh(&hosted);
                                     attached = Some((hosted, viewer));
@@ -528,7 +532,7 @@ impl Host {
                             rows,
                         } => {
                             if let Some((hosted, viewer)) = attached.take() {
-                                hosted.detach(viewer);
+                                self.tracking_phone(&hosted, || hosted.detach(viewer));
                             }
                             match self.shell_for(&session) {
                                 Ok((shell, row_id)) => {
@@ -567,7 +571,7 @@ impl Host {
                         }
                         Request::Detach {} => {
                             if let Some((hosted, viewer)) = attached.take() {
-                                hosted.detach(viewer);
+                                self.tracking_phone(&hosted, || hosted.detach(viewer));
                             }
                             send(Response::Detached);
                         }
@@ -692,7 +696,7 @@ impl Host {
                         }
                         Request::Focus {} => {
                             if let Some((hosted, viewer)) = &attached {
-                                hosted.focus(*viewer);
+                                self.tracking_phone(hosted, || hosted.focus(*viewer));
                             }
                         }
                         Request::Device { name } => device = Some(name),
@@ -719,7 +723,7 @@ impl Host {
         }
 
         if let Some((hosted, viewer)) = attached {
-            hosted.detach(viewer);
+            self.tracking_phone(&hosted, || hosted.detach(viewer));
         }
         // A pairing code this client showed stops working with it (add-remote-gateway D13).
         self.remote_client_left(connection);
@@ -758,7 +762,10 @@ impl Host {
     /// A row as clients see it: plus whether it runs here, the agent's title (kept in
     /// memory only), and any outside process running its conversation.
     fn describe(&self, row: SessionRow) -> SessionInfo {
-        let live = lock(&self.live).contains_key(&row.id);
+        let (live, phone) = match lock(&self.live).get(&row.id) {
+            Some(hosted) => (true, hosted.phone_in_use()),
+            None => (false, None),
+        };
         let title = row.agent_session_id.as_ref().and_then(|conversation| {
             lock(&self.titles)
                 .get(&(row.agent, conversation.clone()))
@@ -797,6 +804,7 @@ impl Host {
             starting,
             start_error,
             offered,
+            phone,
         }
     }
 
@@ -1856,6 +1864,20 @@ impl Host {
             None => self
                 .log
                 .line(&format!("conversation not found id={}", hosted.id)),
+        }
+    }
+
+    /// Runs `change` on a session's viewers, and announces the session again when the
+    /// phone in use for it changed (refine-in-use-elsewhere D2). A shell has no row.
+    fn tracking_phone(&self, hosted: &Hosted, change: impl FnOnce()) {
+        if hosted.shell {
+            change();
+            return;
+        }
+        let before = hosted.phone_in_use();
+        change();
+        if hosted.phone_in_use() != before {
+            self.broadcast(&hosted.id);
         }
     }
 

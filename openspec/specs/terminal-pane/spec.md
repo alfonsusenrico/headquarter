@@ -197,23 +197,31 @@ The app SHALL attach to a session, or its shell, at the size its pane is laid ou
 - **THEN** the pane shows the agent's current screen with no text from another size
 
 ### Requirement: In use on another device
-While another client is in use for the session shown in the terminal pane or the shell panel, the system SHALL show a notice at the top of that terminal and SHALL keep the terminal visible below it. The notice SHALL read "In use on <phone> · Click to use here" for a paired phone, and "In use in another terminal · Click to use here" for another client on the computer. It SHALL meet WCAG 2.2 AA contrast in every theme.
+While another client is in use for the session shown in the terminal pane or the shell panel, the system SHALL show, in place of that terminal, a page laid out as for an inactive session: the agent's mark, "Open on <phone>" for a paired phone or "Open in another terminal" for another client on the computer, and a "Use here" button. Keys pressed there SHALL NOT reach the agent. The page SHALL meet WCAG 2.2 AA contrast in every theme.
 
 #### Scenario: The phone opens the session
 - **WHEN** the desktop shows "cash flow tracker dev" and the owner opens it on the phone "Pixel 8"
-- **THEN** the desktop's terminal shows "In use on Pixel 8 · Click to use here" above the agent's narrower drawing
+- **THEN** the desktop's pane shows "Open on Pixel 8" and "Use here", and no terminal
+
+#### Scenario: Keys on the page
+- **WHEN** the page is shown and the owner types letters
+- **THEN** nothing reaches the agent and the phone keeps the session
 
 #### Scenario: One device
 - **WHEN** only the desktop shows a session
-- **THEN** no notice is shown
+- **THEN** the terminal is shown
 
-### Requirement: Taking the session back on the desktop
-Clicking the "In use" notice or the terminal, or typing into it, SHALL make the desktop the client in use, after which the notice goes away and the agent redraws at the desktop's size.
+### Requirement: Taking a session back from another device
+Pressing "Use here" or Enter on the in-use page, or opening the session from the sidebar, SHALL make the desktop the client in use, after which the terminal is shown and the agent redraws at the desktop's size. The desktop's window becoming active SHALL NOT take the session back.
 
-#### Scenario: Click the notice
-- **WHEN** the owner clicks "In use on Pixel 8 · Click to use here"
-- **THEN** the notice goes away and the agent redraws at the desktop's size
+#### Scenario: Use here
+- **WHEN** the owner presses "Use here" on "Open on Pixel 8"
+- **THEN** the terminal is shown and the agent redraws at the desktop's size
 
-#### Scenario: Typing takes it back
-- **WHEN** the notice is shown and the owner types into the terminal
-- **THEN** the keys reach the agent, the notice goes away and the agent redraws at the desktop's size
+#### Scenario: Enter
+- **WHEN** the page is shown and the owner presses Enter
+- **THEN** the desktop takes the session back, and the Enter does not reach the agent
+
+#### Scenario: Back at the Mac
+- **WHEN** the phone has the session and the owner switches to the desktop app's window
+- **THEN** the page stays and the phone keeps the session

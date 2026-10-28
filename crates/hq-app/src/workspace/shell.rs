@@ -5,8 +5,8 @@
 
 use gpui::{
     AnyElement, AppContext, Context, CursorStyle, DragMoveEvent, Entity, Focusable,
-    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement,
-    StyleRefinement, Styled, Subscription, Window, div, px, relative,
+    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Subscription, Window, div, px, relative,
 };
 
 use super::{Pane, Workspace};
@@ -23,6 +23,7 @@ pub(super) struct ShellPanel {
     view: Entity<TerminalView>,
     _ended: Subscription,
     _focus: Subscription,
+    _holder: Subscription,
 }
 
 /// The divider between the agent and the shell, while it is dragged.
@@ -85,6 +86,7 @@ impl Workspace {
         let terminal = cx.new(|cx| TerminalSession::attach_shell(info, palette, cx));
         let options = self.options.clone();
         let view = cx.new(|cx| TerminalView::new(terminal.clone(), options, window, cx));
+        let holder = self.watch_holder(&terminal, &view, window, cx);
         let session = id.clone();
         // The shell exited, or could not start: the panel closes.
         let ended = cx.observe_in(&terminal, window, move |this, terminal, window, cx| {
@@ -107,6 +109,7 @@ impl Workspace {
             view,
             _ended: ended,
             _focus: focus,
+            _holder: holder,
         });
     }
 
@@ -157,8 +160,8 @@ impl Workspace {
     /// The pane split between the agent above and the shell below, with the divider.
     pub(super) fn render_split(
         &self,
-        agent: Entity<TerminalView>,
-        shell: Entity<TerminalView>,
+        agent: AnyElement,
+        shell: AnyElement,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let share = self.shell_share;
@@ -173,7 +176,7 @@ impl Workspace {
                     .w_full()
                     .h(relative(1.0 - share))
                     .min_h(px(MIN_PART))
-                    .child(agent.cached(StyleRefinement::default().size_full())),
+                    .child(agent),
             )
             .child(
                 div()
@@ -187,13 +190,7 @@ impl Workspace {
                     .child(div().w_full().h(px(1.)).bg(line))
                     .on_drag(ShellDividerDrag, |_, _, _, cx| cx.new(|_| ShellDividerDrag)),
             )
-            .child(
-                div()
-                    .w_full()
-                    .flex_1()
-                    .min_h(px(MIN_PART))
-                    .child(shell.cached(StyleRefinement::default().size_full())),
-            )
+            .child(div().w_full().flex_1().min_h(px(MIN_PART)).child(shell))
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<ShellDividerDrag>, _, cx| {
                     let bounds = event.bounds;

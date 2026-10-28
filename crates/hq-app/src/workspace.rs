@@ -42,13 +42,14 @@ use crate::settings;
 use crate::shortcuts::{self, Keys, Shortcut};
 use crate::sidebar::glyph;
 use crate::sidebar::model::{self, Item, Row, Target};
-use crate::terminal::session::TerminalSession;
+use crate::terminal::session::{TerminalSession, in_use_page};
 use crate::terminal::view::{PaneOptions, TerminalView, hsla};
 use crate::theme::{Chrome, Mode, Theme};
 use crate::themes::{self, Library, Look, ThemeChoice, Token};
 
 mod groups;
 mod header;
+mod in_use;
 mod quit;
 mod rail;
 mod remote;
@@ -132,11 +133,13 @@ enum Modal {
 /// What the terminal pane shows.
 enum Pane {
     Empty,
-    /// An attached session; `_focus` marks it seen when the pane gains focus.
+    /// An attached session; `_focus` marks it seen when the pane gains focus, and
+    /// `_holder` redraws the pane when another client takes the session.
     Terminal {
         id: String,
         view: Entity<TerminalView>,
         _focus: Subscription,
+        _holder: Subscription,
     },
     /// A session not attached here: ended, or running in another terminal.
     Details(String),
@@ -944,6 +947,9 @@ impl Workspace {
         } = &self.pane
             && *shown == info.id
         {
+            // Opening the shown session again takes it back from a phone; its terminal is
+            // not on screen to take focus meanwhile (refine-in-use-elsewhere D3).
+            view.read(cx).session().read(cx).focus();
             window.focus(&view.focus_handle(cx), cx);
             return;
         }
@@ -951,7 +957,8 @@ impl Workspace {
         let id = info.id.clone();
         let session = cx.new(|cx| TerminalSession::attach(info, palette, cx));
         let options = self.options.clone();
-        let view = cx.new(|cx| TerminalView::new(session, options, window, cx));
+        let view = cx.new(|cx| TerminalView::new(session.clone(), options, window, cx));
+        let holder = self.watch_holder(&session, &view, window, cx);
         let focus = cx.on_focus(&view.focus_handle(cx), window, |this, window, cx| {
             this.mark_seen_if_watched(window, cx);
             this.tell_host_in_use(window, cx);
@@ -961,6 +968,7 @@ impl Workspace {
             id,
             view,
             _focus: focus,
+            _holder: holder,
         };
         self.sync_shell(window, cx);
         self.mark_seen_if_watched(window, cx);
@@ -976,8 +984,9 @@ impl Workspace {
         let Some(info) = model::kept_session(&self.sessions, &id).cloned() else {
             return;
         };
-        if info.live || info.starting {
-            // Starting with the host: the session the window shows starts first.
+        if (info.live || info.starting) && info.phone.is_none() {
+            // Starting with the host: the session the window shows starts first. One a
+            // phone has stays there until the owner opens it (refine-in-use-elsewhere D3).
             self.open(&id, window, cx);
         } else {
             self.selected = Some(id.clone());
@@ -1945,6 +1954,20 @@ impl Workspace {
             .child(self.marks.element(row.agent, 18., chrome.muted))
             .child(title)
             .children(row.external.then(|| modal::tag("ext", chrome)))
+            .children(row.phone.clone().map(|phone| {
+                // A phone has the session (refine-in-use-elsewhere D2).
+                div()
+                    .id(SharedString::from(format!("phone-{row_key}")))
+                    .flex_none()
+                    .w(px(9.))
+                    .h(px(13.))
+                    .border_1()
+                    .rounded(px(2.5))
+                    .border_color(hsla(chrome.muted))
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(format!("Open on {phone}")).build(window, cx)
+                    })
+            }))
             .child(match row.status_word() {
                 Some(word) if row.breathing() => working_word(word, self.lit_dot(), chrome),
                 Some(word) => div()
@@ -1954,6 +1977,8 @@ impl Workspace {
                     .text_color(hsla(chrome.amber))
                     .child(word)
                     .into_any_element(),
+                // The phone mark stands in for the age.
+                None if row.phone.is_some() => div().into_any_element(),
                 None => div()
                     .w(px(32.))
                     .flex_none()
@@ -2773,14 +2798,16 @@ impl Workspace {
             .px(px(24.))
             .bg(background);
         match &self.pane {
-            // Cached, so a sidebar frame (a breathing word) does not repaint the terminal.
-            Pane::Terminal { view, .. } => match self.shell_view() {
-                Some(shell) => self.render_split(view.clone(), shell.clone(), cx),
-                None => div()
-                    .size_full()
-                    .child(view.clone().cached(StyleRefinement::default().size_full()))
-                    .into_any_element(),
-            },
+            Pane::Terminal { view, .. } => {
+                let agent = self.terminal_part(view, cx);
+                match self.shell_view().cloned() {
+                    Some(shell) => {
+                        let shell = self.terminal_part(&shell, cx);
+                        self.render_split(agent, shell, cx)
+                    }
+                    None => div().size_full().child(agent).into_any_element(),
+                }
+            }
             Pane::Empty if !self.listed => centred
                 .child(crate::loading::agents_checking_in(
                     "workspace-starting",
@@ -2856,11 +2883,36 @@ impl Workspace {
                         .into_any_element();
                 }
                 if session.live {
+                    let open = Button::new("pane-open").primary().on_click(
+                        cx.listener(move |this, _, window, cx| this.open(&id, window, cx)),
+                    );
+                    // A phone has it: the same page as when it is taken while shown, and
+                    // opening it here takes it back (refine-in-use-elsewhere D1, D3).
+                    if let Some((heading, page_note)) = session.phone.as_ref().and_then(|name| {
+                        in_use_page(
+                            Some(&hq_protocol::Holder::Phone { name: name.clone() }),
+                            false,
+                        )
+                    }) {
+                        return centred
+                            .child(self.marks.element(session.agent, 28., chrome.muted))
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(PANE_TEXT_WIDTH))
+                                    .text_center()
+                                    .text_size(px(15.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(hsla(chrome.text))
+                                    .child(heading),
+                            )
+                            .child(note(page_note))
+                            .child(open.label("Use here"))
+                            .into_any_element();
+                    }
                     return centred
                         .child(heading)
-                        .child(Button::new("pane-open").primary().label("Open").on_click(
-                            cx.listener(move |this, _, window, cx| this.open(&id, window, cx)),
-                        ))
+                        .child(open.label("Open"))
                         .into_any_element();
                 }
                 if self.resuming.as_deref() == Some(id.as_str()) {

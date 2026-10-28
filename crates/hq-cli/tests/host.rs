@@ -3820,13 +3820,36 @@ fn a_paired_phone_follows_types_and_is_held_to_the_allow_list() {
         }
     }
     assert_ne!(env.session(&session.id).name, "renamed");
-    // Naming itself changed nothing: the desktop still hears the paired name.
+    // Naming itself changed nothing: the desktop still hears the paired name, and the
+    // session list names the phone while it has the session (refine-in-use-elsewhere D2).
+    let mut follower = env.connect();
+    assert!(matches!(
+        follower.request(&Request::Subscribe { usage: false }),
+        Response::Done
+    ));
+    let phone_named = |follower: &mut Conn, expected: Option<&str>| loop {
+        match follower.next_response() {
+            Response::SessionChanged { session: changed }
+                if changed.id == session.id && changed.phone.as_deref() == expected =>
+            {
+                break;
+            }
+            _ => continue,
+        }
+    };
     desktop.send(&Request::Focus {});
     desktop.in_use_until(&Holder::Here);
+    phone_named(&mut follower, None);
     phone.send(&Frame::Input(b"again\n".to_vec()));
     desktop.in_use_until(&Holder::Phone {
         name: "Test Phone".into(),
     });
+    phone_named(&mut follower, Some("Test Phone"));
+    assert_eq!(
+        env.session(&session.id).phone.as_deref(),
+        Some("Test Phone"),
+        "listed too"
+    );
 
     let mut local = env.connect();
     match local.request(&Request::RemoteDevices {}) {
