@@ -17,7 +17,7 @@ Expected Result: the desktop says when the phone has the session.
 ## 3. Phone
 
 - [x] 3.1 The core keeps the holder and never takes `InUse` for an answer (D3). Evidence: `the_open_terminal_says_where_it_is_in_use`, and the stand-in phone end to end (verification.md).
-- [ ] 3.2 The cover with "Use here" on the Android app; typing and keys still take over (D3). Evidence so far: Android Lint, ktlint and builds pass. Pending: on a phone with the debug app.
+- [x] 3.2 The cover with "Use here" on the Android app; typing and keys still take over (D3). Evidence: Android Lint, ktlint and builds pass; on the dev phone with the debug app (verification.md).
 
 Expected Result: the phone never shows a garbled terminal.
 

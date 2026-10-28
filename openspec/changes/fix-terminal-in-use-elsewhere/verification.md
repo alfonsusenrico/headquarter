@@ -42,10 +42,26 @@ core, paired through remote control as "Test Phone" (scratch, not committed).
   its text, so its contrast equals the terminal text's in every theme (checked in the dark
   default; light themes follow by construction).
 
+## On screen (phone)
+
+The dev phone (realme RMX1921, Android 15), the debug APK from the checked tree, paired with the
+same synthetic host through n0's public relay by typing the code (the phone's network cannot reach
+the Mac directly). Do Not Disturb and stay-awake on for the check with the owner's go, restored
+afterwards.
+
+- The desktop had the session open and the phone opened it (the owner's first case): the desktop
+  showed "In use on realme RMX1921 · Click to use here", the phone's paired name.
+- A click in the desktop's terminal (the owner's second case, the desktop taking over): the phone
+  covered the terminal with "In use on Alfonsuss-MacBook-Air" and "Use here". No garbled text was
+  visible; the header, key row and text field stayed usable.
+- "Use here": the cover went away and the agent redrew at the phone's 54 columns.
+- Covered again, then text typed and sent: it reached the agent, the cover went away, the desktop
+  showed its notice.
+- Covered again, then Esc on the key row: the phone took over and the cover went away.
+
 ## Not verified yet
 
-- The Android cover and "Use here" on a real phone: no emulator here, and the attached phone is
-  not the dev phone. Waiting for the owner.
 - Linux.
+- TalkBack on the cover (the UI dump fails on the dev phone, as before).
 - In a narrow pane the notice overlaps the end of the first drawn line (seen at 846 pt wide).
   In a full-size window it sits clear of a phone-width drawing.
