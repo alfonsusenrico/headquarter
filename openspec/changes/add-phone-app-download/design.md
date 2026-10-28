@@ -32,7 +32,7 @@ network call for an address that never changes), a URL shortener (a third party 
 
 ### D2. The step, first in the window
 
-A "GET THE PHONE APP" section above "PAIR A PHONE", shown whether remote control is on or off,
+A "GET THE PHONE APP" section under the status card and above "PAIR A PHONE", shown whether remote control is on or off,
 because getting the app comes before turning anything on. Its card holds:
 
 - the QR code of the link, 132 px, drawn by `qr_code` with the same quiet zone as the pairing

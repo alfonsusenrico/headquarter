@@ -13,7 +13,7 @@ The Remote Control window SHALL show, as its first step and whether remote contr
 
 #### Scenario: Remote control off
 - **WHEN** remote control is off
-- **THEN** the step still shows, above the switch's consequences, so the app can be installed first
+- **THEN** the step still shows, so the app can be installed before remote control is turned on
 
 #### Scenario: A phone already paired
 - **WHEN** at least one phone is paired
