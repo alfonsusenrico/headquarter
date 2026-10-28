@@ -82,6 +82,12 @@ pub(super) enum Phase {
     Failed(String),
 }
 
+/// Whether Escape closes the update window: in the phases that offer OK, Later or Close
+/// (fix-update-window-keys D2).
+fn escape_closes(phase: &Phase) -> bool {
+    matches!(phase, Phase::Offer | Phase::Waiting | Phase::Failed(_))
+}
+
 /// The updater's state in the workspace.
 pub(super) struct Updates {
     /// A newer release than this app.
@@ -172,12 +178,12 @@ impl Workspace {
                     Ok(_) if manual => {
                         this.updates.checked =
                             Some(format!("Headquarter {running} is the latest version."));
-                        this.updates.open = true;
+                        this.open_update_window(window, cx);
                     }
                     Err(error) if manual => {
                         this.updates.checked =
                             Some(format!("Couldn't check for updates: {error:#}"));
-                        this.updates.open = true;
+                        this.open_update_window(window, cx);
                     }
                     // Automatic checks that find nothing, or fail, say nothing.
                     _ => {}
@@ -240,7 +246,7 @@ impl Workspace {
                     if this.updates.available.is_some() && this.updates.phase == Phase::Offer {
                         this.show_whats_new(window, cx);
                     } else {
-                        this.updates.open = true;
+                        this.open_update_window(window, cx);
                     }
                     cx.notify();
                 }))
@@ -252,6 +258,8 @@ impl Workspace {
     pub(super) fn show_whats_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.updates.page = true;
         self.updates.open = false;
+        // The page takes the keyboard in the window's place.
+        self.update_return = None;
         window.focus(&self.pane_focus, cx);
         if matches!(self.updates.notes, Notes::NotLoaded | Notes::Unavailable) {
             self.load_notes(window, cx);
@@ -328,7 +336,7 @@ impl Workspace {
                 .w(px(pair_width))
                 .label("Update Now")
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.updates.open = true;
+                    this.open_update_window(window, cx);
                     this.begin_update(window, cx);
                 })),
             None => {
@@ -693,7 +701,7 @@ impl Workspace {
     /// new copy once this one has quit (D6).
     fn restart_for_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.updates.phase = Phase::Restarting;
-        self.updates.open = true;
+        self.open_update_window(window, cx);
         self.updates.log.after.push(LogLine::doing(
             "Stopping the background host and its sessions",
         ));
@@ -734,11 +742,26 @@ impl Workspace {
         .detach();
     }
 
-    fn close_update_window(&mut self, cx: &mut Context<Self>) {
+    /// Opens the update window with the keyboard, so nothing typed reaches the session
+    /// behind it (fix-update-window-keys D1).
+    fn open_update_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.updates.open {
+            self.update_return = window.focused(cx);
+        }
+        self.updates.open = true;
+        window.focus(&self.update_focus, cx);
+        cx.notify();
+    }
+
+    /// Closes the update window and gives the keyboard back to what had it.
+    fn close_update_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.updates.open = false;
         self.updates.checked = None;
         if matches!(self.updates.phase, Phase::Asking | Phase::Failed(_)) {
             self.updates.phase = Phase::Offer;
+        }
+        if let Some(focus) = self.update_return.take() {
+            window.focus(&focus, cx);
         }
         cx.notify();
     }
@@ -760,7 +783,7 @@ impl Workspace {
             Button::new("update-later")
                 .w(px(BUTTON_WIDTH))
                 .label(label)
-                .on_click(cx.listener(|this, _, _, cx| this.close_update_window(cx)))
+                .on_click(cx.listener(|this, _, window, cx| this.close_update_window(window, cx)))
         };
         let running = Version::running();
         let mut body = div().flex().flex_col().gap(px(12.));
@@ -912,6 +935,15 @@ impl Workspace {
                 .child(
                     div()
                         .id("update-window")
+                        .track_focus(&self.update_focus)
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                            if event.keystroke.key == "escape" {
+                                cx.stop_propagation();
+                                if escape_closes(&this.updates.phase) {
+                                    this.close_update_window(window, cx);
+                                }
+                            }
+                        }))
                         .w(px(480.))
                         .flex()
                         .flex_col()
@@ -1026,4 +1058,19 @@ fn column(content: impl IntoElement) -> gpui::Div {
             .px(px(COLUMN_PADDING))
             .child(content),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_closes_only_what_offers_a_way_out() {
+        assert!(escape_closes(&Phase::Offer), "OK, Later");
+        assert!(escape_closes(&Phase::Waiting), "Close");
+        assert!(escape_closes(&Phase::Failed("no network".into())), "Close");
+        assert!(!escape_closes(&Phase::Asking), "Wait or Restart Now only");
+        assert!(!escape_closes(&Phase::Running(Step::Download)));
+        assert!(!escape_closes(&Phase::Restarting));
+    }
 }

@@ -234,6 +234,9 @@ pub struct Workspace {
     quit_focus: FocusHandle,
     /// What had focus when the quit dialog took it, given back on Cancel.
     quit_return: Option<FocusHandle>,
+    /// The update window's focus, and what had focus before it opened (fix-update-window-keys).
+    update_focus: FocusHandle,
+    update_return: Option<FocusHandle>,
     /// Remote control is on in the settings file, for the quit dialog.
     remote_on: bool,
     /// The session whose agent is being started again because it was opened.
@@ -406,6 +409,8 @@ impl Workspace {
             quit: None,
             quit_focus: cx.focus_handle(),
             quit_return: None,
+            update_focus: cx.focus_handle(),
+            update_return: None,
             remote_on: false,
             resuming: None,
             resume_failed: None,
