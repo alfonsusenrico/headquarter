@@ -327,3 +327,14 @@ The system SHALL tell each client attached to a session, or to its shell, which 
 #### Scenario: The client in use leaves
 - **WHEN** the phone in use closes the session and the desktop still shows it
 - **THEN** the desktop is told it is in use
+
+### Requirement: The session list names the phone in use
+The system SHALL include, with each session it lists or announces, the name of the paired phone that is the client in use for it, or none, and SHALL announce the session again whenever that changes.
+
+#### Scenario: A phone takes a session
+- **WHEN** the phone "Pixel 8" opens a session the desktop also shows
+- **THEN** subscribers receive the session again naming "Pixel 8"
+
+#### Scenario: The phone leaves
+- **WHEN** the phone closes the session
+- **THEN** subscribers receive the session again naming no phone

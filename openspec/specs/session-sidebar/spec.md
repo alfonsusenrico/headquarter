@@ -579,3 +579,14 @@ The system SHALL remove an inactive session from the sidebar with the ✕ on its
 #### Scenario: Remove cancelled
 - **WHEN** the owner presses the ✕ of an inactive session and cancels
 - **THEN** the session stays in the sidebar, inactive
+
+### Requirement: Sessions open on a phone
+While a paired phone is the client in use for a sidebar session, its row SHALL show a phone mark after its title, with the tooltip "Open on <phone>", SHALL hide its age, and SHALL keep its status word and glyph.
+
+#### Scenario: Opened on the phone
+- **WHEN** the owner opens "cash flow tracker dev" on the phone "Pixel 8" and the desktop shows another session
+- **THEN** the row of "cash flow tracker dev" shows the phone mark, and its tooltip reads "Open on Pixel 8"
+
+#### Scenario: Back on the desktop
+- **WHEN** the desktop takes the session back, or the phone closes it
+- **THEN** the row shows its age again
