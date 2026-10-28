@@ -40,7 +40,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,7 +50,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -106,9 +108,23 @@ fun HomeScreen(
     SideEffect { folding.state.heightOffsetLimit = -titleHeight }
     val list = rememberLazyListState()
     // Add shows its label at the top and while scrolling up, and shrinks while scrolling down (D5).
-    val addExpanded by remember { derivedStateOf { !list.canScrollBackward || !list.lastScrolledForward } }
+    var scrollingUp by remember { mutableStateOf(true) }
+    val followScroll =
+        remember {
+            object : NestedScrollConnection {
+                override fun onPreScroll(
+                    available: Offset,
+                    source: NestedScrollSource,
+                ): Offset {
+                    if (available.y < 0f) scrollingUp = false
+                    if (available.y > 0f) scrollingUp = true
+                    return Offset.Zero
+                }
+            }
+        }
+    val addExpanded = scrollingUp || !list.canScrollBackward
 
-    Box(Modifier.fillMaxSize().nestedScroll(folding.nestedScrollConnection)) {
+    Box(Modifier.fillMaxSize().nestedScroll(folding.nestedScrollConnection).nestedScroll(followScroll)) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             val shown = 1f - folding.state.collapsedFraction
             Box(
@@ -243,9 +259,9 @@ private fun ComputerRow(
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.weight(1f),
             )
-            Text(state, fontSize = 12.5.sp, color = tokens.muted, maxLines = 1, modifier = Modifier.weight(1f))
+            Text(state, fontSize = 12.5.sp, color = tokens.muted, maxLines = 1)
             Icon(
                 painterResource(R.drawable.ic_chevron_down),
                 null,
@@ -398,14 +414,19 @@ private fun UsageTile(
             .border(1.dp, tokens.line, shape)
             .padding(start = 10.dp, end = 10.dp, top = 9.dp, bottom = 10.dp),
     ) {
-        Text(agentName(meter.agent), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-        Text(
-            "${meter.window} · ${meter.percent.toInt()}%",
-            fontSize = 12.sp,
-            color = tokens.muted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        // The percentage stays whole beside the name; a long window name (agy's model pools) is cut.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                agentName(meter.agent),
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text("${meter.percent.toInt()}%", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
+        Text(meter.window, fontSize = 12.sp, color = tokens.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Box(
             Modifier
                 .padding(top = 6.dp)
