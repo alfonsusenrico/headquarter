@@ -1,6 +1,7 @@
-//! How the sidebar arranges its sessions, shared by `hq ls` and the app so both show
-//! the same thing: sessions needing the owner first, then the owner's groups, then the
-//! sessions in no group.
+//! How the sidebar arranges its sessions, shared by `hq ls`, the app and the phone so all
+//! show the same thing: sessions needing the owner first, then the owner's groups, then the
+//! sessions in no group. Inside each list, sessions needing the owner come first, then
+//! working ones, then the rest, each by most recent activity (add-working-sessions-first).
 
 use std::collections::HashMap;
 
@@ -14,8 +15,8 @@ pub struct Layout<'a> {
     pub needs_you: Vec<&'a SessionInfo>,
     /// The owner's groups, in the owner's order, including empty ones.
     pub groups: Vec<GroupSection<'a>>,
-    /// Sidebar sessions in no group (or in a group that no longer exists), most
-    /// recently active first.
+    /// Sidebar sessions in no group (or in a group that no longer exists), in
+    /// [`band`] order, most recently active first within each.
     pub ungrouped: Vec<&'a SessionInfo>,
     /// Each sidebar folder's label: its final name, with parents added only to tell
     /// same-named folders apart, and `~` for the home folder.
@@ -24,7 +25,7 @@ pub struct Layout<'a> {
 
 pub struct GroupSection<'a> {
     pub group: &'a GroupInfo,
-    /// The group's sessions, most recently active first.
+    /// The group's sessions, in [`band`] order, most recently active first within each.
     pub sessions: Vec<&'a SessionInfo>,
     pub needing: usize,
 }
@@ -103,6 +104,20 @@ pub fn needs_you(session: &SessionInfo) -> bool {
     session.external.is_none() && session.status == Status::NeedsYou
 }
 
+/// Where a session sorts within its list: needing the owner, then working, then the rest.
+/// A session running in another terminal shows no status here, so it is among the rest.
+/// A working session's activity time is when its turn started, so without this it sinks
+/// below sessions that finished after that (add-working-sessions-first D1).
+pub fn band(session: &SessionInfo) -> u8 {
+    if needs_you(session) {
+        0
+    } else if session.external.is_none() && session.status == Status::Working {
+        1
+    } else {
+        2
+    }
+}
+
 /// Arranges the sessions that are in the sidebar; others are left out. `home` is the
 /// owner's home folder, labelled `~`.
 pub fn layout<'a>(
@@ -116,6 +131,7 @@ pub fn layout<'a>(
         .collect();
     members.sort_by_key(|session| {
         (
+            band(session),
             std::cmp::Reverse(session.last_activity_at),
             session.id.as_str(),
         )
@@ -309,7 +325,50 @@ mod tests {
         assert_eq!(
             ids(&layout.ungrouped),
             ["web-new", "lost", "api-new", "outside"],
-            "most recent first; a vanished group's sessions are ungrouped"
+            "working first, then most recent; a vanished group's sessions are ungrouped"
+        );
+    }
+
+    #[test]
+    fn needing_you_then_working_then_the_rest_in_each_list() {
+        let in_group = |mut session: SessionInfo| {
+            session.group = Some(1);
+            session
+        };
+        let mut elsewhere = session("ext-working", "/u", Status::Working, 99);
+        elsewhere.external = Some(External {
+            pid: Some(3),
+            status: Some(Status::Working),
+            background: false,
+        });
+        let sessions = [
+            // Working for 20 minutes: its activity is when the turn started.
+            in_group(session("cash-flow", "/u", Status::Working, 10)),
+            // Finished 17 minutes ago: newer activity, but not working.
+            in_group(session("headquarter", "/u", Status::DoneUnread, 13)),
+            in_group(session("asking", "/u", Status::NeedsYou, 5)),
+            in_group(session("older-working", "/u", Status::Working, 8)),
+            in_group(session("idle", "/u", Status::Done, 30)),
+            in_group(elsewhere),
+        ];
+        let groups = [group(1, "Personal")];
+        let layout = layout(&sessions, &groups, None);
+        assert_eq!(
+            ids(&layout.groups[0].sessions),
+            [
+                "asking",
+                "cash-flow",
+                "older-working",
+                "ext-working",
+                "idle",
+                "headquarter"
+            ],
+            "needs you, then working by recent activity, then the rest; ext has no status"
+        );
+        assert_eq!(
+            ids(&layout.needs_you),
+            ["asking"],
+            "the section is unchanged"
         );
     }
 

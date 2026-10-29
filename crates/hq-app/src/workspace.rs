@@ -1,6 +1,7 @@
 //! The window's content: the session sidebar beside the terminal pane
 //! (`openspec/changes/add-session-sidebar/design.md`).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -251,6 +252,11 @@ pub struct Workspace {
     resume_failed: Option<(String, String, bool)>,
     /// The pane's keyboard while it shows an inactive session: Enter resumes it.
     pane_focus: FocusHandle,
+    /// The pointer is over the sidebar or the rail: rows hold their places
+    /// (add-working-sessions-first D2).
+    sidebar_pointer: bool,
+    /// The rows last shown, by [`model::row_key`], for holding them still.
+    shown_rows: RefCell<Vec<String>>,
     /// The latest start failure already notified (Unix milliseconds).
     start_failures_told: u64,
     /// The sidebar, drawn as a view GPUI keeps between frames (fix-terminal-redraw-cost).
@@ -419,6 +425,8 @@ impl Workspace {
             resuming: None,
             resume_failed: None,
             pane_focus: cx.focus_handle(),
+            sidebar_pointer: false,
+            shown_rows: RefCell::new(Vec::new()),
             start_failures_told: crate::app_state::path()
                 .map_or(0, |path| crate::app_state::load_start_failures_told(&path)),
             motion: None,
@@ -779,7 +787,7 @@ impl Workspace {
             && self.shown_id() == Some(id.as_str())
             && self.session(&id).is_some_and(|known| known.in_sidebar))
         .then(|| {
-            let ids = model::row_ids(&self.items());
+            let ids = model::row_ids(&self.items(cx));
             model::next_selection(&ids, Some(&id), 1)
                 .filter(|next| *next != id)
                 .or_else(|| model::next_selection(&ids, Some(&id), -1))
@@ -1102,7 +1110,7 @@ impl Workspace {
         } else {
             px(48.)
         };
-        let items = self.items();
+        let items = self.items(cx);
         self.keep_motion(model::motion_rate(&items), window, cx);
         let empty = items.is_empty();
         let rendered = if rail {
@@ -1128,6 +1136,13 @@ impl Workspace {
         div()
             .id("sidebar")
             .track_focus(&self.sidebar_focus)
+            .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                this.sidebar_pointer = *over;
+                // Leaving lets the rows move to their places at once.
+                if !*over {
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(Self::sidebar_key_down))
             .w(px(self.sidebar_width()))
             .flex_none()
@@ -1245,17 +1260,27 @@ impl Workspace {
 
     // ---- sidebar changes ----------------------------------------------------------
 
-    fn items(&self) -> Vec<Item> {
-        model::items(
+    /// The sidebar's rows in the order shown: computed, or held while the owner points at
+    /// the sidebar or drags, so a row never moves just before a click (add-working-sessions-first
+    /// D2).
+    fn items(&self, cx: &App) -> Vec<Item> {
+        let computed = model::items(
             &self.sessions,
             &self.groups,
             self.home.as_deref(),
             hq_signals::now_ms(),
-        )
+        );
+        let shown = if self.sidebar_pointer || cx.has_active_drag() {
+            model::hold(computed, &self.shown_rows.borrow())
+        } else {
+            computed
+        };
+        *self.shown_rows.borrow_mut() = shown.iter().filter_map(model::row_key).collect();
+        shown
     }
 
     fn move_selection(&mut self, step: isize, cx: &mut Context<Self>) {
-        let ids = model::row_ids(&self.items());
+        let ids = model::row_ids(&self.items(cx));
         self.selected = model::next_selection(&ids, self.selected.as_deref(), step);
         cx.notify();
     }
@@ -2830,7 +2855,7 @@ impl Workspace {
                 ))
                 .into_any_element(),
             Pane::Empty => centred
-                .child(note(if self.items().is_empty() {
+                .child(note(if self.items(cx).is_empty() {
                     "Add sessions with + to keep them in view here.".to_owned()
                 } else {
                     "Choose a session in the sidebar.".to_owned()

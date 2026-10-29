@@ -307,6 +307,26 @@ mod tests {
     }
 
     #[test]
+    fn working_sessions_come_before_newer_idle_ones() {
+        let mut working = session(
+            "aaaaaaaa-1",
+            "/x/cash",
+            "cash flow tracker dev",
+            Status::Working,
+        );
+        working.last_activity_at = 1_000;
+        let mut finished = session("bbbbbbbb-2", "/x/hq", "Headquarter dev", Status::Done);
+        finished.last_activity_at = 5_000;
+        let text = sidebar_list(&[finished, working], &[], 10_000);
+        let cash = text.find("cash flow tracker dev").unwrap();
+        let hq = text.find("Headquarter dev").unwrap();
+        assert!(
+            cash < hq,
+            "the same order as the app (add-working-sessions-first): {text}"
+        );
+    }
+
+    #[test]
     fn without_groups_the_sessions_have_no_heading() {
         let sessions = [session("a", "/x/api", "api", Status::Done)];
         let text = sidebar_list(&sessions, &[], 0);

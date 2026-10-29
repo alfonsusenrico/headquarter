@@ -55,6 +55,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -356,24 +358,50 @@ private fun Sessions(
     open: (Row) -> Unit,
 ) {
     val dim = if (status is LinkStatus.Reconnecting || status == LinkStatus.Off) 0.6f else 1f
+    // Rows hold their places while a finger is on the list or it still moves, and take their
+    // new places once it rests (add-working-sessions-first D3).
+    var touching by remember { mutableStateOf(false) }
+    val held = touching || list.isScrollInProgress
+    val shownOrder = remember { mutableMapOf<String, List<String>>() }
+    val ordered = { section: String, rows: List<Row> ->
+        val shown = if (held) heldOrder(rows, shownOrder[section].orEmpty()) { it.id } else rows
+        shownOrder[section] = shown.map { it.id }
+        shown
+    }
     LazyColumn(
-        Modifier.fillMaxSize().alpha(dim).padding(horizontal = 12.dp),
+        Modifier
+            .fillMaxSize()
+            .alpha(dim)
+            .padding(horizontal = 12.dp)
+            // Watches touches without taking them: taps and scrolls work as before.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        touching = event.changes.any { it.pressed }
+                    }
+                }
+            },
         state = list,
         contentPadding =
             androidx.compose.foundation.layout
                 .PaddingValues(bottom = 96.dp),
     ) {
         if (home.usage.isNotEmpty()) item { UsageTiles(home.usage) }
-        items(home.alerts, key = { "alert-${it.id}" }) { AlertRow(it) { open(it) } }
+        items(ordered("alerts", home.alerts), key = { "alert-${it.id}" }) { AlertRow(it) { open(it) } }
         home.groups.forEach { group ->
             val isOpen = !(folded[group.id] ?: !group.active)
             item(key = "group-${group.id}") {
                 GroupHeader(group, isOpen) { folded[group.id] = isOpen }
             }
-            if (isOpen) items(group.rows, key = { "${group.id}-${it.id}" }) { SessionRow(it) { open(it) } }
+            if (isOpen) {
+                items(ordered("group-${group.id}", group.rows), key = { "${group.id}-${it.id}" }) {
+                    SessionRow(it) { open(it) }
+                }
+            }
         }
         if (home.ungrouped.isNotEmpty() && home.groups.isNotEmpty()) item { SectionLabel("No group") }
-        items(home.ungrouped, key = { "rest-${it.id}" }) { SessionRow(it) { open(it) } }
+        items(ordered("rest", home.ungrouped), key = { "rest-${it.id}" }) { SessionRow(it) { open(it) } }
         if (home.alerts.isEmpty() && home.groups.isEmpty() && home.ungrouped.isEmpty() &&
             status == LinkStatus.Connected
         ) {
