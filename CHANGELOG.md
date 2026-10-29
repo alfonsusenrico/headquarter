@@ -2,6 +2,24 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.19 (2026-10-29)
+
+- Light themes that read as light. Claude Code now draws its light colours in a light theme
+  (a plain light, dark or auto theme set in Claude Code follows Headquarter; colour-blind,
+  ANSI and custom ones are kept). The Catppuccin Latte, Solarized Light and Gruvbox Light
+  templates get a sidebar set apart from the terminal and readable muted, needs-you and accent
+  colours.
+- Every line in the terminal stays readable. Text an agent draws too faint for the background
+  is darkened or lightened just enough, in light and dark themes alike. `window.minimum_contrast`
+  in the settings file changes it (`1` turns it off).
+- Working sessions come first. Inside each group, sessions waiting for you come first, then
+  working ones, then the rest. Rows hold still while the pointer is on the sidebar, or your
+  finger on the phone's list, and move once you let go.
+- The update window's log starts at the top, follows the update, and lets you scroll back
+  through every line.
+- The phone app's errors read as plain sentences, without a stray "reason=", and say when the
+  phone is not connected.
+
 ## 0.1.18 (2026-10-28)
 
 - One session, two screens, no more mess. While your phone has a session open, the desktop
