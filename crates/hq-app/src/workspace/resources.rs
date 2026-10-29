@@ -168,7 +168,7 @@ fn status_word(session: &SessionInfo) -> String {
         Some(sidebar::Beside::Background) => {
             let work = &session.background;
             let running = work.agents + work.commands + work.monitors;
-            return format!("{running} running in background");
+            return format!("{running} in background");
         }
         None => {}
     }

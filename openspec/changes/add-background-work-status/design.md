@@ -82,7 +82,7 @@ list" band 1). Neither notifies.
 `SessionInfo` gains `background` (running background agents, background commands and monitors, and
 the newest agent's title) and `review` (agy has a plan to review). The session header shows
 "background" with a chip per kind ("1 agent", "2 shells", "1 monitor") and the agent's title; the
-Usage window row says "3 running in background" or "plan to review"; a folded group header adds
+Usage window row says "3 in background" or "plan to review"; a folded group header adds
 "2 background · 1 review" to its count; the phone row shows the word and the phone's session header
 the detail. The fields are new and optional, so the protocol stays 14 and older clients ignore them.
 

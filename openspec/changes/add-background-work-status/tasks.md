@@ -17,19 +17,19 @@ Expected Result: an approved design.
 
 ## 3. Build
 
-- [ ] 3.1 `SessionInfo.background` and `review`, optional (protocol 14) (D5). Evidence: protocol round-trip and older-message tests.
-- [ ] 3.2 Claude background agents from OSC 7501 child records, with titles kept in memory only (D6). Evidence: scanner and tracker tests from the recorded reports.
-- [ ] 3.3 Claude background commands and monitors from the hooks and the processes they started (D6). Evidence: host test with a stand-in that reports the hooks and starts and ends a process; MCP-like helpers not counted.
-- [ ] 3.4 Codex sub-agents and agy reviews (D7). Evidence: unit tests; agy fixture from the recorded reports.
-- [ ] 3.5 Order: background and review in band 1 (shared layout). Evidence: `hq-protocol` test.
-- [ ] 3.6 Desktop: row words, header chips and title, Usage row, folded group count (D4, D5). Evidence: model tests, on screen with stand-ins (with the owner's go for the Mac).
-- [ ] 3.7 Phone: row word and session header detail. Evidence: Android unit test, Lint; on the dev phone with the owner's go.
+- [x] 3.1 `SessionInfo.background` and `review`, optional (protocol 14) (D5). Evidence: protocol round-trip and older-message tests.
+- [x] 3.2 Claude background agents from OSC 7501 child records, with titles kept in memory only (D6). Evidence: scanner and tracker tests from the recorded reports.
+- [x] 3.3 Claude background commands and monitors from the hooks and the processes they started (D6). Evidence: host test with a stand-in that reports the hooks and starts and ends a process; MCP-like helpers not counted.
+- [x] 3.4 Codex sub-agents and agy reviews (D7). Evidence: unit tests; agy fixture from the recorded reports.
+- [x] 3.5 Order: background and review in band 1 (shared layout). Evidence: `hq-protocol` test.
+- [x] 3.6 Desktop: row words, header chips and title, Usage row, folded group count (D4, D5). Evidence: model tests, on screen with stand-ins (with the owner's go for the Mac).
+- [ ] 3.7 Phone: row word and session header detail. Evidence so far: `hq-mobile` mirror test, Android Lint and ktlint. Pending: on the dev phone with the owner's go.
 
 Expected Result: background work and reviews show as chosen, and nothing extra shows without a signal.
 
 ## 4. Verification and delivery
 
-- [ ] 4.1 `./scripts/check` passes. `verification.md` written.
+- [x] 4.1 `./scripts/check` passes. `verification.md` written.
 - [ ] 4.2 The owner checks it.
 - [ ] 4.3 After the owner accepts: archive, push `feat/background-work-status`, open the PR, report its URL.
 
