@@ -1,7 +1,7 @@
 # The update log reads from the top and follows the update
 
-Status: proposed 2026-10-28, waiting for the owner's approval. The owner asked for plans only:
-no implementation until approved, after a few days of using 0.1.17.
+Status: approved by the owner 2026-10-29 ("let's continue our work to finish the fixes planned",
+then chose this plan in the approval question).
 
 ## Why
 
