@@ -9,10 +9,11 @@ use futures::channel::mpsc::unbounded;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, AsyncWindowContext, Context, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement, StatefulInteractiveElement, Styled, Task, WeakEntity,
-    Window, div, px,
+    KeyDownEvent, MouseButton, ParentElement, ScrollHandle, StatefulInteractiveElement, Styled,
+    Task, WeakEntity, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::scroll::Scrollbar;
 use hq_client::HostPaths;
 
 use super::{Pane, Workspace, overlay};
@@ -30,8 +31,8 @@ const NOTES_WIDTH: f32 = 760.0;
 /// The column's padding on each side.
 const COLUMN_PADDING: f32 = 36.0;
 const RELEASES_PAGE: &str = "https://github.com/alfonsusenrico/headquarter/releases";
-/// The log box under the steps shows this many of the latest lines.
-const LOG_LINES: usize = 6;
+/// How close to the end of the log, in pixels, still counts as at the end.
+const LOG_END_SLACK: f32 = 2.0;
 
 /// What the update has done so far, for the log under the steps (fix-update-progress):
 /// the app's own lines around the installer's notes.
@@ -107,6 +108,9 @@ pub(super) struct Updates {
     /// Restart as soon as the install ends, without waiting for busy sessions.
     restart_now: bool,
     log: UpdateLog,
+    /// Where the log box is scrolled; it follows the newest line while it shows the end
+    /// (fix-update-log-scroll D2).
+    log_scroll: ScrollHandle,
     _schedule: Option<Task<()>>,
 }
 
@@ -123,6 +127,7 @@ impl Updates {
             installed: update::installed_copy(),
             restart_now: false,
             log: UpdateLog::default(),
+            log_scroll: ScrollHandle::new(),
             _schedule: None,
         }
     }
@@ -602,6 +607,7 @@ impl Workspace {
             ))],
             ..UpdateLog::default()
         };
+        self.updates.log_scroll = ScrollHandle::new();
         let (tx, mut rx) = unbounded::<News>();
         std::thread::spawn(move || {
             let mut run = match update::start_install(version, &installed) {
@@ -647,14 +653,16 @@ impl Workspace {
                     let alive = this.update_in(cx, |this, window, cx| {
                         match news {
                             News::Checked(digest) => {
-                                this.updates.log.before.push(LogLine::done(format!(
-                                    "The installer matches GitHub's checksum (sha256 {})",
-                                    update::short_digest(&digest)
-                                )));
+                                this.change_log(|log| {
+                                    log.before.push(LogLine::done(format!(
+                                        "The installer matches GitHub's checksum (sha256 {})",
+                                        update::short_digest(&digest)
+                                    )));
+                                });
                             }
                             News::Progress(step, notes) => {
                                 this.updates.phase = Phase::Running(step);
-                                this.updates.log.installer = notes;
+                                this.change_log(|log| log.installer = notes);
                             }
                             News::Finished => this.installed_update(window, cx),
                             News::Failed(reason) => this.updates.phase = Phase::Failed(reason),
@@ -702,9 +710,11 @@ impl Workspace {
     fn restart_for_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.updates.phase = Phase::Restarting;
         self.open_update_window(window, cx);
-        self.updates.log.after.push(LogLine::doing(
-            "Stopping the background host and its sessions",
-        ));
+        self.change_log(|log| {
+            log.after.push(LogLine::doing(
+                "Stopping the background host and its sessions",
+            ));
+        });
         let app = self
             .updates
             .installed
@@ -964,52 +974,70 @@ impl Workspace {
         )
     }
 
-    /// Download, verify, install and restart, each done, running or still to come.
-    /// The latest lines of the update's log, newest at the bottom and brightest; `None`
-    /// before anything happened.
+    /// Changes the log, and keeps the newest line in view when the box showed the end
+    /// before (fix-update-log-scroll D2).
+    fn change_log(&mut self, change: impl FnOnce(&mut UpdateLog)) {
+        let scroll = &self.updates.log_scroll;
+        let follow = at_log_end(
+            f32::from(scroll.offset().y),
+            f32::from(scroll.max_offset().y),
+        );
+        change(&mut self.updates.log);
+        if follow {
+            self.updates.log_scroll.scroll_to_bottom();
+        }
+    }
+
+    /// Every line of the update so far, from the top, newest brightest; it scrolls once
+    /// it fills the box. `None` before anything happened (fix-update-log-scroll D1).
     fn render_log(&self) -> Option<AnyElement> {
         let chrome = self.theme.chrome;
         let lines: Vec<&LogLine> = self.updates.log.lines().collect();
         let last = lines.len().checked_sub(1)?;
-        let shown = lines
-            .iter()
-            .enumerate()
-            .skip(lines.len().saturating_sub(LOG_LINES));
-        Some(
+        let rows = lines.into_iter().enumerate().map(|(index, line)| {
+            let color = if index == last {
+                chrome.text
+            } else {
+                chrome.muted
+            };
             div()
                 .flex()
-                .flex_col()
+                .gap(px(6.))
+                .text_color(hsla(color))
+                .when(line.done, |row| {
+                    row.child(div().flex_none().text_color(hsla(chrome.accent)).child("✓"))
+                })
+                .child(div().min_w_0().child(line.text.clone()))
+        });
+        Some(
+            div()
+                .relative()
                 .h(px(132.))
-                .overflow_hidden()
-                .justify_end()
-                .px(px(12.))
-                .py(px(10.))
                 .rounded(px(8.))
                 .border_1()
                 .border_color(hsla(chrome.sidebar_line))
                 .bg(super::translucent(self.theme.palette.background, 1.0))
-                .font_family(self.options.font_family.clone())
-                .text_size(px(12.))
-                .line_height(px(19.))
-                .children(shown.map(|(index, line)| {
-                    let color = if index == last {
-                        chrome.text
-                    } else {
-                        chrome.muted
-                    };
+                .child(
                     div()
+                        .id("update-log")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.updates.log_scroll)
                         .flex()
-                        .gap(px(6.))
-                        .text_color(hsla(color))
-                        .when(line.done, |row| {
-                            row.child(div().flex_none().text_color(hsla(chrome.accent)).child("✓"))
-                        })
-                        .child(div().min_w_0().child(line.text.clone()))
-                }))
+                        .flex_col()
+                        .px(px(12.))
+                        .py(px(10.))
+                        .font_family(self.options.font_family.clone())
+                        .text_size(px(12.))
+                        .line_height(px(19.))
+                        .children(rows),
+                )
+                .child(Scrollbar::vertical(&self.updates.log_scroll))
                 .into_any_element(),
         )
     }
 
+    /// Download, verify, install and restart, each done, running or still to come.
     fn render_steps(&self, current: Step) -> impl IntoElement {
         let chrome = self.theme.chrome;
         let reached = Step::ALL
@@ -1060,9 +1088,24 @@ fn column(content: impl IntoElement) -> gpui::Div {
     )
 }
 
+/// Whether the log box shows its end: its last line is in view, or it does not scroll
+/// yet. `offset_y` grows more negative as the box scrolls down; `max_y` is how far it can.
+fn at_log_end(offset_y: f32, max_y: f32) -> bool {
+    -offset_y >= max_y - LOG_END_SLACK
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_log_follows_only_from_its_end() {
+        assert!(at_log_end(0.0, 0.0), "not scrolling yet");
+        assert!(at_log_end(-80.0, 80.0), "at the end");
+        assert!(at_log_end(-79.0, 80.0), "within the slack");
+        assert!(!at_log_end(-30.0, 80.0), "scrolled back");
+        assert!(!at_log_end(0.0, 80.0), "scrolled back to the top");
+    }
 
     #[test]
     fn escape_closes_only_what_offers_a_way_out() {

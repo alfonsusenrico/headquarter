@@ -105,6 +105,21 @@ The system SHALL show under the update's steps a log of what the update has done
 - **WHEN** the installer prints how to open the app or to run `hq stop`
 - **THEN** those lines do not appear in the log
 
+### Requirement: Update log scrolling
+The update log SHALL start at the top of its box, scroll by itself to keep the newest line in view, and let the owner scroll back through every line of the update without being pulled down while scrolled back.
+
+#### Scenario: The first lines
+- **WHEN** an update starts and the log holds two lines
+- **THEN** they show at the top of the box
+
+#### Scenario: Following the update
+- **WHEN** the log holds more lines than fit and a new line arrives
+- **THEN** the box shows the newest line at its bottom
+
+#### Scenario: Reading back
+- **WHEN** the owner scrolls up during an update and a new line arrives
+- **THEN** the view stays where the owner put it, and following resumes once the owner scrolls back to the bottom
+
 ### Requirement: Pre-release builds
 A build with a pre-release version SHALL run and check for updates as the release it leads to, and SHALL never be offered a pre-release as an update.
 
