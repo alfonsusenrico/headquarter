@@ -42,9 +42,26 @@ Claude one calling the hook command Headquarter passes in `--settings`.
 - The Usage window: "1 in background", "plan to review".
 - A shell tracked before an app restart stays counted (the host keeps it).
 
+## Own colours and marks (D8), 2026-10-29
+
+Revision 2486806. `./scripts/check` passed: 567 tests, Android build, ktlint, Android Lint, OpenSpec.
+New tests: teal and violet at 4.5:1 or better on the sidebar and the open row in the built-in light
+and dark themes and all eight templates (Nord's cyan kept as is); a theme file's `background_work`
+round trip; the review row keeps its glyph cell.
+
+On screen (the owner freed the Mac), the same stand-ins with one session working, one with a
+background agent and shell, one with a plan to review; captures in
+`research/evidence/add-background-work-status/colours-{dark,light,nord}.png`:
+
+- Dark: "background" teal with two still dots, "review" violet with a diamond in the glyph cell,
+  "working" blue with moving dots; the header word in the same colour as the row's.
+- Light: the same in the light values, readable on the sidebar and the open row.
+- Nord: "background" in Nord's cyan, "review" in its magenta, "working" in its blue. Nord's cyan and
+  blue are close; the words and the still versus moving dots tell them apart.
+
 ## Not verified
 
-- The phone's row word and session header on the dev phone (unit test and Lint only).
+- The phone's row word, colours and session header on the dev phone (unit test and Lint only).
 - A folded group's note and the order on screen (unit tests; same layout code as before).
 - Real agents inside the app (the stand-ins follow the recorded formats; the research ran the real
   CLIs).
