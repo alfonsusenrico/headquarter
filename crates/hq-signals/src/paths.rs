@@ -33,6 +33,15 @@ pub fn quota_dir() -> Option<PathBuf> {
     data_dir().map(|dir| dir.join("quota"))
 }
 
+/// Claude Code's global configuration file (read-only for Headquarter): beside its
+/// configuration directory's contents when `CLAUDE_CONFIG_DIR` is set, else `~/.claude.json`.
+pub fn claude_global_config() -> Option<PathBuf> {
+    match std::env::var_os("CLAUDE_CONFIG_DIR").filter(|value| !value.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir).join(".claude.json")),
+        None => home().map(|home| home.join(".claude.json")),
+    }
+}
+
 /// Claude Code's configuration directory (read-only for Headquarter).
 pub fn claude_config_dir() -> Option<PathBuf> {
     std::env::var_os("CLAUDE_CONFIG_DIR")

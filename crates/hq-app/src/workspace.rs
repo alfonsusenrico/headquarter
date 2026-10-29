@@ -24,6 +24,7 @@ use gpui_component::{Disableable, Icon, IconName, Sizable};
 use hq_client::{Change, FeedControl, HostPaths, SessionFeed};
 use hq_config::{AgentMarks, Appearance, SettingsWatcher};
 use hq_protocol::{AgentUsage, GroupInfo, SessionInfo, usage};
+use hq_signals::background::Background;
 use hq_signals::details::SessionDetails;
 use hq_signals::event::Agent;
 use hq_signals::status::Status;
@@ -589,6 +590,17 @@ impl Workspace {
         }
         let palette_changed = look.theme.palette != self.theme.palette;
         self.theme = look.theme;
+        // The theme in use, not one being previewed, tells agents light or dark at their
+        // next launch (fix-light-theme-contrast D2).
+        if self.creator_look.is_none() && self.theme_preview.is_none() {
+            let background = match self.theme.mode {
+                Mode::Light => Background::Light,
+                Mode::Dark => Background::Dark,
+            };
+            if let Err(error) = hq_signals::background::write(background) {
+                log::warn!("terminal background not kept for agents: {error}");
+            }
+        }
         self.options = settings::pane_options(&look_appearance);
         settings::apply_to_window(&look_appearance, window);
         self.look_appearance = look_appearance;

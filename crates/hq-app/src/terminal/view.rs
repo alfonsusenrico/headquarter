@@ -44,6 +44,8 @@ pub struct PaneOptions {
     pub bindings: Vec<Binding>,
     /// 0.0 none, up to 0.6: how much to fade the pane while it or the window lacks focus.
     pub dim_unfocused: f32,
+    /// The least contrast terminal text keeps against its background; 1 is off.
+    pub minimum_contrast: f32,
     /// Alpha of the terminal's default background; cells with their own colour stay solid.
     pub opacity: f32,
     /// Cursor shape until the agent asks for another; `None` keeps the block.
@@ -65,6 +67,7 @@ impl Default for PaneOptions {
             alt_is_meta: false,
             bindings: Vec::new(),
             dim_unfocused: 0.0,
+            minimum_contrast: 4.5,
             opacity: 1.0,
             cursor: None,
         }
@@ -752,7 +755,11 @@ pub fn hsla(color: impl Into<Paint>) -> Hsla {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.hovered = self.link_at(self.hover_cell, cx);
-        let frame = frame::build(self.session.read(cx).model(), self.hovered.as_ref());
+        let frame = frame::build(
+            self.session.read(cx).model(),
+            self.hovered.as_ref(),
+            self.options.minimum_contrast,
+        );
         let pointer = if self.hovered.is_some() {
             CursorStyle::PointingHand
         } else {
@@ -1230,7 +1237,7 @@ impl EntityInputHandler for TerminalView {
     ) -> Option<Bounds<Pixels>> {
         // Places the input method's candidate window at the cursor.
         let layout = self.layout.get()?;
-        let cursor = frame::build(self.session.read(cx).model(), None).cursor?;
+        let cursor = frame::build(self.session.read(cx).model(), None, 1.0).cursor?;
         Some(Bounds::new(
             point(
                 layout.origin.x + layout.cell_width * cursor.column as f32,

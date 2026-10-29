@@ -102,6 +102,10 @@ pub struct Appearance {
     pub decorations: Decorations,
     pub option_as_alt: OptionAsAlt,
     pub dim_unfocused: f32,
+    /// The least contrast terminal text keeps against its background: text drawn under
+    /// it is lightened or darkened until it meets it. 1 turns it off
+    /// (fix-light-theme-contrast D3).
+    pub minimum_contrast: f32,
     pub font: FontSettings,
     pub cursor: Option<CursorShape>,
     pub colors: ColorSettings,
@@ -132,6 +136,7 @@ impl Default for Appearance {
             decorations: Decorations::Full,
             option_as_alt: OptionAsAlt::None,
             dim_unfocused: 0.0,
+            minimum_contrast: 4.5,
             font: FontSettings::default(),
             cursor: None,
             colors: ColorSettings::default(),
@@ -157,6 +162,7 @@ pub(crate) struct RawWindow {
     decorations: Option<toml::Spanned<String>>,
     option_as_alt: Option<toml::Spanned<String>>,
     dim_unfocused: Option<toml::Spanned<f64>>,
+    minimum_contrast: Option<toml::Spanned<f64>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -326,6 +332,9 @@ pub(crate) fn build(
     }
     if let Some(dim) = raw.window.dim_unfocused {
         appearance.dim_unfocused = in_range(&dim, 0.0, 0.6, "dim_unfocused")?;
+    }
+    if let Some(minimum) = raw.window.minimum_contrast {
+        appearance.minimum_contrast = in_range(&minimum, 1.0, 21.0, "minimum_contrast")?;
     }
     if let Some(marks) = raw.sidebar.agent_marks {
         appearance.agent_marks = match marks.get_ref().to_ascii_lowercase().as_str() {

@@ -1,8 +1,9 @@
 # Light themes that read as light
 
-Status: proposed 2026-10-28, revised the same day after the owner's test; waiting for the owner's
-approval. The owner asked for plans only: no implementation until approved, after a few days of
-using 0.1.17.
+Status: approved by the owner 2026-10-29 (chosen in the approval question after "let's continue our
+work to finish the fixes planned"). Diagnosis done 2026-10-29
+(`research/evidence/fix-light-theme-contrast/findings.md`); the owner chose the fix's shape the same
+day (design, Decisions).
 
 ## Why
 

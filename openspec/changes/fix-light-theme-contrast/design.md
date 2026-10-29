@@ -28,35 +28,71 @@ and stand-in and real agents:
 
 Findings go to `research/evidence/fix-light-theme-contrast/findings.md`.
 
-## Decisions (to confirm after the diagnosis)
+## Diagnosis results (2026-10-29)
 
-### D1. Light tokens designed for light
+Full record: `research/evidence/fix-light-theme-contrast/findings.md`.
 
-Each failing chrome pair gets a light token designed for its surface, not the dark token reused.
-The header, sidebar and pane are separated by distinct surfaces or lines that meet 3:1 against
-each other where they carry meaning. A theme test covers every chrome pair in both modes, and
-templates and theme files are checked by the same test where they set chrome colours.
+- Main cause: Claude Code 2.1.312 draws its default `dark` theme in a light terminal (amber 1.6:1,
+  lavender 1.9:1, grey 2.9:1 on white; white bullets and dark diff bars). It asks the terminal's
+  background only with its `auto` theme, and a session the host starts has no window to answer.
+  `theme` is a key of its settings schema, so `--settings` sets it per launch.
+- Codex 0.164.0 asks OSC 10 and 11 and adapts. agy asks OSC 11; its text in a session is still to
+  be seen.
+- The built-in Light chrome passes. The three light templates (Latte, Solarized Light, Gruvbox Light)
+  make their chrome from their terminal colours: muted 2.4 to 4.2:1, needs-you 2.2 to 3.0:1, and the
+  sidebar exactly the terminal's background, so the window is one flat colour. Several of their
+  terminal colours are under 3:1. The owner's own theme, made from Latte, has the same pattern.
+- The owner compared four states on screen (as today, minimum contrast only, "apart", and a dark
+  terminal in light chrome) and chose "apart" (owner, 2026-10-29).
 
-### D2. Agents told the mode, per launch
+Owner's guidance (2026-10-29): a light theme does not paint every background in the one light
+colour; the terminal must above all stay highly readable. The target is the themes Headquarter
+ships.
 
-Where an agent accepts a per-launch theme (a flag, a `--settings` key, an environment variable),
-its launch spec passes light or dark to match Headquarter's theme. Where it reads the terminal's
-background (OSC 11 or `COLORFGBG`), the terminal answers it truthfully, as today, and Headquarter
-sets `COLORFGBG` per launch if the agent reads it. Never by editing the agent's own files.
+## Decisions
+
+### D1. Light templates designed for light ("apart")
+
+A light theme made from terminal colours (the templates, and Alacritty colours) gets its chrome
+designed for light: the sidebar a step darker than the terminal (6 % toward the text), the header
+staying with the pane above its divider,
+the selected row in the terminal's background, dividers at 20 %, and muted, group, needs-you text
+and accent made readable (4.5:1) against both the sidebar and the terminal background, the
+needs-you glyph at 3:1. The terminal keeps the theme's own background. Interface colours a theme
+file sets itself still win, so the owner's own file keeps its choices. Dark themes are unchanged.
+
+Rejected: a dark terminal inside light chrome (owner, 2026-10-29: compared on screen).
+
+### D2. Claude Code told light or dark at launch
+
+The app writes whether its terminal is light or dark to `terminal-background` in the data folder
+whenever the theme changes. The host reads it at each Claude Code launch and adds `"theme": "light"`
+or `"dark"` to the `--settings` it already passes. A theme the owner set in Claude Code itself
+(`theme` in its settings or global config, read only) is kept when it is a colour-blind, ANSI or
+custom theme; a plain `light`, `dark` or `auto` follows the terminal (owner, 2026-10-29: the owner's
+own settings say `dark`, which Claude Code writes from its first-run theme screen). Never by editing
+the agent's files.
+
+Rejected: Claude's `auto` (no window answers it for a session the host starts, and its first frame
+is drawn dark); a protocol request (a protocol change would force a phone update for a desktop
+detail).
 
 ### D3. A minimum contrast in the terminal
 
-When a cell's foreground and background fall under a minimum contrast (about 3:1, as Ghostty's
-`minimum-contrast` and iTerm2's Minimum contrast do), the terminal shifts the foreground's
-lightness until it meets it, keeping its hue. On by default in light and dark themes alike (owner,
-2026-10-28), with a setting to change the minimum or turn it off. In dark themes it lifts text
-an agent drew too dark for the background, the mirror of the light case. Rejected: remapping agents' colours to the palette (it breaks colours they chose
-on purpose).
+Text under the minimum against its own cell background is moved toward black or white, whichever
+needs the smaller step, until it meets it; hidden text is left alone. Default 4.5:1 in light and
+dark themes (owner, 2026-10-29), setting `window.minimum_contrast` (1 turns it off, up to 21).
+Results are kept per colour pair for the frame, since a screen drawn for the other mode repeats a
+few pairs in thousands of cells. Rejected: remapping agents' colours to the palette (it breaks
+colours they chose on purpose).
 
 ### D4. Marks keep their colours
 
-The agents' marks are drawn in their own colours in both modes, with an outline or a tone shift
-only where a mark falls under 3:1 against its surface.
+The agents' marks are the vendors' brand marks, drawn from their own image files, and keep their
+colours in both modes (the framework's rule: brand marks keep their colours). Claude's orange
+measures 2.5 to 2.7:1 on the light sidebars; it is recorded, not shifted, because changing a vendor's
+logo is what the owner first reported as wrong. The one-colour marks follow the text colour and the
+drawn fallback the muted colour, both readable.
 
 ## Risks
 

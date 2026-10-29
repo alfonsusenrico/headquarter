@@ -29,7 +29,3 @@ white = "#3c3836"
 name = "Gruvbox Light"
 credit = "Gruvbox · MIT"
 
-[headquarter.colors]
-accent = "#458588"
-needs_you = "#d79921"
-needs_you_icon = "#d79921"
