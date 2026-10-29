@@ -11,17 +11,21 @@ Expected Result: each agent's signals are known, with versions.
 ## 2. Design with the owner
 
 - [x] 2.1 Options page with many variants across the families in the design, every case on every surface (sidebar row, folded group, header, Usage row, phone row and header), light and dark. Evidence: `research/prototypes/background-status/index.html` (8 variants in 6 families, light and dark, each with its words, contrast and no-colour notes).
-- [ ] 2.2 The owner chooses, and answers the open questions (notifications, whether background work rises in the sidebar order; when the review flag clears is answered by the research: on approve, reject or a new prompt). Record the decisions in the design, the spec delta and these tasks, then ask for approval of the build.
+- [x] 2.2 The owner chooses, and answers the open questions (notifications, whether background work rises in the sidebar order; when the review flag clears is answered by the research: on approve, reject or a new prompt). Record the decisions in the design, the spec delta and these tasks, then ask for approval of the build. Done 2026-10-29: E1, rise like working, no notifications.
 
 Expected Result: an approved design.
 
-## 3. Build (detailed after 2.2)
+## 3. Build
 
-- [ ] 3.1 Readers per agent with fixtures. Evidence: unit tests from the recorded versions.
-- [ ] 3.2 Protocol and host. Evidence: host tests with stub agents that report each kind.
-- [ ] 3.3 Desktop sidebar and header, phone rows and header. Evidence: on screen in both themes, the dev phone.
+- [ ] 3.1 `SessionInfo.background` and `review`, optional (protocol 14) (D5). Evidence: protocol round-trip and older-message tests.
+- [ ] 3.2 Claude background agents from OSC 7501 child records, with titles kept in memory only (D6). Evidence: scanner and tracker tests from the recorded reports.
+- [ ] 3.3 Claude background commands and monitors from the hooks and the processes they started (D6). Evidence: host test with a stand-in that reports the hooks and starts and ends a process; MCP-like helpers not counted.
+- [ ] 3.4 Codex sub-agents and agy reviews (D7). Evidence: unit tests; agy fixture from the recorded reports.
+- [ ] 3.5 Order: background and review in band 1 (shared layout). Evidence: `hq-protocol` test.
+- [ ] 3.6 Desktop: row words, header chips and title, Usage row, folded group count (D4, D5). Evidence: model tests, on screen with stand-ins (with the owner's go for the Mac).
+- [ ] 3.7 Phone: row word and session header detail. Evidence: Android unit test, Lint; on the dev phone with the owner's go.
 
-Expected Result: background work and reviews show beside the status.
+Expected Result: background work and reviews show as chosen, and nothing extra shows without a signal.
 
 ## 4. Verification and delivery
 

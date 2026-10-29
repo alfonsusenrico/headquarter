@@ -60,18 +60,55 @@ colour, and what the phone shows at its narrow width.
 
 ## Decisions
 
-Made after the research and the owner's choice on the options page, then written here, in the
-spec delta and in the tasks before building. Fixed already:
+Research done 2026-10-29 with real calls (`research/evidence/add-background-work-status/findings.md`).
+The owner chose option E1 on the options page (`research/prototypes/background-status/index.html`),
+background work and reviews rising in the sidebar like working, and no notifications (owner,
+2026-10-29).
 
-- D1. Needs you keeps first place, and a session waiting for the owner always shows it, whatever
-  runs in the background. Whether background work and reviews become statuses of their own or
-  details beside today's five is the owner's choice on the options page.
+- D1. Needs you keeps first place: a session waiting for the owner always shows it, whatever runs
+  in the background.
 - D2. Every reader is per-launch and read-only, like today's (no agent configuration changed).
 - D3. Unknown or unreadable signals show nothing extra, never a guess.
+
+### D4. Two new row words: "background" and "review" (E1)
+
+A session at its prompt (idle or unread) with background work shows "background" at the row's end,
+in place of its age; an agy session with a plan to review shows "review". Working, needs you and
+inactive look as today. Both words sort with working, after needs you (the "Order inside each
+list" band 1). Neither notifies.
+
+### D5. The detail where there is room
+
+`SessionInfo` gains `background` (running background agents, background commands and monitors, and
+the newest agent's title) and `review` (agy has a plan to review). The session header shows
+"background" with a chip per kind ("1 agent", "2 shells", "1 monitor") and the agent's title; the
+Usage window row says "3 running in background" or "plan to review"; a folded group header adds
+"2 background · 1 review" to its count; the phone row shows the word and the phone's session header
+the detail. The fields are new and optional, so the protocol stays 14 and older clients ignore them.
+
+### D6. Claude: agents from its reports, commands from its processes
+
+- Background agents: the OSC 7501 child records Claude sends per agent
+  (`state=working:id=…:title=…`, `state=clear:id=…`), counted while working. The title (base64 in the
+  report) is display-only: kept in memory, never written to the index or the log.
+- Background commands and monitors: a hook says one started (`PostToolUse` for Bash with
+  `run_in_background`, or for Monitor). The host notes the processes that appeared under the agent
+  since the matching `PreToolUse` and counts the command until they have all exited. Nothing else
+  in the process tree counts, so MCP servers and helpers never show as background work.
+- Unknown signals (another version's fields) show nothing extra.
+
+### D7. Codex and agy
+
+- Codex keeps working while its commands run (research), so nothing new; its sub-agents found from
+  their rollouts (`hq_signals::subagents`) count as background agents while the main session is at
+  its prompt.
+- agy: "Approve plan" (`adapters::agy::is_artifact_review`) sets `review` and ends the turn as today
+  (idle or unread). It clears on the next report (approve gives `working`, reject `done`) or a new
+  prompt.
 
 ## Risks
 
 - Agent formats are unstable external contracts. Each reader tolerates unknown fields and is
   covered by fixtures from the observed versions.
-- A process-tree fallback can mistake MCP servers or language servers for background work. It is
-  used only if the research shows no better signal, and only for counts the owner chooses to see.
+- A command whose processes Claude re-parents or that daemonises itself leaves the count early.
+  Accepted: the count can only fall short, never invent work.
