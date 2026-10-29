@@ -132,10 +132,10 @@ impl Workspace {
             left = left.child(separator()).child(muted(format!("⎇ {branch}")));
         }
         // What runs in the background or waits for review (add-background-work-status D5).
-        if let (Some(word), Some(detail)) = (
+        if let (Some((word, color)), Some(detail)) = (
             hq_protocol::sidebar::beside(session).map(|beside| match beside {
-                hq_protocol::sidebar::Beside::Background => "background",
-                hq_protocol::sidebar::Beside::Review => "review",
+                hq_protocol::sidebar::Beside::Background => ("background", chrome.teal),
+                hq_protocol::sidebar::Beside::Review => ("review", chrome.violet),
             }),
             hq_protocol::sidebar::beside_detail(session),
         ) {
@@ -149,7 +149,7 @@ impl Workspace {
                             div()
                                 .flex_none()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(hsla(chrome.accent))
+                                .text_color(hsla(color))
                                 .child(word),
                         )
                         .child(

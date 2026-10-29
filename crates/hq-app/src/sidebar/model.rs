@@ -115,14 +115,15 @@ impl Row {
         matches!(self.glyph, Glyph::Working | Glyph::Starting)
     }
 
-    /// Whether the row ends with a cell for its glyph. A breathing word has no glyph, so
-    /// it ends the row itself, right-aligned where the glyphs end (owner, 2026-10-26).
+    /// Whether the row ends with a cell for its glyph. A breathing word and "background"
+    /// carry their dots instead, so they end the row themselves, right-aligned where the
+    /// glyphs end (owner, 2026-10-26); "review" keeps the cell for its diamond.
     pub fn glyph_cell(&self) -> bool {
-        !self.breathing() && self.beside_word().is_none()
+        !self.breathing() && self.beside != Some(sidebar::Beside::Background)
     }
 
     /// "background" or "review", which, like "working", ends the row in place of the age
-    /// and the glyph (add-background-work-status D4).
+    /// (add-background-work-status D4).
     pub fn beside_word(&self) -> Option<&'static str> {
         match self.beside? {
             sidebar::Beside::Background => Some("background"),
@@ -664,8 +665,12 @@ mod tests {
         );
         let row = &rows(&open, "bg")[0];
         assert_eq!(row.beside_word(), Some("background"));
-        assert!(!row.glyph_cell(), "the word ends the row");
+        assert!(!row.glyph_cell(), "the word and its dots end the row");
         assert_eq!(rows(&open, "rv")[0].beside_word(), Some("review"));
+        assert!(
+            rows(&open, "rv")[0].glyph_cell(),
+            "the diamond ends the row"
+        );
         let header_note = |items: &[Item]| {
             items.iter().find_map(|item| match item {
                 Item::GroupHeader { beside_note, .. } => Some(beside_note.clone()),

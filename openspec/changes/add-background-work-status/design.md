@@ -106,7 +106,25 @@ the detail. The fields are new and optional, so the protocol stays 14 and older 
   (idle or unread). It clears on the next report (approve gives `working`, reject `done`) or a new
   prompt.
 
-## Risks
+### D8. Their own colours and marks (owner, 2026-10-29)
+
+As on the options page, and apart from working's accent: "background" in teal with two still dots
+after it, "review" in violet with a diamond in the glyph cell. Only working moves; background work
+waits on nobody, so its dots stay still and the sidebar stays at rest. The phone row and both
+session headers use the same colours, words only.
+
+- Two new chrome colours, `teal` and `violet`, beside `amber`. The built-in themes pick them by
+  hand: dark `#67E8C9` and `#C4A7FF`, light `#0E6A5A` and `#6B3FC2`, each 4.5:1 or better on the
+  sidebar and the open row. The phone's two themes use the same values.
+- Themes made from colours (templates, Alacritty colours, the owner's files) take them from the
+  palette's cyan and magenta, stepped toward black or white (`theme::readable`) until they read at
+  4.5:1 on the sidebar and the open row. A theme file sets them as `background_work` and `review`
+  in `[headquarter.colors]`, and the creator lists them under Status, so a theme now has 32
+  colours. Older files without them get the made ones.
+- Rejected: reusing the accent (what the first build did). It made "background" look like working,
+  which the owner noticed at once. Rejected: animating background's dots. They would keep the
+  sidebar redrawing for work that can run for hours, and the word already says it.
+- The phone gets an enum (`RowBeside`), not the word, so its colour does not hang on the text.
 
 - Agent formats are unstable external contracts. Each reader tolerates unknown fields and is
   covered by fixtures from the observed versions.

@@ -21,9 +21,9 @@ pub struct Row {
     pub folder: String,
     /// What an alert row says under the title, such as "Claude needs your permission".
     pub detail: String,
-    /// "background" or "review" for a session at its prompt, shown in place of the age
-    /// (add-background-work-status D4).
-    pub beside: Option<String>,
+    /// Background work or a plan to review for a session at its prompt, shown in place of
+    /// the age (add-background-work-status D4).
+    pub beside: Option<RowBeside>,
     /// What runs in the background or waits for review, for the session's header.
     pub beside_detail: Option<String>,
 }
@@ -38,6 +38,13 @@ pub enum RowStatus {
     Inactive,
     /// Running in another terminal on the computer: that terminal answers it.
     Elsewhere,
+}
+
+/// What a session at its prompt still has going: "background" or "review".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RowBeside {
+    Background,
+    Review,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -112,12 +119,9 @@ impl Mirror {
             age: sidebar::age(now_ms.saturating_sub(session.last_activity_at)),
             folder: layout.folder(session).to_owned(),
             detail: detail(session),
-            beside: sidebar::beside(session).map(|beside| {
-                match beside {
-                    sidebar::Beside::Background => "background",
-                    sidebar::Beside::Review => "review",
-                }
-                .to_owned()
+            beside: sidebar::beside(session).map(|beside| match beside {
+                sidebar::Beside::Background => RowBeside::Background,
+                sidebar::Beside::Review => RowBeside::Review,
             }),
             beside_detail: sidebar::beside_detail(session),
         };
@@ -362,7 +366,7 @@ mod tests {
         };
         let home = mirror.home(10);
         let busy = home.ungrouped.iter().find(|row| row.id == "busy").unwrap();
-        assert_eq!(busy.beside.as_deref(), Some("background"));
+        assert_eq!(busy.beside, Some(RowBeside::Background));
         assert_eq!(
             busy.beside_detail.as_deref(),
             Some("1 agent · Phase 4a capture")

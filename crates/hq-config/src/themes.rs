@@ -36,7 +36,7 @@ use crate::ColorSettings;
 use crate::appearance::imported_colors;
 
 /// The interface colours a file may set, by their names in `[headquarter.colors]`.
-pub const INTERFACE_COLOURS: [&str; 10] = [
+pub const INTERFACE_COLOURS: [&str; 12] = [
     "sidebar",
     "raised",
     "lines",
@@ -47,6 +47,8 @@ pub const INTERFACE_COLOURS: [&str; 10] = [
     "accent",
     "needs_you",
     "needs_you_icon",
+    "background_work",
+    "review",
 ];
 
 /// The terminal colours' names in `[headquarter.opacity]`, in palette order after the

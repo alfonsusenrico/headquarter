@@ -1,6 +1,6 @@
 //! The themes the owner can choose and make: the built-in ones, the templates shipped
 //! with the app, the settings file's Alacritty colours and the owner's theme files, and
-//! the 30 colours a theme sets (`openspec/changes/add-theme-creator/design.md`, D1, D4,
+//! the 32 colours a theme sets (`openspec/changes/add-theme-creator/design.md`, D1, D4,
 //! D6).
 
 use std::collections::BTreeSet;
@@ -10,7 +10,7 @@ use alacritty_terminal::vte::ansi::Rgb;
 use hq_config::ColorSettings;
 use hq_config::themes::{self, Listed, ThemeFile};
 
-use crate::theme::{Chrome, Mode, Paint, Theme, luminance, mix};
+use crate::theme::{Chrome, Hues, Mode, Paint, Theme, luminance, mix};
 
 /// A theme the owner can choose; kept in `app-state.json` by its `key`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,6 +257,8 @@ pub enum Token {
     Accent,
     NeedsYou,
     NeedsYouIcon,
+    BackgroundWork,
+    Review,
     Background,
     Foreground,
     Cursor,
@@ -281,6 +283,8 @@ impl Token {
             Token::Accent,
             Token::NeedsYou,
             Token::NeedsYouIcon,
+            Token::BackgroundWork,
+            Token::Review,
             Token::Background,
             Token::Foreground,
             Token::Cursor,
@@ -302,6 +306,8 @@ impl Token {
             Token::Accent => "Accent".to_owned(),
             Token::NeedsYou => "Needs you: words".to_owned(),
             Token::NeedsYouIcon => "Needs you: icon".to_owned(),
+            Token::BackgroundWork => "Background work".to_owned(),
+            Token::Review => "Plan to review".to_owned(),
             Token::Background => "Background".to_owned(),
             Token::Foreground => "Text".to_owned(),
             Token::Cursor => "Cursor".to_owned(),
@@ -332,6 +338,8 @@ impl Token {
             Token::Accent => "The unread dot, picks and highlights",
             Token::NeedsYou => "\"needs you\" and near-limit usage",
             Token::NeedsYouIcon => "The ring on a session that needs you",
+            Token::BackgroundWork => "\"background\" on a session whose work still runs",
+            Token::Review => "\"review\" and its diamond on a plan to review",
             Token::Background => "Behind the agent's screen",
             Token::Foreground => "The agent's default text",
             Token::Cursor => "The text cursor",
@@ -342,7 +350,9 @@ impl Token {
 
     pub fn group(self) -> &'static str {
         match self {
-            Token::NeedsYou | Token::NeedsYouIcon => "Status",
+            Token::NeedsYou | Token::NeedsYouIcon | Token::BackgroundWork | Token::Review => {
+                "Status"
+            }
             Token::Background | Token::Foreground | Token::Cursor | Token::Selection => "Terminal",
             Token::Terminal(_) => "Terminal colours",
             _ => "Interface",
@@ -362,6 +372,8 @@ impl Token {
             Token::Accent => 7,
             Token::NeedsYou => 8,
             Token::NeedsYouIcon => 9,
+            Token::BackgroundWork => 10,
+            Token::Review => 11,
             _ => return None,
         };
         Some(themes::INTERFACE_COLOURS[index])
@@ -397,6 +409,8 @@ impl Token {
             Token::Accent => chrome.accent,
             Token::NeedsYou => chrome.amber,
             Token::NeedsYouIcon => chrome.glyph_amber,
+            Token::BackgroundWork => chrome.teal,
+            Token::Review => chrome.violet,
             Token::Background => terminal(palette.background, palette.opacity.background),
             Token::Foreground => terminal(palette.foreground, palette.opacity.foreground),
             Token::Cursor => terminal(palette.cursor, palette.opacity.cursor),
@@ -422,6 +436,8 @@ impl Token {
             Token::Accent => chrome.accent = paint,
             Token::NeedsYou => chrome.amber = paint,
             Token::NeedsYouIcon => chrome.glyph_amber = paint,
+            Token::BackgroundWork => chrome.teal = paint,
+            Token::Review => chrome.violet = paint,
             Token::Background => {
                 palette.background = paint.rgb;
                 palette.opacity.background = paint.opacity;
@@ -454,7 +470,13 @@ pub fn apply_seeds(theme: &mut Theme, pinned: &BTreeSet<Token>) {
     let front = Token::Text.get(theme).rgb;
     let accent = Token::Accent.get(theme);
     let needs_you = Token::NeedsYou.get(theme);
-    let made = Chrome::from_colours(back, front, accent, needs_you);
+    let hues = Hues {
+        accent,
+        needs_you,
+        teal: Token::BackgroundWork.get(theme),
+        violet: Token::Review.get(theme),
+    };
+    let made = Chrome::from_colours(back, front, hues);
     let derived = [
         (Token::Raised, made.selected.rgb),
         (Token::Lines, made.sidebar_line.rgb),
@@ -462,6 +484,8 @@ pub fn apply_seeds(theme: &mut Theme, pinned: &BTreeSet<Token>) {
         (Token::Muted, made.muted.rgb),
         (Token::Groups, made.group.rgb),
         (Token::NeedsYouIcon, needs_you.rgb),
+        (Token::BackgroundWork, made.teal.rgb),
+        (Token::Review, made.violet.rgb),
         (Token::Background, back),
         (Token::Foreground, front),
         (Token::Cursor, front),
@@ -500,12 +524,7 @@ mod tests {
                     let chrome = Chrome::from_colours(
                         theme.palette.background,
                         theme.palette.foreground,
-                        file.colors.normal[4].map_or(Theme::dark().chrome.accent, |hex| {
-                            crate::theme::Paint::solid(crate::theme::rgb(hex))
-                        }),
-                        file.colors.normal[3].map_or(Theme::dark().chrome.amber, |hex| {
-                            crate::theme::Paint::solid(crate::theme::rgb(hex))
-                        }),
+                        Hues::from_palette(&Theme::dark().chrome, &file.colors),
                     );
                     assert_eq!(theme.chrome, chrome, "{id} is unchanged");
                 }
@@ -525,6 +544,8 @@ mod tests {
                 ("group", c.group, 4.5),
                 ("amber", c.amber, 4.5),
                 ("accent", c.accent, 4.5),
+                ("teal", c.teal, 4.5),
+                ("violet", c.violet, 4.5),
                 ("glyph amber", c.glyph_amber, 3.0),
             ] {
                 for (surface_name, surface) in [
@@ -728,8 +749,48 @@ mod tests {
     #[test]
     fn tokens_have_unique_file_keys_and_labels() {
         let keys: BTreeSet<String> = Token::all().into_iter().map(Token::file_key).collect();
-        assert_eq!(keys.len(), 30);
+        assert_eq!(keys.len(), 32);
         assert_eq!(Token::Terminal(9).label(), "Bright red");
         assert_eq!(Token::Terminal(0).label(), "Black");
+    }
+
+    /// "background" and "review" read at 4.5:1 on the sidebar and the open row in every
+    /// theme shipped, made from each palette's cyan and magenta (add-background-work-status D8).
+    #[test]
+    fn background_and_review_colours_read_in_every_theme() {
+        let library = library();
+        let mut themes = vec![
+            ("light".to_owned(), Theme::light()),
+            ("dark".to_owned(), Theme::dark()),
+        ];
+        for (id, file) in &library.templates {
+            themes.push((id.clone(), from_file(file, Mode::Dark).theme));
+        }
+        for (id, theme) in themes {
+            let c = theme.chrome;
+            for (name, color) in [("teal", c.teal), ("violet", c.violet)] {
+                for (surface_name, surface) in [("sidebar", c.sidebar), ("selected", c.selected)] {
+                    let ratio = crate::theme::contrast(color, surface);
+                    assert!(
+                        ratio >= 4.5,
+                        "{id}: {name} on {surface_name} is {ratio:.2}:1"
+                    );
+                }
+            }
+            assert_ne!(c.teal, c.violet, "{id}");
+        }
+        let nord = from_file(library.template("nord").unwrap(), Mode::Dark);
+        assert_eq!(nord.theme.chrome.teal.rgb, rgb(0x88C0D0), "Nord's cyan");
+    }
+
+    #[test]
+    fn theme_files_keep_their_background_and_review_colours() {
+        let mut look = from_file(library().template("dracula").unwrap(), Mode::Dark);
+        Token::BackgroundWork.set(&mut look.theme, Paint::solid(rgb(0x00FFAA)));
+        let file = to_file(&look, "Mine");
+        assert_eq!(file.interface.get("background_work"), Some(&0x00FFAA));
+        let back = from_file(&file, Mode::Dark);
+        assert_eq!(back.theme.chrome.teal.rgb, rgb(0x00FFAA));
+        assert_eq!(back.theme.chrome.violet, look.theme.chrome.violet);
     }
 }

@@ -23,6 +23,7 @@ Expected Result: an approved design.
 - [x] 3.4 Codex sub-agents and agy reviews (D7). Evidence: unit tests; agy fixture from the recorded reports.
 - [x] 3.5 Order: background and review in band 1 (shared layout). Evidence: `hq-protocol` test.
 - [x] 3.6 Desktop: row words, header chips and title, Usage row, folded group count (D4, D5). Evidence: model tests, on screen with stand-ins (with the owner's go for the Mac).
+- [ ] 3.8 Their own colours and marks (D8, owner 2026-10-29): `teal` and `violet` chrome colours, made from the palette in other themes, settable in theme files and the creator; "background" with still dots, "review" with a diamond; the header and the phone in the same colours. Evidence: theme contrast tests for every shipped theme, theme file round trip, `./scripts/check`, on screen with stand-ins in light and dark.
 - [ ] 3.7 Phone: row word and session header detail. Evidence so far: `hq-mobile` mirror test, Android Lint and ktlint. Pending: on the dev phone with the owner's go.
 
 Expected Result: background work and reviews show as chosen, and nothing extra shows without a signal.

@@ -177,6 +177,28 @@ pub fn status(glyph: Glyph, chrome: Chrome) -> AnyElement {
     .into_any_element()
 }
 
+/// The diamond after "review": a plan waits for the owner's review
+/// (add-background-work-status D8).
+pub fn review(chrome: Chrome) -> AnyElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, (), window, _| {
+            let grid = Grid::new(bounds, 16.0);
+            let mut diamond = PathBuilder::fill();
+            polyline(
+                &mut diamond,
+                grid,
+                &[(12.0, 3.0), (21.0, 12.0), (12.0, 21.0), (3.0, 12.0)],
+            );
+            diamond.close();
+            paint(window, diamond, chrome.violet);
+        },
+    )
+    .size(px(CELL))
+    .flex_none()
+    .into_any_element()
+}
+
 fn paint_agent(
     agent: Agent,
     bounds: Bounds<Pixels>,

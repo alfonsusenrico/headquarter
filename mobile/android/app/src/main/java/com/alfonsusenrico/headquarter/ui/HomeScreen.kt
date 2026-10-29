@@ -587,7 +587,12 @@ private fun SessionRow(
             // "background" or "review" ends the row in place of the age, as on the desktop
             // (add-background-work-status D4).
             beside != null -> {
-                Text(beside, color = tokens.accent, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    besideWord(beside),
+                    color = besideColor(beside, tokens),
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
 
             row.status == RowStatus.WORKING -> {

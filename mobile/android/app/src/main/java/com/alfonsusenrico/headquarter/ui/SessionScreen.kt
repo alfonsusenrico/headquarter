@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -69,6 +70,7 @@ import kotlinx.coroutines.launch
 import uniffi.hq_mobile.Key
 import uniffi.hq_mobile.LinkStatus
 import uniffi.hq_mobile.MobileException
+import uniffi.hq_mobile.RowBeside
 import uniffi.hq_mobile.RowStatus
 
 private val SessionKeys =
@@ -240,8 +242,8 @@ private fun SessionHeader(
                 if (!shell && row != null) {
                     StatusGlyph(row.status, Modifier.size(14.dp))
                     Text(
-                        row.beside ?: statusWord(row.status),
-                        color = if (row.beside != null) tokens.accent else statusColor(row.status, tokens),
+                        row.beside?.let(::besideWord) ?: statusWord(row.status),
+                        color = row.beside?.let { besideColor(it, tokens) } ?: statusColor(row.status, tokens),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                     )
@@ -519,6 +521,23 @@ fun findRow(
     home: uniffi.hq_mobile.Home,
     id: String,
 ): uniffi.hq_mobile.Row? = (home.alerts + home.groups.flatMap { it.rows } + home.ungrouped).firstOrNull { it.id == id }
+
+/** "background" or "review", where a session at its prompt shows its age (add-background-work-status D4). */
+fun besideWord(beside: RowBeside): String =
+    when (beside) {
+        RowBeside.BACKGROUND -> "background"
+        RowBeside.REVIEW -> "review"
+    }
+
+/** Teal for background work, violet for a plan to review, as on the desktop (D8). */
+fun besideColor(
+    beside: RowBeside,
+    tokens: Tokens,
+): Color =
+    when (beside) {
+        RowBeside.BACKGROUND -> tokens.teal
+        RowBeside.REVIEW -> tokens.violet
+    }
 
 fun statusWord(status: RowStatus): String =
     when (status) {
