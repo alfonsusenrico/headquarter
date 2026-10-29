@@ -155,7 +155,7 @@ fun SessionScreen(
                 opened = true
                 problem = null
             } catch (error: MobileException) {
-                problem = error.message
+                problem = error.ownerText()
             }
         }
     }
@@ -500,7 +500,7 @@ fun InactiveScreen(
                         core.phone.resume(id)
                         core.scope.launch { onResumed() }
                     } catch (error: MobileException) {
-                        problem = error.message
+                        problem = error.ownerText()
                         busy = false
                     }
                 }
