@@ -73,7 +73,7 @@ fun SettingsScreen(
                         "Forgot ${computer.name} on this phone. It still lists this phone until you remove it there."
                     }
                 } catch (error: MobileException) {
-                    error.message
+                    error.ownerText()
                 }
         }
     }

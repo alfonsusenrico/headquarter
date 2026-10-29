@@ -119,7 +119,7 @@ fun PairScreen(
                 problem =
                     when (error) {
                         is MobileException.Refused -> "${error.reason} Show a new code on the computer."
-                        else -> error.message
+                        else -> error.ownerText()
                     }
                 busy = false
             }

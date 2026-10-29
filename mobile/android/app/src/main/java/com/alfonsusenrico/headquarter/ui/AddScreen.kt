@@ -132,7 +132,7 @@ fun AddScreen(
                                             core.phone.add(conversation.id)
                                         } catch (error: MobileException) {
                                             added -= conversation.id
-                                            problem = error.message
+                                            problem = error.ownerText()
                                         }
                                     }
                                 }

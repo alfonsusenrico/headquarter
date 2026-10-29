@@ -1,7 +1,7 @@
 # The phone's errors read plainly
 
-Status: proposed 2026-10-29, waiting for the owner's approval (the owner approved fixing it on
-2026-10-29, after this short plan).
+Status: approved by the owner 2026-10-29 ("approve the phone error fix"; fixing it was approved
+earlier the same day, pending this short plan).
 
 ## Why
 
