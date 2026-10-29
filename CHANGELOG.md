@@ -2,6 +2,20 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.20 (2026-10-29)
+
+- Sessions say what they still have going. When Claude Code's turn ends but a background agent,
+  shell command or monitor it started is still running, the row says "background" (teal, with
+  two still dots) instead of looking finished. The session's header lists what runs, such as
+  "1 agent, 2 shells", with the agent's task. Codex sub-agents count too.
+- Plans waiting for you. When agy ends a turn with a plan to review, the row says "review"
+  (violet, with a diamond) until you approve or reject it.
+- Both rise with working sessions in their group, and neither sends a notification. The phone
+  app shows the same words and colours; update it too to see them there.
+- Themes get the two new colours. Templates and your own theme files take them from their cyan
+  and magenta, made readable on the sidebar; a theme file can set `background_work` and
+  `review`, and the theme creator lists them under Status.
+
 ## 0.1.19 (2026-10-29)
 
 - Light themes that read as light. Claude Code now draws its light colours in a light theme
