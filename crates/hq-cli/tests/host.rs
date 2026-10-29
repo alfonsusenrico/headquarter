@@ -86,6 +86,8 @@ impl TestEnv {
                 format!("{}:/usr/bin:/bin", self.root.join("stubs").display()),
             )
             .env("STUB_ARGS", self.root.join("stub-args.txt"))
+            // Stand-in agents report hooks through the host's own helper.
+            .env("STUB_HQ", HQ)
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             // Never run the owner's real login shell from tests.
             .env("SHELL", "/nonexistent/shell")
@@ -537,30 +539,73 @@ fn a_late_viewer_gets_the_modes_set_before_its_catch_up() {
     );
 }
 
-/// A Claude Code stub whose `agents --json` reports the hosted stub busy or idle, as
-/// the file `$STUB_ARGS.state` says.
-const CLAUDE_BACKGROUND_STUB: &str = r#"if [ "$1" = "agents" ]; then
-  printf '[{"pid":%s,"cwd":"/w","kind":"interactive","name":"x","sessionId":"s","startedAt":1,"status":"%s"}]\n' "$(cat "$STUB_ARGS.pid")" "$(cat "$STUB_ARGS.state")"
-  exit 0
-fi
-echo $$ > "$STUB_ARGS.pid"
+/// A Claude Code stand-in that reports a background Bash call through the hooks, as
+/// Claude Code 2.1.312 does, starting a process during the call; the process ends when
+/// `$STUB_ARGS.stop` appears.
+const CLAUDE_BACKGROUND_COMMAND_STUB: &str = r#"session=""
+while [ $# -gt 0 ]; do [ "$1" = "--session-id" ] && session="$2"; shift; done
+hook() { "$STUB_HQ" hook-forward --socket "$XDG_DATA_HOME/headquarter/hooks.sock" --agent claude "$1"; }
+call='"tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"sleep","run_in_background":true}'
 printf 'stub-ready\n'
+while [ ! -e "$STUB_ARGS.go" ]; do sleep 0.1; done
+hook "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"$session\",$call}"
+sleep 60 &
+background=$!
+sleep 0.3
+hook "{\"hook_event_name\":\"PostToolUse\",\"session_id\":\"$session\",$call}"
+while [ ! -e "$STUB_ARGS.stop" ]; do sleep 0.1; done
+kill $background
 sleep 60
 "#;
 
 #[test]
-fn claude_background_work_shows_as_working() {
-    let mut env = TestEnv::new("background");
-    env.stub("claude", CLAUDE_BACKGROUND_STUB);
-    let state = env.root.join("stub-args.txt.state");
-    std::fs::write(&state, "idle").unwrap();
+fn a_background_command_counts_while_its_process_runs() {
+    let mut env = TestEnv::new("bgcommand");
+    env.stub("claude", CLAUDE_BACKGROUND_COMMAND_STUB);
     env.start_daemon();
     let session = env.create(Agent::Claude);
-    env.wait_status(&session.id, Status::Done);
-    std::fs::write(&state, "busy").unwrap();
-    env.wait_status(&session.id, Status::Working);
-    std::fs::write(&state, "idle").unwrap();
-    env.wait_status(&session.id, Status::Done);
+    assert!(env.session(&session.id).background.is_empty());
+    std::fs::write(env.root.join("stub-args.txt.go"), "").unwrap();
+    wait_until("the command counted", || {
+        env.session(&session.id).background.commands == 1
+    });
+    std::fs::write(env.root.join("stub-args.txt.stop"), "").unwrap();
+    wait_until("the command gone", || {
+        env.session(&session.id).background.is_empty()
+    });
+}
+
+/// A Claude Code stand-in that reports a background agent as a child record, as Claude
+/// Code 2.1.312 does, then clears it when `$STUB_ARGS.stop` appears.
+const CLAUDE_BACKGROUND_AGENT_STUB: &str = r#"printf 'stub-ready\n'
+while [ ! -e "$STUB_ARGS.go" ]; do sleep 0.1; done
+printf '\033]7501;state=working:app=claude-code:id=a8d59:title=QmFja2dyb3VuZCBzbGVlcCB0YXNr\007'
+printf '\033]7501;state=done:app=claude-code\007'
+while [ ! -e "$STUB_ARGS.stop" ]; do sleep 0.1; done
+printf '\033]7501;state=clear:id=a8d59\007'
+sleep 60
+"#;
+
+#[test]
+fn a_background_agent_counts_with_its_title_until_cleared() {
+    let mut env = TestEnv::new("bgagent");
+    env.stub("claude", CLAUDE_BACKGROUND_AGENT_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Claude);
+    std::fs::write(env.root.join("stub-args.txt.go"), "").unwrap();
+    wait_until("the agent counted", || {
+        env.session(&session.id).background.agents == 1
+    });
+    assert_eq!(
+        env.session(&session.id).background.agent_title.as_deref(),
+        Some("Background sleep task")
+    );
+    std::fs::write(env.root.join("stub-args.txt.stop"), "").unwrap();
+    wait_until("the agent cleared", || {
+        env.session(&session.id).background.is_empty()
+    });
+    // The title is display-only: never in the host's log.
+    assert!(!env.log().contains("Background sleep task"));
 }
 
 /// Keeps Claude Code's session record for itself, with the status in
@@ -580,7 +625,7 @@ done
 "#;
 
 #[test]
-fn claude_status_comes_from_its_records_without_starting_claude_each_scan() {
+fn claude_records_spare_starting_claude_each_scan() {
     let mut env = TestEnv::new("records");
     env.stub("claude", CLAUDE_RECORD_STUB);
     let state = env.root.join("stub-args.txt.state");
@@ -589,15 +634,11 @@ fn claude_status_comes_from_its_records_without_starting_claude_each_scan() {
     env.start_daemon();
     let session = env.create(Agent::Claude);
     env.wait_status(&session.id, Status::Done);
-    std::fs::write(&state, "busy").unwrap();
-    env.wait_status(&session.id, Status::Working);
-    std::fs::write(&state, "idle").unwrap();
-    env.wait_status(&session.id, Status::Done);
-    // Claude Code 2.1.310 records "shell" while background commands run after a turn.
+    // A hosted session's record saying busy or "shell" after its turn is background work
+    // shown beside the status, never working (add-background-work-status D4).
     std::fs::write(&state, "shell").unwrap();
-    env.wait_status(&session.id, Status::Working);
-    std::fs::write(&state, "idle").unwrap();
-    env.wait_status(&session.id, Status::Done);
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(env.session(&session.id).status, Status::Done);
 
     let runs = std::fs::read_to_string(env.root.join("stub-args.txt.agents"))
         .unwrap_or_default()

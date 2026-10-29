@@ -11,7 +11,10 @@ use std::time::{Duration, Instant};
 use hq_protocol::{Frame, Holder, Response};
 use hq_signals::event::{Agent, EventKind, NeedsReason};
 use hq_signals::helpers::is_terminal_report;
+use hq_signals::resources;
+use hq_signals::scanner::ProgramStatus;
 use hq_signals::status::{SessionTracker, Status};
+use hq_signals::work::{BackgroundWork, WorkTracker};
 use portable_pty::{ChildKiller, MasterPty, PtySize};
 
 use crate::modes::Modes;
@@ -128,6 +131,9 @@ pub struct Hosted {
     redraw: Mutex<Redraw>,
     repainted: Condvar,
     tracker: Mutex<SessionTracker>,
+    /// Work the agent runs in the background and plans it left for review
+    /// (add-background-work-status).
+    work: Mutex<WorkTracker>,
     reported: Mutex<Option<(Status, Option<NeedsReason>)>>,
     /// Set once a close has started, so a second request does nothing and the session
     /// leaves the sidebar whatever the agent's exit code.
@@ -222,6 +228,7 @@ impl Hosted {
             redraw: Mutex::new(Redraw::default()),
             repainted: Condvar::new(),
             tracker: Mutex::new(parts.tracker),
+            work: Mutex::new(WorkTracker::default()),
             reported: Mutex::new(None),
             closing: AtomicBool::new(false),
             program_status: AtomicBool::new(false),
@@ -396,8 +403,39 @@ impl Hosted {
         self.closing.load(Ordering::SeqCst)
     }
 
-    pub fn set_background(&self, busy: bool) {
-        lock(&self.tracker).set_background(busy);
+    /// A status report's part in background work. Returns whether what clients show changed.
+    pub fn work_report(&self, status: &ProgramStatus) -> bool {
+        lock(&self.work).program_status(self.agent, status)
+    }
+
+    /// A Claude Code hook's part in background work: a background command's processes are
+    /// the ones that appear under the agent during its call.
+    pub fn work_hook(&self, raw: &serde_json::Value) -> bool {
+        let pid = self.pid;
+        lock(&self.work).hook(raw, || pid.map(resources::descendants).unwrap_or_default())
+    }
+
+    /// Drops background commands whose processes have exited.
+    pub fn prune_work(&self) -> bool {
+        let followed = {
+            let work = lock(&self.work);
+            if !work.follows_processes() {
+                return false;
+            }
+            work.followed_processes()
+        };
+        let running = resources::running(&followed);
+        lock(&self.work).prune(|pid| running.contains(&pid))
+    }
+
+    pub fn set_subagents(&self, count: u16) -> bool {
+        lock(&self.work).set_subagents(count)
+    }
+
+    /// What runs in the background and whether a plan waits for review.
+    pub fn work(&self) -> (BackgroundWork, bool) {
+        let work = lock(&self.work);
+        (work.summary(), work.review())
     }
 
     pub fn tick(&self, now_ms: u64) {

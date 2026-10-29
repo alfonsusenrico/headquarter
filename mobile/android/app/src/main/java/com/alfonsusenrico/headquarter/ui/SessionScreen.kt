@@ -240,8 +240,8 @@ private fun SessionHeader(
                 if (!shell && row != null) {
                     StatusGlyph(row.status, Modifier.size(14.dp))
                     Text(
-                        statusWord(row.status),
-                        color = statusColor(row.status, tokens),
+                        row.beside ?: statusWord(row.status),
+                        color = if (row.beside != null) tokens.accent else statusColor(row.status, tokens),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                     )
@@ -259,6 +259,12 @@ private fun SessionHeader(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            // What runs in the background or waits for review (add-background-work-status D5).
+            if (!shell) {
+                row?.besideDetail?.let { detail ->
+                    Text(detail, color = tokens.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         if (!shell) {

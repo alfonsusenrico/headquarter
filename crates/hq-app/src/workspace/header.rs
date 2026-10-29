@@ -131,6 +131,37 @@ impl Workspace {
         if let Some(branch) = &line.branch {
             left = left.child(separator()).child(muted(format!("⎇ {branch}")));
         }
+        // What runs in the background or waits for review (add-background-work-status D5);
+        // it gives way before the title and folder on a narrow pane.
+        if let (Some(word), Some(detail)) = (
+            hq_protocol::sidebar::beside(session).map(|beside| match beside {
+                hq_protocol::sidebar::Beside::Background => "background",
+                hq_protocol::sidebar::Beside::Review => "review",
+            }),
+            hq_protocol::sidebar::beside_detail(session),
+        ) {
+            left = left.child(separator()).child(
+                div().min_w_0().truncate().child(
+                    div()
+                        .flex()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .flex_none()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(hsla(chrome.accent))
+                                .child(word),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(hsla(chrome.muted))
+                                .child(detail),
+                        ),
+                ),
+            );
+        }
 
         let mut right = div().flex_none().flex().items_center().gap(px(10.));
         let mut first = true;

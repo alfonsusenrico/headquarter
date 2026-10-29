@@ -220,6 +220,8 @@ mod tests {
             start_error: None,
             offered: true,
             phone: None,
+            background: Default::default(),
+            review: false,
         }
     }
 

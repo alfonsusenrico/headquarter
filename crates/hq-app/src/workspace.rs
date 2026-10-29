@@ -1935,10 +1935,11 @@ impl Workspace {
                 collapsed,
                 color,
                 picked,
+                beside_note,
             } => self.render_group_header(
                 *id,
                 name,
-                *total,
+                (*total, beside_note.as_deref()),
                 *needing,
                 *collapsed,
                 (*color, *picked),
@@ -2007,6 +2008,14 @@ impl Workspace {
             }))
             .child(match row.status_word() {
                 Some(word) if row.breathing() => working_word(word, self.lit_dot(), chrome),
+                None if let Some(word) = row.beside_word() => div()
+                    .flex_none()
+                    .text_right()
+                    .text_size(px(12.5))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(hsla(chrome.accent))
+                    .child(word)
+                    .into_any_element(),
                 Some(word) => div()
                     .flex_none()
                     .text_right()

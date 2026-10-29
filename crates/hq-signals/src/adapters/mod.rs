@@ -197,6 +197,7 @@ mod tests {
             kind: Some(NeedsReason::Question),
             id: None,
             message: None,
+            title: None,
         });
         for agent in Agent::ALL {
             assert_eq!(
@@ -217,6 +218,7 @@ mod tests {
                 kind: Some(NeedsReason::Permission),
                 id: None,
                 message: Some(crate::scanner::Message(message.into())),
+                title: None,
             })
         };
         // "Approve plan" and "Trust this folder?", base64 as agy 1.4.7 sends them.
@@ -250,6 +252,7 @@ mod tests {
             kind: None,
             id: Some("task".into()),
             message: None,
+            title: None,
         });
         assert_eq!(terminal_event(Agent::Claude, &child), None);
     }

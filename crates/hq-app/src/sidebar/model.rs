@@ -95,6 +95,8 @@ pub struct Row {
     /// The paired phone that has the session, shown with a phone mark in place of the
     /// age (refine-in-use-elsewhere D2).
     pub phone: Option<String>,
+    /// "background" or "review" beside an idle session (add-background-work-status D4).
+    pub beside: Option<sidebar::Beside>,
 }
 
 impl Row {
@@ -116,7 +118,16 @@ impl Row {
     /// Whether the row ends with a cell for its glyph. A breathing word has no glyph, so
     /// it ends the row itself, right-aligned where the glyphs end (owner, 2026-10-26).
     pub fn glyph_cell(&self) -> bool {
-        !self.breathing()
+        !self.breathing() && self.beside_word().is_none()
+    }
+
+    /// "background" or "review", which, like "working", ends the row in place of the age
+    /// and the glyph (add-background-work-status D4).
+    pub fn beside_word(&self) -> Option<&'static str> {
+        match self.beside? {
+            sidebar::Beside::Background => Some("background"),
+            sidebar::Beside::Review => Some("review"),
+        }
     }
 
     /// In the pinned "Needs you" section.
@@ -154,6 +165,9 @@ pub enum Item {
         /// The colour shown, and whether the owner picked it (add-group-colors).
         color: GroupColor,
         picked: Option<GroupColor>,
+        /// A folded group's "2 background · 1 review", since its rows are hidden
+        /// (add-background-work-status D5).
+        beside_note: Option<String>,
     },
     /// The line that adds a group; also a drop target.
     NewGroup,
@@ -204,6 +218,7 @@ pub fn items(
             age: age(now_ms.saturating_sub(session.last_activity_at)),
             glyph: Glyph::of(session),
             phone: session.phone.clone(),
+            beside: sidebar::beside(session),
         })
     };
     let mut items = Vec::new();
@@ -236,6 +251,10 @@ pub fn items(
             collapsed: group.collapsed,
             color: group.shown_color(),
             picked: group.color.as_deref().and_then(GroupColor::from_name),
+            beside_note: group
+                .collapsed
+                .then(|| beside_note(&section.sessions))
+                .flatten(),
         });
         if !group.collapsed {
             items.extend(
@@ -397,6 +416,26 @@ pub fn motion_phase(elapsed: Duration, period: Duration) -> f32 {
     (steps % per_period) as f32 / per_period as f32
 }
 
+/// How many of a folded group's sessions show "background" and "review", as its header
+/// adds them; `None` when none do.
+pub fn beside_note(sessions: &[&SessionInfo]) -> Option<String> {
+    let count = |wanted| {
+        sessions
+            .iter()
+            .filter(|session| sidebar::beside(session) == Some(wanted))
+            .count()
+    };
+    let parts: Vec<String> = [
+        (count(sidebar::Beside::Background), "background"),
+        (count(sidebar::Beside::Review), "review"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, word)| format!("{count} {word}"))
+    .collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
 /// A group's size as its header says it.
 pub fn session_count(count: usize) -> String {
     match count {
@@ -551,6 +590,8 @@ mod tests {
             start_error: None,
             offered: true,
             phone: None,
+            background: Default::default(),
+            review: false,
         }
     }
 
@@ -604,6 +645,42 @@ mod tests {
             hold(now.clone(), &[]),
             now,
             "nothing held: the computed order"
+        );
+    }
+
+    #[test]
+    fn background_and_review_end_the_row_and_fold_into_the_group() {
+        let mut background = session("bg", "/u/a", Status::Done, 0);
+        background.background.commands = 2;
+        background.group = Some(1);
+        let mut review = session("rv", "/u/b", Status::DoneUnread, 0);
+        review.review = true;
+        review.group = Some(1);
+        let open = items(
+            &[background.clone(), review.clone()],
+            &[group_info(1, false)],
+            None,
+            NOW,
+        );
+        let row = &rows(&open, "bg")[0];
+        assert_eq!(row.beside_word(), Some("background"));
+        assert!(!row.glyph_cell(), "the word ends the row");
+        assert_eq!(rows(&open, "rv")[0].beside_word(), Some("review"));
+        let header_note = |items: &[Item]| {
+            items.iter().find_map(|item| match item {
+                Item::GroupHeader { beside_note, .. } => Some(beside_note.clone()),
+                _ => None,
+            })
+        };
+        assert_eq!(
+            header_note(&open),
+            Some(None),
+            "open groups show it on the rows"
+        );
+        let folded = items(&[background, review], &[group_info(1, true)], None, NOW);
+        assert_eq!(
+            header_note(&folded),
+            Some(Some("1 background · 1 review".to_owned()))
         );
     }
 
@@ -681,6 +758,15 @@ mod tests {
 
     fn groups(collapsed_web: bool) -> Vec<GroupInfo> {
         vec![group(1, "Backend", false), group(2, "Web", collapsed_web)]
+    }
+
+    fn group_info(id: i64, collapsed: bool) -> GroupInfo {
+        GroupInfo {
+            id,
+            name: format!("Group {id}"),
+            collapsed,
+            color: None,
+        }
     }
 
     fn rows(items: &[Item], id: &str) -> Vec<Row> {
@@ -806,6 +892,7 @@ mod tests {
             collapsed: true,
             color: GroupColor::Green,
             picked: None,
+            beside_note: None,
         }));
     }
 
@@ -913,6 +1000,7 @@ mod tests {
             collapsed: true,
             color: GroupColor::Green,
             picked: None,
+            beside_note: None,
         };
         assert_eq!(
             motion_rate(std::slice::from_ref(&waiting)),
@@ -929,6 +1017,7 @@ mod tests {
             collapsed: false,
             color: GroupColor::Green,
             picked: None,
+            beside_note: None,
         }];
         assert_eq!(
             motion_rate(&open),

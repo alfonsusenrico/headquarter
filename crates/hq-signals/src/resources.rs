@@ -1,7 +1,7 @@
 //! What processes cost the machine: CPU and resident memory of one process, or of some
 //! processes and every process they started (add-usage-window D1).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,48 @@ impl Footprint {
 /// CPU use is averaged since the previous sample, so one older than this would blur a
 /// long stretch into one figure; the Usage window samples every 2 s.
 const FRESH: Duration = Duration::from_secs(10);
+
+/// Every process `root` started, directly or not, now. Used when a background command
+/// starts, to tell its processes apart from the ones already there
+/// (add-background-work-status D6).
+pub fn descendants(root: u32) -> HashSet<u32> {
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    let mut children: HashMap<Pid, Vec<Pid>> = HashMap::new();
+    for process in system.processes().values() {
+        if process.thread_kind().is_some() {
+            continue;
+        }
+        if let Some(parent) = process.parent() {
+            children.entry(parent).or_default().push(process.pid());
+        }
+    }
+    let mut found = HashSet::new();
+    let mut pending = vec![Pid::from_u32(root)];
+    while let Some(pid) = pending.pop() {
+        for child in children.get(&pid).into_iter().flatten() {
+            if found.insert(child.as_u32()) {
+                pending.push(*child);
+            }
+        }
+    }
+    found
+}
+
+/// Which of `pids` still run.
+pub fn running(pids: &[u32]) -> HashSet<u32> {
+    let wanted: Vec<Pid> = pids.iter().copied().map(Pid::from_u32).collect();
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&wanted),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    pids.iter()
+        .copied()
+        .filter(|pid| system.process(Pid::from_u32(*pid)).is_some())
+        .collect()
+}
 
 /// Keeps the process table between samples, because CPU use is measured between two.
 pub struct Sampler {
@@ -185,6 +227,22 @@ mod tests {
         assert!(me.memory > 0);
         assert_eq!(sampler.tree(&[u32::MAX - 1]), None);
         assert_eq!(sampler.alone(u32::MAX - 1), None);
+    }
+
+    #[test]
+    fn a_process_and_what_it_started_are_found() {
+        let mut parent = std::process::Command::new("sh")
+            .args(["-c", "sleep 5 & wait"])
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let found = descendants(parent.id());
+        assert!(!found.is_empty(), "the sleep under the shell");
+        let all: Vec<u32> = found.iter().copied().collect();
+        assert_eq!(running(&all), found);
+        let _ = parent.kill();
+        let _ = parent.wait();
+        assert!(running(&[parent.id()]).is_empty(), "gone once reaped");
     }
 
     #[test]

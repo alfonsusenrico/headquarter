@@ -36,3 +36,10 @@ Inside each group and the ungrouped list, sessions showing "background" or "revi
 #### Scenario: Background rises
 - **WHEN** a session in a group shows "background" and another in the same group finished more recently
 - **THEN** the "background" session is listed above the finished one
+
+## REMOVED Requirements
+
+### Requirement: Background work counts as working
+**Reason**: Background work shows as "background" beside a session at its prompt, not as working (owner, 2026-10-29: option E1). Claude Code 2.1.312 no longer keeps a session record for the sessions Headquarter launches, and its hooks and status reports name the work itself.
+**Migration**: See "Background work beside the status" and "Background and review sort with working".
+

@@ -18,6 +18,7 @@ pub mod resources;
 pub mod scanner;
 pub mod status;
 pub mod subagents;
+pub mod work;
 
 /// Milliseconds since the Unix epoch, the time unit used by every record.
 pub fn now_ms() -> u64 {

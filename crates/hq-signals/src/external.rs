@@ -54,9 +54,6 @@ pub struct SourceFailure {
 pub struct ScanReport {
     pub sessions: Vec<ExternalSession>,
     pub failures: Vec<SourceFailure>,
-    /// What Claude Code says about the Claude agents the host runs, keyed by the
-    /// excluded process each one runs under.
-    pub hosted_claude: Vec<(u32, Status)>,
     /// Claude Code's background agents, when this scan asked `claude agents --json`;
     /// `None` when it did not, so the caller keeps the last list it had.
     pub claude_background: Option<Vec<ExternalSession>>,
@@ -131,10 +128,9 @@ pub fn scan(
         let hosted = session
             .pid
             .and_then(|pid| root_of(system, pid, exclude_pids));
-        match (hosted, session.status) {
-            (Some(root), Some(status)) => report.hosted_claude.push((root, status)),
-            (Some(_), None) => {}
-            (None, _) => report.sessions.push(session),
+        // The host's own Claude agents report through their terminal and hooks.
+        if hosted.is_none() {
+            report.sessions.push(session);
         }
     }
 

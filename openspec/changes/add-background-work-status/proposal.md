@@ -1,6 +1,7 @@
 # Showing background work and reviews in a session's status
 
-Status: proposed 2026-10-28, revised the same day; waiting for the owner's approval. The owner
+Status: research approved and done 2026-10-29; the owner chose E1 and approved the build 2026-10-29
+("approve, free the Mac, you drive it"). Earlier: proposed 2026-10-28, revised the same day. The owner
 asked for plans only: no implementation until approved, after a few days of using 0.1.17. The
 design is chosen from an options page first, with many variants (owner: "I would need much design
 options preview for this to make decision").

@@ -40,6 +40,10 @@ pub struct ProgramStatus {
     /// The program's own detail (`msg`), as sent. agy puts the pending command or
     /// question there, so it is only compared, never shown or kept.
     pub message: Option<Message>,
+    /// A child record's title (`title`), as sent (base64). Claude Code names its background
+    /// agents' tasks here; shown in the session header, never kept or logged
+    /// (add-background-work-status D6).
+    pub title: Option<Message>,
 }
 
 /// A report's detail text. Its `Debug` output hides it, so it cannot reach a log.
@@ -157,6 +161,7 @@ fn classify_program_status(rest: &[&[u8]]) -> Option<TerminalSignal> {
     let mut kind = None;
     let mut id = None;
     let mut message = None;
+    let mut title = None;
     for pair in body.split(':') {
         let Some((key, value)) = pair.split_once('=') else {
             continue;
@@ -167,6 +172,7 @@ fn classify_program_status(rest: &[&[u8]]) -> Option<TerminalSignal> {
             "kind" => kind = Some(value.to_owned()),
             "id" => id = Some(value.to_owned()),
             "msg" => message = Some(Message(value.to_owned())),
+            "title" => title = Some(Message(value.to_owned())),
             _ => {}
         }
     }
@@ -192,6 +198,7 @@ fn classify_program_status(rest: &[&[u8]]) -> Option<TerminalSignal> {
         kind,
         id,
         message,
+        title,
     }))
 }
 
@@ -262,7 +269,8 @@ mod tests {
                 state: ProgramState::Blocked,
                 kind: Some(NeedsReason::Permission),
                 id: None,
-                message: None
+                message: None,
+                title: None,
             })]
         );
         assert_eq!(
@@ -271,7 +279,8 @@ mod tests {
                 state: ProgramState::Working,
                 kind: None,
                 id: Some("root/task1".into()),
-                message: None
+                message: None,
+                title: None,
             })]
         );
     }
@@ -328,7 +337,8 @@ mod tests {
                 state: ProgramState::Done,
                 kind: None,
                 id: None,
-                message: None
+                message: None,
+                title: None,
             })]
         );
     }

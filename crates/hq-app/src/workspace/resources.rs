@@ -81,7 +81,7 @@ struct Line {
     agent: Agent,
     title: String,
     folder: String,
-    status: &'static str,
+    status: String,
     /// Whether its agent runs in this host.
     running: bool,
     /// `None` when it is not running, or not measured yet.
@@ -161,7 +161,17 @@ fn all_agents(lines: &[Line]) -> (Footprint, usize, usize) {
     (total, running, lines.len() - running)
 }
 
-fn status_word(session: &SessionInfo) -> &'static str {
+fn status_word(session: &SessionInfo) -> String {
+    // What runs in the background, or a plan to review (add-background-work-status D5).
+    match sidebar::beside(session) {
+        Some(sidebar::Beside::Review) => return "plan to review".to_owned(),
+        Some(sidebar::Beside::Background) => {
+            let work = &session.background;
+            let running = work.agents + work.commands + work.monitors;
+            return format!("{running} running in background");
+        }
+        None => {}
+    }
     match Glyph::of(session) {
         Glyph::Working => "working",
         Glyph::NeedsYou => "needs you",
@@ -171,6 +181,7 @@ fn status_word(session: &SessionInfo) -> &'static str {
         Glyph::Starting => "starting",
         Glyph::Elsewhere => "in another terminal",
     }
+    .to_owned()
 }
 
 /// CPU as Activity Monitor shows it, 100% being one core; "…" until there are two samples.
@@ -760,7 +771,7 @@ impl Workspace {
                             .w(px(STATUS_WIDTH))
                             .flex_none()
                             .truncate()
-                            .child(line.status),
+                            .child(line.status.clone()),
                     )
                     .child(Self::resources_figure(CPU_WIDTH, cpu))
                     .child(Self::resources_figure(MEMORY_WIDTH, memory)),
@@ -872,6 +883,8 @@ mod tests {
             start_error: None,
             offered: true,
             phone: None,
+            background: Default::default(),
+            review: false,
         }
     }
 

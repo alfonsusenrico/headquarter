@@ -3,7 +3,8 @@
 //! The tracker keeps independent flags and derives the status with a fixed
 //! precedence (needs-you > working > done-unread > done), so conflicting signals
 //! resolve the same way regardless of arrival order. Work the agent runs in the
-//! background counts as working. A session whose agent is not running is inactive
+//! background is shown beside the status, not as working (`work`, add-background-work-status
+//! D4). A session whose agent is not running is inactive
 //! whatever its flags say; a running one never becomes inactive by waiting.
 
 use serde::{Deserialize, Serialize};
@@ -61,9 +62,6 @@ pub struct SessionTracker {
     working: bool,
     needs: Option<NeedsReason>,
     unread: bool,
-    /// Work the agent runs for the session outside its turn: Claude Code background
-    /// shell commands, Codex sub-agents. Reported from outside the terminal stream.
-    background: bool,
     /// Whether the owner has prompted or typed since launch. Agents report their own
     /// startup as a turn; nothing is unread until the owner has asked for something.
     engaged: bool,
@@ -80,7 +78,6 @@ impl SessionTracker {
             working: false,
             needs: None,
             unread: false,
-            background: false,
             engaged: false,
             last_output_ms: now_ms,
             last_input_ms: None,
@@ -129,8 +126,6 @@ impl SessionTracker {
             // the reason in a notification and a reasonless OSC 7501 report).
             EventKind::NeedsInput(NeedsReason::Unknown) if self.needs.is_some() => {}
             EventKind::NeedsInput(reason) => self.needs = Some(reason),
-            // A finished turn also clears background work until the next report says it
-            // is still running, so a turn without any shows done at once.
             EventKind::TurnComplete | EventKind::TurnFailed => {
                 // Only a turn that was running leaves something unread; agents also
                 // report completion when idle at startup or twice per turn.
@@ -138,18 +133,15 @@ impl SessionTracker {
                     self.unread = true;
                 }
                 self.working = false;
-                self.background = false;
                 self.needs = None;
             }
             EventKind::Interrupted => {
                 self.working = false;
-                self.background = false;
                 self.needs = None;
             }
             EventKind::Ended => {
                 self.alive = false;
                 self.working = false;
-                self.background = false;
                 self.needs = None;
             }
             EventKind::OutputActivity => {
@@ -183,11 +175,6 @@ impl SessionTracker {
         }
     }
 
-    /// Whether the agent is running work for the session in the background.
-    pub fn set_background(&mut self, busy: bool) {
-        self.background = busy && self.alive;
-    }
-
     /// Advances time-based transitions; call periodically.
     pub fn tick(&mut self, now_ms: u64) {
         if !self.structured
@@ -204,7 +191,7 @@ impl SessionTracker {
             Status::Inactive
         } else if self.needs.is_some() {
             Status::NeedsYou
-        } else if self.working || self.background {
+        } else if self.working {
             Status::Working
         } else if self.unread {
             Status::DoneUnread
@@ -362,33 +349,6 @@ mod tests {
         let mut t = tracker(true);
         t.tick(12 * 60 * 60 * 1000);
         assert_eq!(t.status(), Status::Done);
-    }
-
-    #[test]
-    fn background_work_is_working_and_keeps_unread() {
-        let mut t = tracker(true);
-        t.apply(EventKind::PromptSubmitted, 10);
-        t.apply(EventKind::TurnComplete, 20);
-        t.set_background(true);
-        assert_eq!(t.status(), Status::Working);
-        t.apply(EventKind::NeedsInput(NeedsReason::Permission), 30);
-        assert_eq!(t.status(), Status::NeedsYou, "needs you still comes first");
-        t.apply(EventKind::ToolActivity, 40);
-        t.apply(EventKind::TurnComplete, 50);
-        assert_eq!(
-            t.status(),
-            Status::DoneUnread,
-            "a finished turn clears it until reported again"
-        );
-        t.set_background(true);
-        assert_eq!(t.status(), Status::Working);
-        t.set_background(false);
-        assert_eq!(t.status(), Status::DoneUnread);
-        t.set_background(true);
-        t.apply(EventKind::Ended, 60);
-        assert_eq!(t.status(), Status::Inactive);
-        t.set_background(true);
-        assert_eq!(t.status(), Status::Inactive, "an ended agent runs nothing");
     }
 
     #[test]

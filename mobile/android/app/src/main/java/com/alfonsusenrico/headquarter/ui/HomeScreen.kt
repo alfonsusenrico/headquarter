@@ -582,16 +582,23 @@ private fun SessionRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        when (row.status) {
-            RowStatus.WORKING -> {
+        val beside = row.beside
+        when {
+            // "background" or "review" ends the row in place of the age, as on the desktop
+            // (add-background-work-status D4).
+            beside != null -> {
+                Text(beside, color = tokens.accent, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            row.status == RowStatus.WORKING -> {
                 WorkingDots("working", tokens.accent)
             }
 
-            RowStatus.STARTING -> {
+            row.status == RowStatus.STARTING -> {
                 WorkingDots("starting", tokens.muted)
             }
 
-            RowStatus.ELSEWHERE -> {
+            row.status == RowStatus.ELSEWHERE -> {
                 Text("in a terminal", color = tokens.muted, fontSize = 12.5.sp)
             }
 

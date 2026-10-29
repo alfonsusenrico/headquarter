@@ -104,14 +104,70 @@ pub fn needs_you(session: &SessionInfo) -> bool {
     session.external.is_none() && session.status == Status::NeedsYou
 }
 
-/// Where a session sorts within its list: needing the owner, then working, then the rest.
+/// What a session at its prompt shows beside its status (add-background-work-status D4):
+/// "background" while work it started still runs, "review" while agy has a plan to review.
+/// A session working, needing the owner, not running, or running elsewhere shows neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Beside {
+    Background,
+    Review,
+}
+
+pub fn beside(session: &SessionInfo) -> Option<Beside> {
+    let at_prompt = matches!(session.status, Status::Done | Status::DoneUnread);
+    if !at_prompt || session.external.is_some() {
+        return None;
+    }
+    if session.review {
+        Some(Beside::Review)
+    } else if !session.background.is_empty() {
+        Some(Beside::Background)
+    } else {
+        None
+    }
+}
+
+/// What runs in the background, as words: "1 agent, 2 shells, 1 monitor"; `None` when
+/// nothing does.
+pub fn background_counts(work: &hq_signals::work::BackgroundWork) -> Option<String> {
+    let mut parts = Vec::new();
+    let mut add = |count: u16, one: &str, many: &str| match count {
+        0 => {}
+        1 => parts.push(format!("1 {one}")),
+        _ => parts.push(format!("{count} {many}")),
+    };
+    add(work.agents, "agent", "agents");
+    add(work.commands, "shell", "shells");
+    add(work.monitors, "monitor", "monitors");
+    (!parts.is_empty()).then(|| parts.join(", "))
+}
+
+/// The detail after the word in a session's header (add-background-work-status D5):
+/// what runs and the newest agent's task, or what waits for review.
+pub fn beside_detail(session: &SessionInfo) -> Option<String> {
+    match beside(session)? {
+        Beside::Review => Some("plan to review (/artifact)".to_owned()),
+        Beside::Background => {
+            let counts = background_counts(&session.background)?;
+            Some(match &session.background.agent_title {
+                Some(title) => format!("{counts} · {title}"),
+                None => counts,
+            })
+        }
+    }
+}
+
+/// Where a session sorts within its list: needing the owner, then working (with
+/// background and review, add-background-work-status), then the rest.
 /// A session running in another terminal shows no status here, so it is among the rest.
 /// A working session's activity time is when its turn started, so without this it sinks
 /// below sessions that finished after that (add-working-sessions-first D1).
 pub fn band(session: &SessionInfo) -> u8 {
     if needs_you(session) {
         0
-    } else if session.external.is_none() && session.status == Status::Working {
+    } else if (session.external.is_none() && session.status == Status::Working)
+        || beside(session).is_some()
+    {
         1
     } else {
         2
@@ -223,6 +279,8 @@ mod tests {
             start_error: None,
             offered: true,
             phone: None,
+            background: Default::default(),
+            review: false,
         }
     }
 
@@ -326,6 +384,57 @@ mod tests {
             ids(&layout.ungrouped),
             ["web-new", "lost", "api-new", "outside"],
             "working first, then most recent; a vanished group's sessions are ungrouped"
+        );
+    }
+
+    #[test]
+    fn background_and_review_sort_with_working() {
+        let mut background = session("bg", "/u", Status::Done, 5);
+        background.background.commands = 2;
+        let mut review = session("review", "/u", Status::DoneUnread, 4);
+        review.review = true;
+        let mut busy = session("busy", "/u", Status::Working, 3);
+        busy.background.agents = 1;
+        let mut asking = session("asking", "/u", Status::NeedsYou, 2);
+        asking.background.commands = 1;
+        let sessions = [
+            session("newest-idle", "/u", Status::Done, 9),
+            background,
+            review,
+            busy,
+            asking,
+        ];
+        assert_eq!(beside(&sessions[1]), Some(Beside::Background));
+        assert_eq!(beside(&sessions[2]), Some(Beside::Review));
+        assert_eq!(beside(&sessions[3]), None, "working shows working");
+        assert_eq!(beside(&sessions[4]), None, "needs you wins");
+        let layout = layout(&sessions, &[], None);
+        assert_eq!(
+            ids(&layout.ungrouped),
+            ["asking", "bg", "review", "busy", "newest-idle"]
+        );
+    }
+
+    #[test]
+    fn background_reads_as_counts_and_the_agents_task() {
+        let mut at_prompt = session("s", "/u", Status::Done, 0);
+        assert_eq!(beside_detail(&at_prompt), None);
+        at_prompt.background.agents = 1;
+        at_prompt.background.commands = 2;
+        assert_eq!(
+            beside_detail(&at_prompt).as_deref(),
+            Some("1 agent, 2 shells")
+        );
+        at_prompt.background.agent_title = Some("Phase 4a capture".into());
+        at_prompt.background.monitors = 1;
+        assert_eq!(
+            beside_detail(&at_prompt).as_deref(),
+            Some("1 agent, 2 shells, 1 monitor · Phase 4a capture")
+        );
+        at_prompt.review = true;
+        assert_eq!(
+            beside_detail(&at_prompt).as_deref(),
+            Some("plan to review (/artifact)")
         );
     }
 
