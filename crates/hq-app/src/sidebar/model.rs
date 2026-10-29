@@ -2,6 +2,7 @@
 //! Pure, so it is tested without a window. Order comes from `hq_protocol::sidebar`,
 //! which `hq ls` uses too.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use hq_protocol::sidebar::{self, age};
@@ -436,6 +437,47 @@ pub fn neighbour_group(groups: &[GroupInfo], current: Option<i64>, step: isize) 
     places[next]
 }
 
+/// A row's place in the sidebar: a session can be listed twice (pinned and in its group).
+pub fn row_key(item: &Item) -> Option<String> {
+    match item {
+        Item::Row(row) => Some(format!("{}:{}", row.section.key(), row.id)),
+        _ => None,
+    }
+}
+
+/// `items` with every row that was in `shown` back in the order it had there, each list on
+/// its own; a row new to its list keeps its computed place. Rows still carry their new
+/// status, word and age (add-working-sessions-first D2).
+pub fn hold(mut items: Vec<Item>, shown: &[String]) -> Vec<Item> {
+    let rank: HashMap<&str, usize> = shown
+        .iter()
+        .enumerate()
+        .map(|(place, key)| (key.as_str(), place))
+        .collect();
+    let mut start = 0;
+    while start < items.len() {
+        if !matches!(items[start], Item::Row(_)) {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < items.len() && matches!(items[end], Item::Row(_)) {
+            end += 1;
+        }
+        let place = |item: &Item| row_key(item).and_then(|key| rank.get(key.as_str()).copied());
+        let slots: Vec<usize> = (start..end)
+            .filter(|&at| place(&items[at]).is_some())
+            .collect();
+        let mut known: Vec<Item> = slots.iter().map(|&at| items[at].clone()).collect();
+        known.sort_by_key(|item| place(item));
+        for (slot, item) in slots.into_iter().zip(known) {
+            items[slot] = item;
+        }
+        start = end;
+    }
+    items
+}
+
 /// Ids of the rows on screen, top to bottom, for arrow keys. A session shown twice
 /// (pinned and in its folder) is visited once, at its first place.
 pub fn row_ids(items: &[Item]) -> Vec<String> {
@@ -510,6 +552,59 @@ mod tests {
             offered: true,
             phone: None,
         }
+    }
+
+    #[test]
+    fn held_rows_keep_their_places_and_new_ones_take_theirs() {
+        let order = |items: &[Item]| -> Vec<String> {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Row(row) => {
+                        Some(format!("{}:{}", row.id, row.status_word().unwrap_or("-")))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        // Shown: a finished session above an idle one.
+        let before = items(
+            &[
+                session("finished", "/u/a", Status::Done, 1_000),
+                session("cash", "/u/b", Status::Done, 9_000),
+            ],
+            &[],
+            None,
+            NOW,
+        );
+        let shown: Vec<String> = before.iter().filter_map(row_key).collect();
+        // "cash" starts working, and a new session appears.
+        let now = items(
+            &[
+                session("finished", "/u/a", Status::Done, 1_000),
+                session("cash", "/u/b", Status::Working, 9_000),
+                session("new", "/u/c", Status::Done, 0),
+            ],
+            &[],
+            None,
+            NOW,
+        );
+        assert_eq!(
+            order(&now),
+            ["cash:working", "new:-", "finished:-"],
+            "computed"
+        );
+        let held = hold(now.clone(), &shown);
+        assert_eq!(
+            order(&held),
+            ["finished:-", "new:-", "cash:working"],
+            "held rows keep their order and show their new status; the new one keeps its place"
+        );
+        assert_eq!(
+            hold(now.clone(), &[]),
+            now,
+            "nothing held: the computed order"
+        );
     }
 
     #[test]
