@@ -104,25 +104,6 @@ The system SHALL NOT pass options that change how an agent runs beyond its per-l
 - **WHEN** the owner launches a Codex session through the system
 - **THEN** Codex starts with no `-c` option, shows no embedded-mode warning, and its status is reported from OSC 7501
 
-### Requirement: Background work counts as working
-The system SHALL show a session as working while its agent runs work for it in the background, including Claude Code background shell commands and Codex sub-agents, even after the agent reports its turn finished.
-
-#### Scenario: Claude background command
-- **WHEN** a Claude Code session starts a 40-second shell command in the background and ends its turn
-- **THEN** the session shows working until `claude agents --json` stops reporting it busy, then idle not read yet after Claude's follow-up turn
-
-#### Scenario: Codex sub-agent
-- **WHEN** a Codex session spawns a sub-agent and ends its turn while the sub-agent runs
-- **THEN** the session shows working until the sub-agent's turn ends
-
-#### Scenario: Background state unavailable
-- **WHEN** `claude agents --json` fails
-- **THEN** the Claude session's status follows its own reports alone
-
-#### Scenario: Claude Code records "shell"
-- **WHEN** a hosted Claude Code session ends its turn while its background shell command runs, and its session record says "shell"
-- **THEN** the session shows working until the record changes, without waiting for `claude agents --json`
-
 ### Requirement: Inactive sessions
 The system SHALL keep a sidebar session whose agent ends without the owner closing it (a quit from inside the agent, or an exit with an error) in the sidebar as inactive, SHALL keep a running session idle however long it waits, and SHALL start an inactive session's agent again only when the owner asks.
 
@@ -163,3 +144,55 @@ The system SHALL change a Claude Code session's status, needs-you reason, and he
 #### Scenario: A resume with a new conversation id
 - **WHEN** the host resumes a session and Claude Code continues it under a new conversation id
 - **THEN** the session's status follows the reports of that new conversation
+
+### Requirement: Background work beside the status
+The system SHALL show "background" for a session at its prompt while work its agent started still runs (background agents, commands and monitors, from what the agent reports and the processes those commands started), with each kind's count and the newest agent's title in the session header, the Usage window and the phone's session header. Needs you SHALL always win, and an unknown or unreadable signal SHALL add nothing.
+
+#### Scenario: Claude background work after the turn
+- **WHEN** a Claude Code session ends its turn while a background agent and two background shell commands it started still run
+- **THEN** its row says "background", and its header shows "1 agent" and "2 shells" with the agent's title
+
+#### Scenario: The commands end
+- **WHEN** those commands' processes exit and the agent finishes
+- **THEN** the row shows its age and glyph again
+
+#### Scenario: Helpers are not background work
+- **WHEN** a session at its prompt has MCP servers or other helper processes running
+- **THEN** the row shows its age, not "background"
+
+#### Scenario: Needs you during background work
+- **WHEN** a session with background work asks for permission
+- **THEN** it shows needs you
+
+### Requirement: Plans to review
+The system SHALL show "review" for an agy session whose turn ended with a plan to review, and SHALL clear it when agy reports the next state or a new prompt starts a turn. It SHALL not count as needs you and SHALL not notify.
+
+#### Scenario: A plan to review
+- **WHEN** an agy turn ends with "Approve plan"
+- **THEN** the row says "review", the header names the plan to review, and nothing notifies
+
+#### Scenario: Rejected
+- **WHEN** the owner rejects the plan
+- **THEN** the row shows its age again
+
+### Requirement: Background and review sort with working
+Inside each group and the ungrouped list, sessions showing "background" or "review" SHALL sort with working sessions, after those needing the owner.
+
+#### Scenario: Background rises
+- **WHEN** a session in a group shows "background" and another in the same group finished more recently
+- **THEN** the "background" session is listed above the finished one
+
+### Requirement: Background and review look apart from working
+The system SHALL show "background" in its own colour with two still dots, and "review" in another colour with a diamond, both apart from working's colour and movement and readable at 4.5:1 on the sidebar and the open row in every theme. Themes made from a palette SHALL take the colours from its cyan and magenta, and a theme file MAY set them.
+
+#### Scenario: Side by side
+- **WHEN** one session works, one shows "background" and one shows "review" in the built-in dark theme
+- **THEN** "working" is blue with moving dots, "background" is teal with still dots, and "review" is violet with a diamond
+
+#### Scenario: A template
+- **WHEN** the owner uses the Nord template
+- **THEN** "background" is Nord's cyan and "review" is Nord's magenta, each readable on the sidebar and the open row
+
+#### Scenario: A theme file sets them
+- **WHEN** the owner's theme file sets `background_work` in its interface colours
+- **THEN** "background" uses that colour, and "review" keeps the colour made from the palette
