@@ -597,7 +597,7 @@ impl Workspace {
         &self,
         id: i64,
         name: &str,
-        total: usize,
+        (total, beside_note): (usize, Option<&str>),
         needing: usize,
         collapsed: bool,
         colors: (GroupColor, Option<GroupColor>),
@@ -686,7 +686,10 @@ impl Workspace {
                 div()
                     .flex_none()
                     .text_color(hsla(chrome.muted))
-                    .child(model::session_count(total)),
+                    .child(match beside_note {
+                        Some(note) => format!("{} · {note}", model::session_count(total)),
+                        None => model::session_count(total),
+                    }),
             )
             .child(self.hover_close(
                 &hover_key,

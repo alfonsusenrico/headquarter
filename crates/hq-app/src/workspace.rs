@@ -24,6 +24,7 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::{Disableable, Icon, IconName, Sizable};
 use hq_client::{Change, FeedControl, HostPaths, SessionFeed};
 use hq_config::{AgentMarks, Appearance, SettingsWatcher};
+use hq_protocol::sidebar::Beside;
 use hq_protocol::{AgentUsage, GroupInfo, SessionInfo, usage};
 use hq_signals::background::Background;
 use hq_signals::details::SessionDetails;
@@ -46,7 +47,7 @@ use crate::sidebar::glyph;
 use crate::sidebar::model::{self, Item, Row, Target};
 use crate::terminal::session::{TerminalSession, in_use_page};
 use crate::terminal::view::{PaneOptions, TerminalView, hsla};
-use crate::theme::{Chrome, Mode, Theme};
+use crate::theme::{Chrome, Mode, Paint, Theme};
 use crate::themes::{self, Library, Look, ThemeChoice, Token};
 
 mod groups;
@@ -1935,10 +1936,11 @@ impl Workspace {
                 collapsed,
                 color,
                 picked,
+                beside_note,
             } => self.render_group_header(
                 *id,
                 name,
-                *total,
+                (*total, beside_note.as_deref()),
                 *needing,
                 *collapsed,
                 (*color, *picked),
@@ -2006,7 +2008,22 @@ impl Workspace {
                     })
             }))
             .child(match row.status_word() {
-                Some(word) if row.breathing() => working_word(word, self.lit_dot(), chrome),
+                Some(word) if row.breathing() => {
+                    dotted_word(word, 3, self.lit_dot(), chrome.accent)
+                }
+                // Background work keeps its dots still: nothing waits on the owner, and
+                // the sidebar stays at rest (add-background-work-status D8).
+                None if row.beside == Some(Beside::Background) => {
+                    dotted_word("background", 2, None, chrome.teal)
+                }
+                None if let Some(word) = row.beside_word() => div()
+                    .flex_none()
+                    .text_right()
+                    .text_size(px(12.5))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(hsla(chrome.violet))
+                    .child(word)
+                    .into_any_element(),
                 Some(word) => div()
                     .flex_none()
                     .text_right()
@@ -2027,7 +2044,11 @@ impl Workspace {
                     .into_any_element(),
             })
             .when(row.glyph_cell(), |line| {
-                line.child(glyph::status(row.glyph, chrome))
+                line.child(if row.beside == Some(Beside::Review) {
+                    glyph::review(chrome)
+                } else {
+                    glyph::status(row.glyph, chrome)
+                })
             })
             .child(self.hover_close(
                 &row_key,
@@ -3282,8 +3303,15 @@ fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
 /// A working or starting row's word in the accent colour, then three dots lit one after
 /// another (refresh-pane-and-status D1). `lit` is `None` while motion is held still, when
 /// all three show at full strength, and `Some(None)` on the step where all rest.
-fn working_word(word: &'static str, lit: Option<Option<usize>>, chrome: Chrome) -> AnyElement {
-    let accent = hsla(chrome.accent);
+/// A status word followed by `dots` dots in `color`; `lit` picks the bright one while
+/// they move, `None` keeps them all bright.
+fn dotted_word(
+    word: &'static str,
+    dots: usize,
+    lit: Option<Option<usize>>,
+    color: Paint,
+) -> AnyElement {
+    let color = hsla(color);
     let dot = |index: usize| {
         let bright = match lit {
             None => true,
@@ -3292,7 +3320,7 @@ fn working_word(word: &'static str, lit: Option<Option<usize>>, chrome: Chrome) 
         div()
             .size(px(3.5))
             .rounded_full()
-            .bg(accent)
+            .bg(color)
             .opacity(if bright { 1.0 } else { 0.3 })
     };
     div()
@@ -3302,11 +3330,9 @@ fn working_word(word: &'static str, lit: Option<Option<usize>>, chrome: Chrome) 
         .gap(px(2.5))
         .text_size(px(12.5))
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(accent)
+        .text_color(color)
         .child(div().mr(px(1.5)).child(word))
-        .child(dot(0))
-        .child(dot(1))
-        .child(dot(2))
+        .children((0..dots).map(dot))
         .into_any_element()
 }
 

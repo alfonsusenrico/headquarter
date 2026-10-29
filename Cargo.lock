@@ -3517,6 +3517,7 @@ dependencies = [
 name = "hq-signals"
 version = "0.1.19"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "hq-discovery",
  "rusqlite",

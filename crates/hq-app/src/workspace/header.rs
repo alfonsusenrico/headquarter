@@ -131,6 +131,37 @@ impl Workspace {
         if let Some(branch) = &line.branch {
             left = left.child(separator()).child(muted(format!("⎇ {branch}")));
         }
+        // What runs in the background or waits for review (add-background-work-status D5).
+        if let (Some((word, color)), Some(detail)) = (
+            hq_protocol::sidebar::beside(session).map(|beside| match beside {
+                hq_protocol::sidebar::Beside::Background => ("background", chrome.teal),
+                hq_protocol::sidebar::Beside::Review => ("review", chrome.violet),
+            }),
+            hq_protocol::sidebar::beside_detail(session),
+        ) {
+            // Only the room left over, so the title keeps its width first.
+            left = left.child(separator()).child(
+                div().flex_1().min_w_0().truncate().child(
+                    div()
+                        .flex()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .flex_none()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(hsla(color))
+                                .child(word),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(hsla(chrome.muted))
+                                .child(detail),
+                        ),
+                ),
+            );
+        }
 
         let mut right = div().flex_none().flex().items_center().gap(px(10.));
         let mut first = true;

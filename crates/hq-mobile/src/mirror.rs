@@ -21,6 +21,11 @@ pub struct Row {
     pub folder: String,
     /// What an alert row says under the title, such as "Claude needs your permission".
     pub detail: String,
+    /// Background work or a plan to review for a session at its prompt, shown in place of
+    /// the age (add-background-work-status D4).
+    pub beside: Option<RowBeside>,
+    /// What runs in the background or waits for review, for the session's header.
+    pub beside_detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -33,6 +38,13 @@ pub enum RowStatus {
     Inactive,
     /// Running in another terminal on the computer: that terminal answers it.
     Elsewhere,
+}
+
+/// What a session at its prompt still has going: "background" or "review".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RowBeside {
+    Background,
+    Review,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -107,6 +119,11 @@ impl Mirror {
             age: sidebar::age(now_ms.saturating_sub(session.last_activity_at)),
             folder: layout.folder(session).to_owned(),
             detail: detail(session),
+            beside: sidebar::beside(session).map(|beside| match beside {
+                sidebar::Beside::Background => RowBeside::Background,
+                sidebar::Beside::Review => RowBeside::Review,
+            }),
+            beside_detail: sidebar::beside_detail(session),
         };
         // Needs you, longest waiting first (the desktop's order), then unread replies,
         // newest first.
@@ -140,10 +157,11 @@ impl Mirror {
                     name: section.group.name.clone(),
                     color: section.group.shown_color().name().to_owned(),
                     active: rows.iter().any(|row| {
-                        matches!(
-                            row.status,
-                            RowStatus::NeedsYou | RowStatus::Unread | RowStatus::Working
-                        )
+                        row.beside.is_some()
+                            || matches!(
+                                row.status,
+                                RowStatus::NeedsYou | RowStatus::Unread | RowStatus::Working
+                            )
                     }),
                     rows,
                 }
@@ -270,6 +288,8 @@ mod tests {
             start_error: None,
             offered: true,
             phone: None,
+            background: Default::default(),
+            review: false,
         }
     }
 
@@ -333,6 +353,27 @@ mod tests {
         mirror.session_changed(session("quiet", Status::NeedsYou, 2, Some(1)));
         assert_eq!(mirror.sessions.len(), 1);
         assert!(mirror.home(10).groups[0].active);
+    }
+
+    #[test]
+    fn background_work_shows_its_word_and_detail() {
+        let mut busy = session("busy", Status::Done, 1, None);
+        busy.background.agents = 1;
+        busy.background.agent_title = Some("Phase 4a capture".into());
+        let mirror = Mirror {
+            sessions: vec![busy, session("plain", Status::Done, 2, None)],
+            ..Mirror::default()
+        };
+        let home = mirror.home(10);
+        let busy = home.ungrouped.iter().find(|row| row.id == "busy").unwrap();
+        assert_eq!(busy.beside, Some(RowBeside::Background));
+        assert_eq!(
+            busy.beside_detail.as_deref(),
+            Some("1 agent · Phase 4a capture")
+        );
+        let plain = home.ungrouped.iter().find(|row| row.id == "plain").unwrap();
+        assert_eq!(plain.beside, None);
+        assert_eq!(home.ungrouped[0].id, "busy", "rises like working");
     }
 
     #[test]

@@ -151,7 +151,7 @@ impl Host {
                     .extend(view.claude_background.iter().cloned()),
             }
         }
-        self.refresh_background(&report.hosted_claude);
+        self.refresh_subagents();
         self.notice_claude_turns_elsewhere(&report.sessions);
         let agy_conversations = lock(&self.agy_conversations).clone();
         let agy_folders: Vec<&str> = report
@@ -250,10 +250,10 @@ impl Host {
         }
     }
 
-    /// Marks the hosted sessions whose agent runs work for them in the background:
-    /// Claude Code reporting itself busy after its turn, or Codex sub-agents still
-    /// running. Hosted Claude agents are matched by the process they run under.
-    fn refresh_background(&self, hosted_claude: &[(u32, Status)]) {
+    /// Counts the Codex sub-agents still running for each hosted Codex session, shown as
+    /// background agents (add-background-work-status D7). Claude Code reports its own
+    /// background work through its terminal and hooks.
+    fn refresh_subagents(&self) {
         let live: Vec<_> = lock(&self.live).values().cloned().collect();
         let codex_threads: Vec<(String, String)> = live
             .iter()
@@ -274,16 +274,11 @@ impl Host {
             .into_iter()
             .filter_map(|(row, thread)| Some((row, running.get(&thread)?.clone())))
             .collect();
-        for hosted in &live {
-            let busy = match hosted.agent {
-                Agent::Claude => hosted
-                    .pid
-                    .is_some_and(|pid| hosted_claude.contains(&(pid, Status::Working))),
-                Agent::Codex => by_row.contains_key(&hosted.id),
-                Agent::Agy => false,
-            };
-            hosted.set_background(busy);
-            self.refresh(hosted);
+        for hosted in live.iter().filter(|hosted| hosted.agent == Agent::Codex) {
+            let count = by_row.get(&hosted.id).map_or(0, Vec::len);
+            if hosted.set_subagents(u16::try_from(count).unwrap_or(u16::MAX)) {
+                self.broadcast(&hosted.id);
+            }
         }
         lock(&self.outside).subagents = by_row;
     }
@@ -367,6 +362,8 @@ fn unlinked_entry(session: &ExternalSession, external: External) -> SessionInfo 
         start_error: None,
         offered: true,
         phone: None,
+        background: Default::default(),
+        review: false,
     }
 }
 

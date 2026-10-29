@@ -607,6 +607,12 @@ pub struct SessionInfo {
     /// (refine-in-use-elsewhere D2).
     #[serde(default)]
     pub phone: Option<String>,
+    /// Work the agent still runs in the background (add-background-work-status D5).
+    #[serde(default)]
+    pub background: hq_signals::work::BackgroundWork,
+    /// agy left a plan to review (add-background-work-status D7).
+    #[serde(default)]
+    pub review: bool,
 }
 
 fn offered_by_default() -> bool {

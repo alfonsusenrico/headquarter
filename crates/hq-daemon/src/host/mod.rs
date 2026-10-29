@@ -762,9 +762,9 @@ impl Host {
     /// A row as clients see it: plus whether it runs here, the agent's title (kept in
     /// memory only), and any outside process running its conversation.
     fn describe(&self, row: SessionRow) -> SessionInfo {
-        let (live, phone) = match lock(&self.live).get(&row.id) {
-            Some(hosted) => (true, hosted.phone_in_use()),
-            None => (false, None),
+        let (live, phone, (background, review)) = match lock(&self.live).get(&row.id) {
+            Some(hosted) => (true, hosted.phone_in_use(), hosted.work()),
+            None => (false, None, Default::default()),
         };
         let title = row.agent_session_id.as_ref().and_then(|conversation| {
             lock(&self.titles)
@@ -805,6 +805,8 @@ impl Host {
             start_error,
             offered,
             phone,
+            background,
+            review,
         }
     }
 
@@ -1608,7 +1610,11 @@ impl Host {
             let signals = scanner.feed(chunk);
             hosted.output(chunk);
             let now = now_ms();
+            let mut work_changed = false;
             for signal in signals {
+                if let TerminalSignal::ProgramStatus(status) = &signal {
+                    work_changed |= hosted.work_report(status);
+                }
                 if signal == TerminalSignal::ProgramStatusQuery {
                     hosted.write_to_agent(PROGRAM_STATUS_SUPPORT_REPLY);
                 } else if let Some((source, event)) =
@@ -1626,6 +1632,10 @@ impl Host {
                 hosted.apply(EventKind::OutputActivity, now);
             }
             self.refresh(hosted);
+            // A shell has no row to announce (add-session-shell-panel D3).
+            if work_changed && !hosted.shell {
+                self.broadcast(&hosted.id);
+            }
         }
     }
 
@@ -1960,6 +1970,12 @@ impl Host {
             }
         }
         hosted.apply_hook(record.event, now);
+        if agent == Agent::Claude
+            && let Ok(raw) = serde_json::from_str::<serde_json::Value>(&payload.raw)
+            && hosted.work_hook(&raw)
+        {
+            self.broadcast(&hosted.id);
+        }
         self.refresh(&hosted);
     }
 
@@ -2018,6 +2034,10 @@ impl Host {
             for hosted in &sessions {
                 hosted.tick(now);
                 self.refresh(hosted);
+                // Background commands end when their processes do (add-background-work-status D6).
+                if hosted.prune_work() {
+                    self.broadcast(&hosted.id);
+                }
             }
             // Remote control keeps the host up: a phone has no way to start it.
             if sessions.is_empty()

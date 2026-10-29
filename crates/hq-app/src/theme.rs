@@ -72,6 +72,20 @@ pub struct Chrome {
     pub track: Paint,
     /// The dot that marks a reply not read yet.
     pub accent: Paint,
+    /// "background" and its dots: work still running behind the prompt.
+    pub teal: Paint,
+    /// "review" and its diamond: a plan waiting for the owner's review.
+    pub violet: Paint,
+}
+
+/// The colours that mark states, as a palette gives them, before they are made readable
+/// on the interface they sit on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hues {
+    pub accent: Paint,
+    pub needs_you: Paint,
+    pub teal: Paint,
+    pub violet: Paint,
 }
 
 /// The terminal's colours. Agents can override any of them at run time (OSC 4/10/11);
@@ -180,6 +194,8 @@ impl Theme {
                 glyph_amber: paint(0xC26A10),
                 track: paint(0xC9CFDA),
                 accent: paint(0x2457C5),
+                teal: paint(0x0E6A5A),
+                violet: paint(0x6B3FC2),
             },
             palette: Palette {
                 foreground: rgb(0x1D2433),
@@ -227,6 +243,8 @@ impl Theme {
                 glyph_amber: paint(0xF5A524),
                 track: paint(0x3A404C),
                 accent: paint(0x8AB4FF),
+                teal: paint(0x67E8C9),
+                violet: paint(0xC4A7FF),
             },
             palette: Palette {
                 foreground: rgb(0xE6E8EC),
@@ -299,32 +317,51 @@ impl Theme {
         }
         if colors.background.is_some() {
             let (front, back) = (palette.foreground, palette.background);
-            let accent = colors.normal[4].map_or(theme.chrome.accent, paint);
-            let needs_you = colors.normal[3].map_or(theme.chrome.amber, paint);
+            let hues = Hues::from_palette(&theme.chrome, colors);
             theme.chrome = match mode {
-                Mode::Light => Chrome::for_light(back, front, accent, needs_you),
-                Mode::Dark => Chrome::from_colours(back, front, accent, needs_you),
+                Mode::Light => Chrome::for_light(back, front, hues),
+                Mode::Dark => Chrome::from_colours(back, front, hues),
             };
         }
         theme
     }
 }
 
+impl Hues {
+    /// A palette's blue, yellow, cyan and magenta, or `fallback`'s colours where it has
+    /// none.
+    pub fn from_palette(fallback: &Chrome, colors: &ColorSettings) -> Hues {
+        Hues {
+            accent: colors.normal[4].map_or(fallback.accent, paint),
+            needs_you: colors.normal[3].map_or(fallback.amber, paint),
+            teal: colors.normal[6].map_or(fallback.teal, paint),
+            violet: colors.normal[5].map_or(fallback.violet, paint),
+        }
+    }
+}
+
 impl Chrome {
-    /// Interface colours made from a background and a text colour, with the given accent
-    /// and needs-you colours: the mixing amounts Alacritty colours have always used.
-    pub fn from_colours(back: Rgb, front: Rgb, accent: Paint, needs_you: Paint) -> Chrome {
+    /// Interface colours made from a background and a text colour, with the given hues:
+    /// the mixing amounts Alacritty colours have always used. Teal and violet came later
+    /// and are made readable on the sidebar and the selected row
+    /// (add-background-work-status D8).
+    pub fn from_colours(back: Rgb, front: Rgb, hues: Hues) -> Chrome {
+        let selected = mix(back, front, 0.1);
+        let on_both =
+            |color: Paint| Paint::solid(readable(readable(color.rgb, back, 4.5), selected, 4.5));
         Chrome {
             sidebar: Paint::solid(back),
             sidebar_line: Paint::solid(mix(back, front, 0.16)),
-            selected: Paint::solid(mix(back, front, 0.1)),
+            selected: Paint::solid(selected),
             text: Paint::solid(front),
             muted: Paint::solid(mix(back, front, 0.68)),
             group: Paint::solid(mix(back, front, 0.84)),
-            amber: needs_you,
-            glyph_amber: needs_you,
+            amber: hues.needs_you,
+            glyph_amber: hues.needs_you,
             track: Paint::solid(mix(back, front, 0.25)),
-            accent,
+            accent: hues.accent,
+            teal: on_both(hues.teal),
+            violet: on_both(hues.violet),
         }
     }
 
@@ -332,7 +369,7 @@ impl Chrome {
     /// D1): the sidebar a step darker than the terminal and the pane's header, the selected row in the
     /// terminal's own background, and text, needs-you and accent colours readable against
     /// both. A palette's yellow and blue are often too light to read on it as they are.
-    pub fn for_light(back: Rgb, front: Rgb, accent: Paint, needs_you: Paint) -> Chrome {
+    pub fn for_light(back: Rgb, front: Rgb, hues: Hues) -> Chrome {
         let sidebar = mix(back, front, 0.06);
         let on_both = |color: Rgb, minimum: f64| {
             Paint::solid(readable(readable(color, sidebar, minimum), back, minimum))
@@ -344,10 +381,12 @@ impl Chrome {
             text: on_both(front, 4.5),
             muted: on_both(mix(back, front, 0.68), 4.5),
             group: on_both(mix(back, front, 0.84), 4.5),
-            amber: on_both(needs_you.rgb, 4.5),
-            glyph_amber: on_both(needs_you.rgb, 3.0),
+            amber: on_both(hues.needs_you.rgb, 4.5),
+            glyph_amber: on_both(hues.needs_you.rgb, 3.0),
             track: Paint::solid(mix(back, front, 0.3)),
-            accent: on_both(accent.rgb, 4.5),
+            accent: on_both(hues.accent.rgb, 4.5),
+            teal: on_both(hues.teal.rgb, 4.5),
+            violet: on_both(hues.violet.rgb, 4.5),
         }
     }
 }
@@ -476,6 +515,10 @@ mod tests {
                 ("group", chrome.group, chrome.sidebar),
                 ("amber", chrome.amber, chrome.sidebar),
                 ("amber on selected", chrome.amber, chrome.selected),
+                ("teal", chrome.teal, chrome.sidebar),
+                ("teal on selected", chrome.teal, chrome.selected),
+                ("violet", chrome.violet, chrome.sidebar),
+                ("violet on selected", chrome.violet, chrome.selected),
                 (
                     "terminal text",
                     theme.palette.foreground.into(),
@@ -563,6 +606,10 @@ mod tests {
             ("group", chrome.group, chrome.sidebar),
             ("amber", chrome.amber, chrome.sidebar),
             ("amber on selected", chrome.amber, chrome.selected),
+            ("teal", chrome.teal, chrome.sidebar),
+            ("teal on selected", chrome.teal, chrome.selected),
+            ("violet", chrome.violet, chrome.sidebar),
+            ("violet on selected", chrome.violet, chrome.selected),
         ] {
             let ratio = contrast(color, background);
             assert!(ratio >= AA, "{name}: {ratio:.2}");
@@ -595,6 +642,7 @@ mod tests {
                     ("working and idle not read", chrome.text),
                     ("idle", chrome.muted),
                     ("not read yet", chrome.accent),
+                    ("review", chrome.violet),
                 ] {
                     let ratio = contrast(color, background);
                     assert!(ratio >= 3.0, "{:?} {name}: {ratio:.2}", theme.mode);
