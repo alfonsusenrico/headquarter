@@ -95,7 +95,7 @@ The system SHALL list on the What's new page the notes of every published releas
 - **THEN** the page still offers Update Now and says the notes couldn't be loaded, with a link to the release notes on GitHub
 
 ### Requirement: Update log
-The system SHALL show under the update's steps a log of what the update has done, newest line last: the installer fetched and matched to its checksum, each archive the installer fetches and checks, what it installs where, and the restart. It SHALL leave out the installer's advice written for someone at a terminal. The log SHALL start at the top of its box, scroll by itself to keep the newest line in view, and let the owner scroll back through every line of the update without being pulled down while scrolled back.
+The system SHALL show under the update's steps a log of what the update has done, newest line last: the installer fetched and matched to its checksum, each archive the installer fetches and checks, what it installs where, and the restart. It SHALL leave out the installer's advice written for someone at a terminal.
 
 #### Scenario: A whole update
 - **WHEN** an update runs to the restart
@@ -104,6 +104,9 @@ The system SHALL show under the update's steps a log of what the update has done
 #### Scenario: Terminal advice left out
 - **WHEN** the installer prints how to open the app or to run `hq stop`
 - **THEN** those lines do not appear in the log
+
+### Requirement: Update log scrolling
+The update log SHALL start at the top of its box, scroll by itself to keep the newest line in view, and let the owner scroll back through every line of the update without being pulled down while scrolled back.
 
 #### Scenario: The first lines
 - **WHEN** an update starts and the log holds two lines
