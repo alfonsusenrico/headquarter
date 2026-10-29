@@ -26,6 +26,7 @@ const SUPPORTED: &[&str] = &[
     "window.decorations",
     "window.option_as_alt",
     "window.dim_unfocused",
+    "window.minimum_contrast",
     "sidebar.agent_marks",
     "font.size",
     "font.*.family",

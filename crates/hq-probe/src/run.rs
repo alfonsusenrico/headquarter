@@ -75,6 +75,7 @@ pub fn run(options: RunOptions) -> Result<ExitCode> {
             helper_exe: &helper_exe,
             hook_socket: &socket,
             conversation: Conversation::New { id: &session_id },
+            background: None,
         },
         &owner,
     );

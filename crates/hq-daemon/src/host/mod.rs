@@ -1510,6 +1510,7 @@ impl Host {
                 helper_exe: &self.helper_exe,
                 hook_socket: &self.paths.hook_socket,
                 conversation: plan.conversation,
+                background: hq_signals::background::read(),
             },
             &owner,
         );

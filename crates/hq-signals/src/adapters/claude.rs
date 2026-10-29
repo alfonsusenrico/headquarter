@@ -7,6 +7,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::{Conversation, LaunchContext, LaunchSpec, OwnerSettings, shell_quote};
+use crate::background::Background;
 use crate::paths;
 
 const HOOK_EVENTS: [&str; 9] = [
@@ -41,10 +42,22 @@ pub fn launch_spec(ctx: &LaunchContext<'_>, owner: &OwnerSettings) -> LaunchSpec
         .iter()
         .map(|event| ((*event).to_owned(), hook_groups.clone()))
         .collect();
-    let settings = json!({
+    let mut settings = json!({
         "hooks": hooks,
         "statusLine": { "type": "command", "command": status_line },
     });
+    // Its default theme is dark, and a session the host starts has no window to answer
+    // its `auto` theme's question: told light or dark here. A plain light, dark or auto
+    // the owner set follows the terminal too; a colour-blind, ANSI or custom theme is
+    // theirs (fix-light-theme-contrast D2, owner 2026-10-29).
+    if follows_the_terminal(owner.claude_theme.as_deref())
+        && let Some(background) = ctx.background
+    {
+        settings["theme"] = json!(match background {
+            Background::Light => "light",
+            Background::Dark => "dark",
+        });
+    }
 
     let mut args = match ctx.conversation {
         Conversation::New { id } => vec!["--session-id".to_owned(), id.to_owned()],
@@ -76,6 +89,35 @@ pub fn owner_status_line(cwd: &Path) -> Option<String> {
         .find_map(|path| status_line_from(&std::fs::read_to_string(path).ok()?))
 }
 
+/// The theme the owner set in Claude Code: in its settings files, by the same precedence
+/// as the status line, then in its global configuration. Read-only.
+pub fn owner_theme(cwd: &Path) -> Option<String> {
+    let mut candidates = vec![
+        cwd.join(".claude").join("settings.local.json"),
+        cwd.join(".claude").join("settings.json"),
+    ];
+    if let Some(config) = paths::claude_config_dir() {
+        candidates.push(config.join("settings.json"));
+    }
+    candidates.extend(paths::claude_global_config());
+    candidates
+        .iter()
+        .find_map(|path| theme_from(&std::fs::read_to_string(path).ok()?))
+}
+
+fn follows_the_terminal(owner_theme: Option<&str>) -> bool {
+    owner_theme.is_none_or(|theme| matches!(theme, "light" | "dark" | "auto"))
+}
+
+fn theme_from(settings: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(settings).ok()?;
+    value
+        .get("theme")?
+        .as_str()
+        .filter(|theme| !theme.trim().is_empty())
+        .map(str::to_owned)
+}
+
 fn status_line_from(settings: &str) -> Option<String> {
     let value: Value = serde_json::from_str(settings).ok()?;
     value
@@ -99,6 +141,7 @@ mod tests {
                 helper_exe: &exe,
                 hook_socket: &socket,
                 conversation,
+                background: None,
             },
             owner,
         )
@@ -135,6 +178,7 @@ mod tests {
     fn status_line_chains_the_owner_command() {
         let owner = OwnerSettings {
             claude_status_line: Some("bash ~/.claude/status.sh 'x'".into()),
+            claude_theme: None,
         };
         let settings = settings(&spec(&owner));
         assert_eq!(
@@ -150,6 +194,42 @@ mod tests {
             settings["statusLine"]["command"],
             "'/opt/hq probe/hq-probe' hook-statusline --socket '/tmp/hq.sock'"
         );
+    }
+
+    #[test]
+    fn the_theme_follows_the_terminal_unless_the_owner_chose_one() {
+        let exe = PathBuf::from("/opt/hq probe/hq-probe");
+        let socket = PathBuf::from("/tmp/hq.sock");
+        let with = |background, owner: &OwnerSettings| {
+            settings(&launch_spec(
+                &LaunchContext {
+                    helper_exe: &exe,
+                    hook_socket: &socket,
+                    conversation: Conversation::New { id: "0b1c" },
+                    background,
+                },
+                owner,
+            ))
+        };
+        let plain = OwnerSettings::default();
+        assert_eq!(with(Some(Background::Light), &plain)["theme"], "light");
+        assert_eq!(with(Some(Background::Dark), &plain)["theme"], "dark");
+        assert!(with(None, &plain).get("theme").is_none(), "not known yet");
+        let plain_dark = OwnerSettings {
+            claude_theme: Some("dark".into()),
+            ..OwnerSettings::default()
+        };
+        assert_eq!(with(Some(Background::Light), &plain_dark)["theme"], "light");
+        let chose = OwnerSettings {
+            claude_theme: Some("dark-daltonized".into()),
+            ..OwnerSettings::default()
+        };
+        assert!(with(Some(Background::Light), &chose).get("theme").is_none());
+        assert_eq!(
+            theme_from(r#"{"theme":"light-ansi"}"#).as_deref(),
+            Some("light-ansi")
+        );
+        assert_eq!(theme_from(r#"{"numStartups":3}"#), None);
     }
 
     #[test]

@@ -100,8 +100,18 @@ fn defaults_without_appearance_keys() {
     assert_eq!(settings.appearance.decorations, Decorations::Full);
     assert_eq!(settings.appearance.option_as_alt, OptionAsAlt::None);
     assert_eq!(settings.appearance.dim_unfocused, 0.0);
+    assert_eq!(settings.appearance.minimum_contrast, 4.5);
     assert!(settings.appearance.colors.is_empty());
     assert!(settings.warnings.is_empty());
+}
+
+#[test]
+fn the_minimum_contrast_is_a_window_setting() {
+    let set = parse_text("[window]\nminimum_contrast = 3.0\n").unwrap();
+    assert_eq!(set.appearance.minimum_contrast, 3.0);
+    assert!(set.warnings.is_empty());
+    let off = parse_text("[window]\nminimum_contrast = 1\n").unwrap();
+    assert_eq!(off.appearance.minimum_contrast, 1.0);
 }
 
 #[test]
@@ -111,6 +121,10 @@ fn invalid_values_name_their_line() {
         (
             "[window]\ndim_unfocused = 0.9\n",
             "dim_unfocused must be between",
+        ),
+        (
+            "[window]\nminimum_contrast = 0.5\n",
+            "minimum_contrast must be between",
         ),
         ("[window]\ndecorations = \"Fancy\"\n", "decorations must be"),
         (

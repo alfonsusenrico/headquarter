@@ -299,12 +299,12 @@ impl Theme {
         }
         if colors.background.is_some() {
             let (front, back) = (palette.foreground, palette.background);
-            theme.chrome = Chrome::from_colours(
-                back,
-                front,
-                colors.normal[4].map_or(theme.chrome.accent, paint),
-                colors.normal[3].map_or(theme.chrome.amber, paint),
-            );
+            let accent = colors.normal[4].map_or(theme.chrome.accent, paint);
+            let needs_you = colors.normal[3].map_or(theme.chrome.amber, paint);
+            theme.chrome = match mode {
+                Mode::Light => Chrome::for_light(back, front, accent, needs_you),
+                Mode::Dark => Chrome::from_colours(back, front, accent, needs_you),
+            };
         }
         theme
     }
@@ -325,6 +325,29 @@ impl Chrome {
             glyph_amber: needs_you,
             track: Paint::solid(mix(back, front, 0.25)),
             accent,
+        }
+    }
+
+    /// Interface colours designed for a light terminal background (fix-light-theme-contrast
+    /// D1): the sidebar a step darker than the terminal and the pane's header, the selected row in the
+    /// terminal's own background, and text, needs-you and accent colours readable against
+    /// both. A palette's yellow and blue are often too light to read on it as they are.
+    pub fn for_light(back: Rgb, front: Rgb, accent: Paint, needs_you: Paint) -> Chrome {
+        let sidebar = mix(back, front, 0.06);
+        let on_both = |color: Rgb, minimum: f64| {
+            Paint::solid(readable(readable(color, sidebar, minimum), back, minimum))
+        };
+        Chrome {
+            sidebar: Paint::solid(sidebar),
+            sidebar_line: Paint::solid(mix(back, front, 0.2)),
+            selected: Paint::solid(back),
+            text: on_both(front, 4.5),
+            muted: on_both(mix(back, front, 0.68), 4.5),
+            group: on_both(mix(back, front, 0.84), 4.5),
+            amber: on_both(needs_you.rgb, 4.5),
+            glyph_amber: on_both(needs_you.rgb, 3.0),
+            track: Paint::solid(mix(back, front, 0.3)),
+            accent: on_both(accent.rgb, 4.5),
         }
     }
 }
@@ -356,7 +379,6 @@ pub fn luminance(color: Rgb) -> f64 {
 }
 
 /// WCAG 2.x contrast ratio between two colours.
-#[cfg(test)]
 pub fn contrast(a: impl Into<Paint>, b: impl Into<Paint>) -> f64 {
     let (a, b) = (a.into().rgb, b.into().rgb);
     let (high, low) = {
@@ -366,9 +388,66 @@ pub fn contrast(a: impl Into<Paint>, b: impl Into<Paint>) -> f64 {
     (high + 0.05) / (low + 0.05)
 }
 
+const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
+const WHITE: Rgb = Rgb {
+    r: 255,
+    g: 255,
+    b: 255,
+};
+
+/// `text` moved toward black or white, whichever needs the smaller step, until it has
+/// `minimum` contrast against `background`; unchanged when it already has. Mixing toward
+/// black or white keeps its hue (fix-light-theme-contrast D3).
+pub fn readable(text: Rgb, background: Rgb, minimum: f64) -> Rgb {
+    if minimum <= 1.0 || contrast(text, background) >= minimum {
+        return text;
+    }
+    // In 2 % steps: fine enough to land near the minimum, cheap enough per cell.
+    let first_step = |toward: Rgb| {
+        (1..=50).find_map(|step| {
+            let moved = mix(text, toward, f64::from(step) / 50.0);
+            (contrast(moved, background) >= minimum).then_some((step, moved))
+        })
+    };
+    match (first_step(BLACK), first_step(WHITE)) {
+        (Some((dark, darker)), Some((light, lighter))) => {
+            if dark <= light {
+                darker
+            } else {
+                lighter
+            }
+        }
+        (Some((_, darker)), None) => darker,
+        (None, Some((_, lighter))) => lighter,
+        // Neither reaches it (a mid-grey background at a high minimum): the better end.
+        (None, None) if contrast(BLACK, background) >= contrast(WHITE, background) => BLACK,
+        (None, None) => WHITE,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readable_text_meets_the_minimum_with_the_smaller_step() {
+        let white = rgb(0xFFFFFF);
+        // Claude Code's dark-theme amber on a light terminal darkens.
+        let amber = readable(rgb(0xFFC107), white, 4.5);
+        assert!(contrast(amber, white) >= 4.5);
+        assert!(luminance(amber) < luminance(rgb(0xFFC107)));
+        assert!(amber.r > amber.b, "still an amber, not a grey: {amber:?}");
+        // Its light-theme subtle grey too.
+        assert!(contrast(readable(rgb(0xAFAFAF), white, 4.5), white) >= 4.5);
+        // A dark text on a dark terminal lightens.
+        let dark = rgb(0x0F1115);
+        let lifted = readable(rgb(0x2A2F3A), dark, 4.5);
+        assert!(contrast(lifted, dark) >= 4.5);
+        assert!(luminance(lifted) > luminance(rgb(0x2A2F3A)));
+        // Already readable, or turned off: unchanged.
+        assert_eq!(readable(rgb(0x1D2433), white, 4.5), rgb(0x1D2433));
+        assert_eq!(readable(rgb(0xFFC107), white, 1.0), rgb(0xFFC107));
+    }
 
     #[test]
     fn group_colours_stand_out_on_the_sidebar() {

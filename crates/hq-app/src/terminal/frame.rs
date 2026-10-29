@@ -1,13 +1,15 @@
 //! A render-ready snapshot of the visible screen: every cell's character and resolved
 //! colours, the cursor, and the runs the painter draws (merged backgrounds, styled text).
 
+use std::collections::HashMap;
+
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 
 use super::links::Link;
 use super::model::{TerminalModel, palette_color};
-use crate::theme::{Paint, Palette};
+use crate::theme::{Paint, Palette, readable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Underline {
@@ -78,8 +80,9 @@ pub struct TextRun {
     pub wide: bool,
 }
 
-/// `hovered` is the link under the pointer, underlined wherever it shows.
-pub fn build(model: &TerminalModel, hovered: Option<&Link>) -> Frame {
+/// `hovered` is the link under the pointer, underlined wherever it shows. Text under
+/// `minimum_contrast` against its cell is made readable; 1 leaves every colour as drawn.
+pub fn build(model: &TerminalModel, hovered: Option<&Link>, minimum_contrast: f32) -> Frame {
     let term = model.term();
     let palette = model.palette();
     let size = model.size();
@@ -114,6 +117,15 @@ pub fn build(model: &TerminalModel, hovered: Option<&Link>) -> Frame {
         spacer: false,
     };
     let mut rows = vec![vec![blank; size.columns]; size.rows];
+    // A screen drawn for the other mode repeats a few colour pairs in thousands of cells.
+    let mut adjusted: HashMap<([u8; 3], [u8; 3]), Rgb> = HashMap::new();
+    let mut readable_on = |text: Paint, under: Paint| -> Paint {
+        let key = |color: Rgb| [color.r, color.g, color.b];
+        let rgb = *adjusted
+            .entry((key(text.rgb), key(under.rgb)))
+            .or_insert_with(|| readable(text.rgb, under.rgb, f64::from(minimum_contrast)));
+        Paint { rgb, ..text }
+    };
     let offset = content.display_offset;
     let selection = content.selection;
 
@@ -147,6 +159,8 @@ pub fn build(model: &TerminalModel, hovered: Option<&Link>) -> Frame {
         }
         if flags.contains(Flags::HIDDEN) {
             foreground = back;
+        } else {
+            foreground = readable_on(foreground, back);
         }
         rows[row][column] = StyledCell {
             ch: cell.c,
@@ -303,7 +317,7 @@ pub fn text_runs(row: usize, cells: &[StyledCell]) -> Vec<TextRun> {
 mod tests {
     use super::*;
     use crate::terminal::model::GridSize;
-    use crate::theme::Theme;
+    use crate::theme::{Theme, contrast};
 
     fn frame_of(bytes: &[u8]) -> (Frame, Palette) {
         let palette = Theme::light().palette;
@@ -315,7 +329,7 @@ mod tests {
             palette.clone(),
         );
         model.feed(bytes);
-        (build(&model, None), palette)
+        (build(&model, None, 1.0), palette)
     }
 
     #[test]
@@ -335,7 +349,7 @@ mod tests {
         let point = crate::terminal::links::view_point(term, 0, 1);
         let link = crate::terminal::links::LinkFinder::new().at(term, point);
         assert!(link.is_some());
-        let frame = build(&model, link.as_ref());
+        let frame = build(&model, link.as_ref(), 1.0);
         let underlined = |row: usize, column: usize| {
             frame.rows[row][column].style.underline == Underline::Single
         };
@@ -345,7 +359,7 @@ mod tests {
             !underlined(1, 0) && !underlined(1, 7),
             "the indent and \"end\""
         );
-        let plain = build(&model, None);
+        let plain = build(&model, None, 1.0);
         assert_eq!(plain.rows[0][0].style.underline, Underline::None);
     }
 
@@ -362,7 +376,7 @@ mod tests {
             palette,
         );
         model.feed(b"\x1b[31mr\x1b[38;2;1;2;3mt\x1b[0md");
-        let frame = build(&model, None);
+        let frame = build(&model, None, 1.0);
         let row = &frame.rows[0];
         assert_eq!(row[0].style.color.opacity, 40, "palette red at its opacity");
         assert_eq!(row[1].style.color.opacity, 100, "an exact colour is opaque");
@@ -377,6 +391,36 @@ mod tests {
         assert_eq!(row[1].style.color.rgb, Rgb { r: 255, g: 0, b: 0 });
         assert_eq!(row[2].style.color.rgb, Rgb { r: 1, g: 2, b: 3 });
         assert_eq!(row[3].style.color.rgb, palette.foreground);
+    }
+
+    #[test]
+    fn text_under_the_minimum_contrast_is_made_readable() {
+        let mut model = TerminalModel::new(
+            GridSize {
+                columns: 12,
+                rows: 3,
+            },
+            Theme::light().palette,
+        );
+        // Claude Code's dark-theme amber and its own light-theme grey, on a white terminal;
+        // a hidden cell keeps its colour.
+        model.feed(b"\x1b[38;2;255;193;7mA\x1b[38;2;175;175;175mB\x1b[8mC");
+        let white = Theme::light().palette.background;
+        let frame = build(&model, None, 4.5);
+        for column in 0..2 {
+            let text = frame.rows[0][column].style.color.rgb;
+            assert!(contrast(text, white) >= 4.5, "column {column}: {text:?}");
+        }
+        assert_eq!(frame.rows[0][2].style.color, frame.rows[0][2].background);
+        let off = build(&model, None, 1.0);
+        assert_eq!(
+            off.rows[0][0].style.color.rgb,
+            Rgb {
+                r: 255,
+                g: 193,
+                b: 7
+            }
+        );
     }
 
     #[test]
@@ -474,7 +518,7 @@ mod tests {
             alacritty_terminal::selection::SelectionType::Simple,
         );
         model.extend_selection(0, 5, alacritty_terminal::index::Side::Right);
-        let frame = build(&model, None);
+        let frame = build(&model, None, 1.0);
         assert_eq!(frame.rows[0][2].background.rgb, palette.selection);
         assert_eq!(
             frame.rows[0][2].style.color.rgb, palette.foreground,
@@ -489,7 +533,7 @@ mod tests {
             b: 0x2E,
         });
         model.set_palette(themed.clone());
-        let frame = build(&model, None);
+        let frame = build(&model, None, 1.0);
         assert_eq!(
             frame.rows[0][2].style.color.rgb,
             themed.selection_text.unwrap(),

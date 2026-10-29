@@ -60,6 +60,9 @@ pub struct LaunchContext<'a> {
     /// Socket that `hook-forward` delivers hook payloads to.
     pub hook_socket: &'a Path,
     pub conversation: Conversation<'a>,
+    /// Whether Headquarter's terminal is light or dark, when the app has said
+    /// (fix-light-theme-contrast D2).
+    pub background: Option<crate::background::Background>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +77,8 @@ pub struct LaunchSpec {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OwnerSettings {
     pub claude_status_line: Option<String>,
+    /// The theme the owner set in Claude Code itself, which Headquarter leaves alone.
+    pub claude_theme: Option<String>,
 }
 
 impl OwnerSettings {
@@ -81,6 +86,7 @@ impl OwnerSettings {
     pub fn discover(cwd: &Path) -> OwnerSettings {
         OwnerSettings {
             claude_status_line: claude::owner_status_line(cwd),
+            claude_theme: claude::owner_theme(cwd),
         }
     }
 }

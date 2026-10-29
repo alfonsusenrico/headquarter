@@ -230,6 +230,7 @@ fn pane_options_with(appearance: &Appearance, lookup: &FaceLookup) -> PaneOption
             })
             .collect(),
         dim_unfocused: appearance.dim_unfocused,
+        minimum_contrast: appearance.minimum_contrast,
         opacity: appearance.opacity,
         cursor: appearance.cursor.map(|shape| match shape {
             hq_config::CursorShape::Block => CursorShape::Block,

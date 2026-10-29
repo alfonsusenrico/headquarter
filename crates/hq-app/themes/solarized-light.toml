@@ -29,7 +29,3 @@ white = "#fdf6e3"
 name = "Solarized Light"
 credit = "Solarized · MIT"
 
-[headquarter.colors]
-accent = "#268bd2"
-needs_you = "#b58900"
-needs_you_icon = "#b58900"

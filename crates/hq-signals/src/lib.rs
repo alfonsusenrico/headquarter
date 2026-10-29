@@ -3,6 +3,7 @@
 //! and the observe-only scan of sessions started elsewhere.
 
 pub mod adapters;
+pub mod background;
 pub mod claude_usage;
 pub mod codex_server;
 pub mod details;

@@ -32,7 +32,3 @@ white = "#bcc0cc"
 name = "Catppuccin Latte"
 credit = "Catppuccin · MIT"
 
-[headquarter.colors]
-accent = "#1e66f5"
-needs_you = "#df8e1d"
-needs_you_icon = "#df8e1d"

@@ -483,6 +483,68 @@ pub fn apply_seeds(theme: &mut Theme, pinned: &BTreeSet<Token>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::contrast;
+
+    /// Every light theme shipped, built-in or a template, keeps its interface readable and
+    /// apart from the terminal; dark templates keep the chrome they had
+    /// (fix-light-theme-contrast D1).
+    #[test]
+    fn light_themes_are_designed_for_light() {
+        let library = Library::load(None);
+        let mut light = vec![("light".to_owned(), Theme::light())];
+        for (id, file) in &library.templates {
+            let theme = from_file(file, Mode::Light).theme;
+            match theme.mode {
+                Mode::Light => light.push((id.clone(), theme)),
+                Mode::Dark => {
+                    let chrome = Chrome::from_colours(
+                        theme.palette.background,
+                        theme.palette.foreground,
+                        file.colors.normal[4].map_or(Theme::dark().chrome.accent, |hex| {
+                            crate::theme::Paint::solid(crate::theme::rgb(hex))
+                        }),
+                        file.colors.normal[3].map_or(Theme::dark().chrome.amber, |hex| {
+                            crate::theme::Paint::solid(crate::theme::rgb(hex))
+                        }),
+                    );
+                    assert_eq!(theme.chrome, chrome, "{id} is unchanged");
+                }
+            }
+        }
+        assert_eq!(
+            light.len(),
+            4,
+            "Light, Latte, Solarized Light, Gruvbox Light"
+        );
+        for (id, theme) in light {
+            let c = theme.chrome;
+            let terminal = crate::theme::Paint::solid(theme.palette.background);
+            for (name, color, minimum) in [
+                ("text", c.text, 4.5),
+                ("muted", c.muted, 4.5),
+                ("group", c.group, 4.5),
+                ("amber", c.amber, 4.5),
+                ("accent", c.accent, 4.5),
+                ("glyph amber", c.glyph_amber, 3.0),
+            ] {
+                for (surface_name, surface) in [
+                    ("sidebar", c.sidebar),
+                    ("selected", c.selected),
+                    ("terminal", terminal),
+                ] {
+                    let ratio = contrast(color, surface);
+                    assert!(
+                        ratio >= minimum,
+                        "{id}: {name} on {surface_name} is {ratio:.2}:1"
+                    );
+                }
+            }
+            assert!(
+                crate::theme::luminance(c.sidebar.rgb) < crate::theme::luminance(terminal.rgb),
+                "{id}: the sidebar sits apart from the terminal"
+            );
+        }
+    }
     use crate::theme::rgb;
 
     fn library() -> Library {
