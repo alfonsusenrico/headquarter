@@ -63,8 +63,9 @@ private val Padding = 8.dp
 
 /**
  * The open terminal, drawn from the core's snapshot (add-android-app D8). Reports the grid
- * that fits through [onGrid], scrolls history with a vertical drag, and changes the text
- * size with a pinch.
+ * that fits through [onGrid], scrolls with a vertical drag at the dragged cell (the core
+ * decides whether that is history or the agent's own scrolling, fix-phone-scroll D2), and
+ * changes the text size with a pinch.
  */
 @Composable
 fun TerminalView(
@@ -72,7 +73,7 @@ fun TerminalView(
     textSize: Float,
     onTextSize: (Float) -> Unit,
     onGrid: (cols: Int, rows: Int) -> Unit,
-    onScroll: (lines: Int) -> Unit,
+    onScroll: (lines: Int, row: Int, col: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalTokens.current
@@ -85,6 +86,7 @@ fun TerminalView(
     val rowLayouts = remember(textSize, density, tokens) { RowLayouts(measurer, style, tokens) }
     val currentTextSize by rememberUpdatedState(textSize)
     val currentCell by rememberUpdatedState(cell)
+    val currentAdvance by rememberUpdatedState(advance)
     var pending by remember { mutableFloatStateOf(0f) }
 
     BoxWithConstraints(modifier.background(tokens.terminalBackground)) {
@@ -97,7 +99,7 @@ fun TerminalView(
                 .fillMaxSize()
                 .semantics { contentDescription = "Terminal" }
                 .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
+                    detectTransformGestures { centroid, pan, zoom, _ ->
                         if (zoom != 1f) {
                             val size = (currentTextSize * zoom).coerceIn(Settings.MIN_TEXT_SIZE, Settings.MAX_TEXT_SIZE)
                             if (size != currentTextSize) onTextSize(size)
@@ -107,7 +109,10 @@ fun TerminalView(
                             val lines = pending.toInt()
                             if (lines != 0) {
                                 pending -= lines
-                                onScroll(lines)
+                                val inset = Padding.toPx()
+                                val row = ((centroid.y - inset) / currentCell.height).toInt().coerceAtLeast(0)
+                                val col = ((centroid.x - inset) / currentAdvance).toInt().coerceAtLeast(0)
+                                onScroll(lines, row, col)
                             }
                         }
                     }
@@ -153,7 +158,7 @@ fun TerminalView(
         }
         if (scrolledBack > 0) {
             EdgeFade(Modifier.align(Alignment.BottomCenter), tokens.terminalBackground, fromTop = false)
-            LiveButton(Modifier.align(Alignment.BottomEnd).padding(12.dp)) { onScroll(-scrolledBack) }
+            LiveButton(Modifier.align(Alignment.BottomEnd).padding(12.dp)) { onScroll(-scrolledBack, 0, 0) }
         }
     }
 }

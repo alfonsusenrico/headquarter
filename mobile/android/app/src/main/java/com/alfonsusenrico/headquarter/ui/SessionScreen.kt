@@ -189,7 +189,7 @@ fun SessionScreen(
                 grid = cols to rows
                 if (opened) core.io { phone.resize(cols.toUShort(), rows.toUShort()) }
             },
-            onScroll = { lines -> core.io { phone.scroll(lines) } },
+            onScroll = { lines, row, col -> core.io { phone.scroll(lines, row.toUShort(), col.toUShort()) } },
             modifier = Modifier.weight(1f).fillMaxWidth(),
         )
         val keys = if (shell) ShellKeys else SessionKeys

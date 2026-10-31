@@ -13,6 +13,8 @@ use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor, StdSyncHandler
 
 /// Lines of output kept above the screen.
 const SCROLLBACK_LINES: usize = 2000;
+/// The most wheel reports or arrows one scroll sends, as the desktop's wheel.
+const SCROLL_REPORTS: u32 = 10;
 
 /// A colour as the app resolves it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -163,9 +165,31 @@ impl Terminal {
         (self.size.cols as u16, self.size.rows as u16)
     }
 
-    /// Scrolls the view by `lines`. Positive goes back into history.
-    pub fn scroll(&mut self, lines: i32) {
+    /// Scrolls by `lines` at the cell `row`, `col`, as the desktop's wheel does
+    /// (fix-phone-scroll D1): wheel reports when the agent asked for SGR mouse reports,
+    /// arrow keys on the alternate screen, otherwise this terminal's own history. Positive
+    /// goes back. Returns the bytes to send to the agent.
+    pub fn scroll(&mut self, lines: i32, row: u16, col: u16) -> Vec<u8> {
+        if lines == 0 {
+            return Vec::new();
+        }
+        let mode = *self.term.mode();
+        let count = lines.unsigned_abs().min(SCROLL_REPORTS) as usize;
+        let back = lines > 0;
+        if mode.intersects(TermMode::MOUSE_MODE) && mode.contains(TermMode::SGR_MOUSE) {
+            let row = usize::from(row).min(self.size.rows - 1) + 1;
+            let col = usize::from(col).min(self.size.cols - 1) + 1;
+            let button = if back { 64 } else { 65 };
+            return format!("\x1b[<{button};{col};{row}M")
+                .repeat(count)
+                .into_bytes();
+        }
+        if mode.contains(TermMode::ALT_SCREEN) {
+            let key = if back { Key::Up } else { Key::Down };
+            return self.key_bytes(key).repeat(count);
+        }
         self.term.scroll_display(Scroll::Delta(lines));
+        Vec::new()
     }
 
     pub fn scroll_to_bottom(&mut self) {
@@ -351,13 +375,43 @@ mod tests {
             terminal.feed(format!("line {line}\r\n").as_bytes());
         }
         assert_eq!(terminal.screen().history, 8);
-        terminal.scroll(2);
+        assert!(
+            terminal.scroll(2, 0, 0).is_empty(),
+            "nothing goes to the agent"
+        );
         let screen = terminal.screen();
         assert_eq!(screen.scrolled_back, 2);
         assert!(!screen.cursor_visible);
         assert!(terminal.text().starts_with("line 6"), "{}", terminal.text());
         terminal.scroll_to_bottom();
         assert_eq!(terminal.screen().scrolled_back, 0);
+    }
+
+    /// Claude Code 2.1.312 draws on the alternate screen with SGR mouse reports.
+    #[test]
+    fn a_full_screen_agent_with_the_mouse_gets_wheel_reports_at_the_cell() {
+        let mut terminal = Terminal::new(40, 10);
+        terminal.feed(b"\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
+        assert_eq!(terminal.scroll(2, 4, 7), b"\x1b[<64;8;5M\x1b[<64;8;5M");
+        assert_eq!(terminal.scroll(-1, 4, 7), b"\x1b[<65;8;5M");
+        assert_eq!(
+            terminal.scroll(30, 99, 99),
+            b"\x1b[<64;40;10M".repeat(10),
+            "clamped to the grid, ten at most"
+        );
+        assert_eq!(terminal.screen().scrolled_back, 0);
+    }
+
+    #[test]
+    fn a_full_screen_agent_without_the_mouse_gets_arrows() {
+        let mut terminal = Terminal::new(40, 10);
+        terminal.feed(b"\x1b[?1049h");
+        assert_eq!(terminal.scroll(2, 0, 0), b"\x1b[A\x1b[A");
+        terminal.feed(b"\x1b[?1h");
+        assert_eq!(terminal.scroll(-1, 0, 0), b"\x1bOB");
+        // Mouse reports in the old encoding are not used, as on the desktop.
+        terminal.feed(b"\x1b[?1000h");
+        assert_eq!(terminal.scroll(1, 0, 0), b"\x1bOA");
     }
 
     #[test]
