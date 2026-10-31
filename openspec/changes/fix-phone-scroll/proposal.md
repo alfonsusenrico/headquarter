@@ -1,6 +1,6 @@
 # Scrolling full-screen agents on the phone
 
-Status: plan, waiting for the owner's approval.
+Status: approved by the owner 2026-10-31 ("ok let's do it", with fix-claude-usage-folder and fix-false-done).
 
 ## Why
 

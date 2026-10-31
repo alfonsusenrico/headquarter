@@ -12,14 +12,16 @@ terminal tracks the agent's modes (`TermMode`) and already encodes keys for them
 
 `Terminal::scroll(lines, row, col)` returns the bytes to send, or moves the history itself:
 
-- The agent asked for mouse reports (any `MOUSE_MODE`): one wheel report per line, button 64 to
-  go back (drag down) and 65 forward, at `row`/`col`, SGR (`ESC[<64;col;rowM`) when it asked for
-  SGR, the classic encoding otherwise; at most 10 per call, as the desktop.
-- Alternate screen without mouse reports: Up or Down arrows, in the application-cursor form when
-  that mode is set, at most 10.
+- The agent asked for SGR mouse reports (`MOUSE_MODE` with `SGR_MOUSE`, as Claude Code does): one
+  wheel report per line, button 64 to go back (drag down) and 65 forward, at `row`/`col`
+  (`ESC[<64;col;rowM`, clamped to the grid), at most 10 per call, as the desktop. The older
+  encoding is not sent, as on the desktop.
+- Alternate screen otherwise: Up or Down arrows, in the application-cursor form when that mode is
+  set, at most 10.
 - Otherwise: its own history, as today.
 
-`Phone::scroll` sends returned bytes as input and marks the phone in use as typing does.
+`Phone::scroll` sends returned bytes as input, which makes the phone the device in use as typing
+does; it does not return the view to the latest output.
 
 Rejected: encoding in Kotlin (the modes live in the core, and both phone apps to come would repeat
 it). Rejected: sharing the desktop's code (it lives in `hq-app` with GPUI types; the encoding is a
