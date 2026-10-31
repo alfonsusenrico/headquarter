@@ -8,7 +8,7 @@ Expected Result: both end with the total.
 
 ## 2. Verification and delivery
 
-- [ ] 2.1 `./scripts/check` passes; on screen. `verification.md` written.
+- [x] 2.1 `./scripts/check` passes; on screen. `verification.md` written.
 - [ ] 2.2 The owner checks it.
 - [ ] 2.3 After the owner accepts: archive, push `feat/usage-total`, open the PR, report its URL.
 
