@@ -9,7 +9,7 @@ Expected Result: checking with nothing new no longer covers the pane.
 
 ## 2. Verification and delivery
 
-- [ ] 2.1 `./scripts/check` passes; on screen. `verification.md` written.
+- [x] 2.1 `./scripts/check` passes; on screen. `verification.md` written.
 - [ ] 2.2 The owner checks it.
 - [ ] 2.3 After the owner accepts: archive, push `feat/quiet-notice`, open the PR, report its URL.
 
