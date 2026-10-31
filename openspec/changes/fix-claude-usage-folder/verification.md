@@ -23,8 +23,17 @@ Working tree on `fix/claude-usage-folder` (committed with this record), 2026-10-
 - `~/.claude.json`: the home folder is recorded untrusted, 17 of 18 other folders trusted, so the
   new choice skips `~` and uses the most recent project folder.
 
+## On screen (the owner freed the Mac, 2026-10-31)
+
+Test host and dev app built from 6f8575e (`HQ_DATA_DIR`/`HQ_CONFIG_DIR` under `/private/tmp/hqv`,
+Codex and agy turned off), real Claude Code 2.1.312 and the owner's real `~/.claude.json`: an older
+session in the trusted scratch folder, then a newer one in `/Users/enrico` (recorded untrusted; it
+sits at Claude's trust question). The hidden read ran in the trusted folder: host log
+`usage read agent=claude source=usage-screen ok=true`, and the details show 5h, week and
+week · Fable with their resets and no trust message
+(`research/evidence/claude-usage-folder/details-home-session.png`). No prompt was sent.
+
 ## Not verified
 
-- The fix running against the owner's real Claude Code inside the installed app (after a release,
-  or a local build on the owner's go).
+- The installed app itself (after the release).
 - Linux.
