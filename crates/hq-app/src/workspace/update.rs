@@ -885,13 +885,19 @@ impl Workspace {
                 // Before an install, Wait installs now; once installed, Later keeps it
                 // installed. Either way the restart is the owner's (D2).
                 let installing = !self.updates.installed_waiting;
+                let interrupts = if busy.len() == 1 {
+                    "Restarting interrupts it."
+                } else {
+                    "Restarting interrupts them."
+                };
                 body = body
                     .child(heading(format!("{count}: {}", busy.join(", "))))
                     .child(muted(if installing {
-                        "Restarting interrupts them. Wait installs it now; restart with Update Now in the sidebar when you're ready."
-                            .to_owned()
+                        format!(
+                            "{interrupts} Wait installs the update now; restart with Update Now in the sidebar when you're ready."
+                        )
                     } else {
-                        "Restarting interrupts them.".to_owned()
+                        interrupts.to_owned()
                     }));
                 buttons = buttons
                     .child(
