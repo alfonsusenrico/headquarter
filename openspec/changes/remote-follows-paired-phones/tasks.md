@@ -11,7 +11,7 @@ Expected Result: remote control runs exactly while a phone is paired.
 
 ## 2. Verification and delivery
 
-- [ ] 2.1 `./scripts/check` passes; stand-in phone pairs, is removed, and the endpoint stops (host log). On screen. `verification.md` written.
+- [x] 2.1 `./scripts/check` passes; stand-in phone pairs, is removed, and the endpoint stops (host log). On screen. `verification.md` written.
 - [ ] 2.2 The owner checks it.
 - [ ] 2.3 After the owner accepts: archive, push `feat/remote-follows-phones`, open the PR, report its URL.
 
