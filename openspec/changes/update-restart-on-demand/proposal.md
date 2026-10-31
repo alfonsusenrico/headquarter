@@ -1,6 +1,6 @@
 # The update restarts only when the owner says
 
-Status: plan, waiting for the owner's approval.
+Status: approved by the owner 2026-10-31 ("approve, mac is free").
 
 ## Why
 

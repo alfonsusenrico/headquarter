@@ -77,16 +77,27 @@ pub(super) enum Phase {
     Asking,
     /// The installer runs and has reached this step.
     Running(Step),
-    /// Installed; the restart waits until no session is busy.
-    Waiting,
+    /// Installed; the restart waits for the owner's Update Now (update-restart-on-demand D1).
+    Installed,
     Restarting,
     Failed(String),
+}
+
+/// The sidebar button's label, if it shows: "Update Now" once installed and waiting for
+/// the owner (update-restart-on-demand D2).
+fn pill_label(phase: &Phase, available: Option<Version>, host_behind: bool) -> Option<String> {
+    match (phase, available) {
+        (Phase::Installed, _) => Some("Update Now".to_owned()),
+        (_, Some(version)) => Some(format!("Update Headquarter v{version}")),
+        (_, None) if host_behind => Some("Restart to finish update".to_owned()),
+        _ => None,
+    }
 }
 
 /// Whether Escape closes the update window: in the phases that offer OK, Later or Close
 /// (fix-update-window-keys D2).
 fn escape_closes(phase: &Phase) -> bool {
-    matches!(phase, Phase::Offer | Phase::Waiting | Phase::Failed(_))
+    matches!(phase, Phase::Offer | Phase::Installed | Phase::Failed(_))
 }
 
 /// The updater's state in the workspace.
@@ -105,6 +116,9 @@ pub(super) struct Updates {
     installed: Option<Installed>,
     /// Restart as soon as the install ends, without waiting for busy sessions.
     restart_now: bool,
+    /// The update is installed and only the owner's restart is left, so closing the
+    /// confirmation returns to `Installed` (update-restart-on-demand D2).
+    installed_waiting: bool,
     log: UpdateLog,
     /// Where the log box is scrolled; it follows the newest line while it shows the end
     /// (fix-update-log-scroll D2).
@@ -123,6 +137,7 @@ impl Updates {
             phase: Phase::Offer,
             installed: update::installed_copy(),
             restart_now: false,
+            installed_waiting: false,
             log: UpdateLog::default(),
             log_scroll: ScrollHandle::new(),
             _schedule: None,
@@ -219,12 +234,11 @@ impl Workspace {
         rail: bool,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let label = match (&self.updates.phase, self.updates.available) {
-            (Phase::Waiting, _) => "Restart to update".to_owned(),
-            (_, Some(version)) => format!("Update Headquarter v{version}"),
-            (_, None) if self.updates.host_behind => "Restart to finish update".to_owned(),
-            _ => return None,
-        };
+        let label = pill_label(
+            &self.updates.phase,
+            self.updates.available,
+            self.updates.host_behind,
+        )?;
         let chrome = self.theme.chrome;
         Some(
             div()
@@ -245,6 +259,8 @@ impl Workspace {
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.updates.available.is_some() && this.updates.phase == Phase::Offer {
                         this.show_whats_new(window, cx);
+                    } else if this.updates.phase == Phase::Installed {
+                        this.restart_when_asked(window, cx);
                     } else {
                         this.open_update_window(window, cx);
                     }
@@ -673,30 +689,39 @@ impl Workspace {
         .detach();
     }
 
-    /// Wait: installs now when there is something to install, and restarts by itself once
-    /// no session is busy (D5).
-    fn wait_for_idle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Wait: installs now when there is something to install, and leaves the restart to
+    /// the owner (update-restart-on-demand D1).
+    fn install_and_wait(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.updates.restart_now = false;
         match (self.updates.available, self.updates.installed.clone()) {
             (Some(version), Some(installed)) => self.install(version, installed, window, cx),
-            _ => self.updates.phase = Phase::Waiting,
+            _ => {
+                self.updates.phase = Phase::Installed;
+                self.updates.installed_waiting = true;
+            }
         }
     }
 
-    /// The install finished: restart now, or wait for busy sessions (D5).
+    /// The install finished: restart when the owner asked for it with nothing busy,
+    /// otherwise wait for their Update Now; never by itself (D1).
     fn installed_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.updates.available = None;
-        if self.updates.restart_now || update::busy(&self.sessions).is_empty() {
+        if self.updates.restart_now {
             self.restart_for_update(window, cx);
         } else {
-            self.updates.phase = Phase::Waiting;
+            self.updates.phase = Phase::Installed;
+            self.updates.installed_waiting = true;
         }
     }
 
-    /// While a restart waits, runs it once no session is busy.
-    pub(super) fn restart_if_idle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.updates.phase == Phase::Waiting && update::busy(&self.sessions).is_empty() {
+    /// The sidebar's Update Now for an installed update: restarts at once when nothing is
+    /// busy, otherwise asks first (D2).
+    fn restart_when_asked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if update::busy(&self.sessions).is_empty() {
             self.restart_for_update(window, cx);
+        } else {
+            self.updates.phase = Phase::Asking;
+            self.open_update_window(window, cx);
         }
     }
 
@@ -762,7 +787,11 @@ impl Workspace {
     fn close_update_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.updates.open = false;
         if matches!(self.updates.phase, Phase::Asking | Phase::Failed(_)) {
-            self.updates.phase = Phase::Offer;
+            self.updates.phase = if self.updates.installed_waiting {
+                Phase::Installed
+            } else {
+                Phase::Offer
+            };
         }
         if let Some(focus) = self.update_return.take() {
             window.focus(&focus, cx);
@@ -853,19 +882,28 @@ impl Workspace {
                     1 => "1 session is busy".to_owned(),
                     count => format!("{count} sessions are busy"),
                 };
+                // Before an install, Wait installs now; once installed, Later keeps it
+                // installed. Either way the restart is the owner's (D2).
+                let installing = !self.updates.installed_waiting;
                 body = body
                     .child(heading(format!("{count}: {}", busy.join(", "))))
-                    .child(muted(
-                        "Restarting interrupts them. Wait restarts by itself as soon as none is busy."
-                            .to_owned(),
-                    ));
+                    .child(muted(if installing {
+                        "Restarting interrupts them. Wait installs it now; restart with Update Now in the sidebar when you're ready."
+                            .to_owned()
+                    } else {
+                        "Restarting interrupts them.".to_owned()
+                    }));
                 buttons = buttons
                     .child(
                         Button::new("update-wait")
                             .w(px(BUTTON_WIDTH))
-                            .label("Wait")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.wait_for_idle(window, cx);
+                            .label(if installing { "Wait" } else { "Later" })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if installing {
+                                    this.install_and_wait(window, cx);
+                                } else {
+                                    this.close_update_window(window, cx);
+                                }
                                 cx.notify();
                             })),
                     )
@@ -890,16 +928,14 @@ impl Workspace {
                     .child(self.render_steps(*step))
                     .children(self.render_log());
             }
-            (Phase::Waiting, _) => {
-                let count = update::busy(&self.sessions).len();
+            (Phase::Installed, _) => {
                 body = body
                     .child(heading("Update installed".to_owned()))
                     .child(self.render_steps(Step::Restart))
                     .children(self.render_log())
-                    .child(muted(format!(
-                        "Waiting for {count} busy session{} before restarting.",
-                        if count == 1 { "" } else { "s" }
-                    )));
+                    .child(muted(
+                        "Restart with Update Now in the sidebar when you're ready.".to_owned(),
+                    ));
                 buttons = buttons.child(later("Close")).child(
                     Button::new("update-restart-waiting")
                         .w(px(BUTTON_WIDTH))
@@ -1104,9 +1140,28 @@ mod tests {
     }
 
     #[test]
+    fn the_pill_offers_update_now_once_installed() {
+        let version = Version::parse("0.1.30");
+        assert_eq!(
+            pill_label(&Phase::Installed, None, false).as_deref(),
+            Some("Update Now"),
+            "installed, waiting for the owner"
+        );
+        assert_eq!(
+            pill_label(&Phase::Offer, version, false).as_deref(),
+            Some("Update Headquarter v0.1.30")
+        );
+        assert_eq!(
+            pill_label(&Phase::Offer, None, true).as_deref(),
+            Some("Restart to finish update")
+        );
+        assert_eq!(pill_label(&Phase::Offer, None, false), None);
+    }
+
+    #[test]
     fn escape_closes_only_what_offers_a_way_out() {
         assert!(escape_closes(&Phase::Offer), "OK, Later");
-        assert!(escape_closes(&Phase::Waiting), "Close");
+        assert!(escape_closes(&Phase::Installed), "Close");
         assert!(escape_closes(&Phase::Failed("no network".into())), "Close");
         assert!(!escape_closes(&Phase::Asking), "Wait or Restart Now only");
         assert!(!escape_closes(&Phase::Running(Step::Download)));
