@@ -2,6 +2,13 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.23 (2026-10-31)
+
+- Updates restart only when you say so. If sessions are busy and you choose Wait, the update
+  installs right away and Headquarter no longer restarts by itself once they go quiet. The
+  sidebar's button then reads Update Now: it restarts at once when nothing is busy, and otherwise
+  names the busy sessions and lets you restart now or later.
+
 ## 0.1.22 (2026-10-31)
 
 - Remote control follows your phones. It runs while at least one phone is paired, and while a
