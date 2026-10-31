@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use hq_protocol::{AgentUsage, Frame, Response, UsageWindow};
+use hq_signals::adapters;
 use hq_signals::event::Agent;
 use hq_signals::now_ms;
 use hq_signals::quota::{self, Account, QuotaReading, QuotaReport};
@@ -36,7 +37,10 @@ const CODEX_RETRY: Duration = Duration::from_secs(60);
 const CODEX_UNREPORTED: &str =
     "Codex didn't report its usage. Open Codex once to check it is signed in, then refresh.";
 const CLAUDE_UNREPORTED: &str = "Claude Code didn't report its usage. Open Claude Code once to check it is signed in, then refresh.";
-const CLAUDE_TRUST: &str = "Claude Code asked whether to trust a folder before showing its usage. Open Claude Code once in one of your folders and answer, then refresh.";
+const CLAUDE_TRUST: &str = "Claude Code asked whether to trust a folder before showing its usage. Open Claude Code once in one of your project folders and answer, then refresh.";
+/// The read's error when none of the sessions' folders is trusted by Claude Code; shown as
+/// `CLAUDE_TRUST`, since the same answer fixes it.
+const NO_TRUSTED_FOLDER: &str = "no session folder is trusted by Claude Code";
 /// How often the hidden `/usage` read runs while a client shows usage.
 const CLAUDE_SCREEN_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// A Claude turn in another terminal starts a hidden read at most this often.
@@ -203,24 +207,27 @@ impl Host {
         self.usage_report()
     }
 
-    /// `RefreshUsage`: reads again unless a read is under way or was just taken, and
+    /// `RefreshUsage`: reads again unless a read is under way or a good one was just
+    /// taken (a failed one is read again at once, fix-claude-usage-folder D2), and
     /// returns once no read is under way, so the answer means the readings are in;
     /// subscribers get the result.
     pub(super) fn refresh_usage(self: &Arc<Self>) {
         let recent = {
             let book = lock(&self.usage);
             book.codex_reading
-                || book.codex_started.is_some_and(|started| {
-                    started.elapsed() < REFRESH_FLOOR.min(self.usage_interval)
-                })
+                || (book.codex_problem.is_none()
+                    && book.codex_started.is_some_and(|started| {
+                        started.elapsed() < REFRESH_FLOOR.min(self.usage_interval)
+                    }))
         };
         self.claude_snapshot_changed();
         let screen_recent = {
             let book = lock(&self.usage);
             book.claude_screen_reading
-                || book
-                    .claude_screen_started
-                    .is_some_and(|started| started.elapsed() < REFRESH_FLOOR)
+                || (book.claude_problem.is_none()
+                    && book
+                        .claude_screen_started
+                        .is_some_and(|started| started.elapsed() < REFRESH_FLOOR))
         };
         if !screen_recent {
             self.start_claude_screen_read();
@@ -228,9 +235,10 @@ impl Host {
         let agy_recent = {
             let book = lock(&self.usage);
             book.agy_reading
-                || book
-                    .agy_started
-                    .is_some_and(|started| started.elapsed() < REFRESH_FLOOR)
+                || (book.agy_problem.is_none()
+                    && book
+                        .agy_started
+                        .is_some_and(|started| started.elapsed() < REFRESH_FLOOR))
         };
         if !agy_recent {
             self.start_agy_read();
@@ -373,9 +381,7 @@ impl Host {
             .resolve_agent(Agent::Claude)
             .map_err(|error| problem_text(*error))
             .and_then(|claude| {
-                let folder = self
-                    .trusted_claude_folder()
-                    .ok_or("no folder Claude Code was used in is known yet")?;
+                let folder = self.trusted_claude_folder()?;
                 super::claude_usage::read_usage_screen(&claude, &folder)
             });
         let mut book = lock(&self.usage);
@@ -394,11 +400,12 @@ impl Host {
                     .line(&format!("usage read agent=claude failed reason={reason}"));
                 // A trust question the owner can answer says so; anything else is
                 // Claude Code not reporting.
-                let shown = if reason == super::claude_usage::TRUST_ASKED {
-                    CLAUDE_TRUST
-                } else {
-                    CLAUDE_UNREPORTED
-                };
+                let shown =
+                    if reason == super::claude_usage::TRUST_ASKED || reason == NO_TRUSTED_FOLDER {
+                        CLAUDE_TRUST
+                    } else {
+                        CLAUDE_UNREPORTED
+                    };
                 book.claude_problem = Some(shown.to_owned());
             }
         }
@@ -408,19 +415,26 @@ impl Host {
         ));
     }
 
-    /// The folder of the most recent Claude conversation that still exists: Claude has
-    /// been trusted there, so its trust question does not appear.
-    fn trusted_claude_folder(&self) -> Option<PathBuf> {
+    /// The most recently used Claude session folder that Claude Code records as trusted,
+    /// so its trust question does not appear; the most recent existing one when that
+    /// record cannot be read (fix-claude-usage-folder D1).
+    fn trusted_claude_folder(&self) -> Result<PathBuf, String> {
         let mut rows: Vec<_> = lock(&self.store)
             .list()
-            .ok()?
+            .map_err(|error| format!("cannot list sessions: {error}"))?
             .into_iter()
             .filter(|row| row.agent == Agent::Claude)
             .collect();
         rows.sort_by_key(|row| std::cmp::Reverse(row.last_activity_at));
-        rows.into_iter()
+        let folders: Vec<PathBuf> = rows
+            .into_iter()
             .map(|row| PathBuf::from(row.cwd))
-            .find(|folder| folder.is_dir())
+            .filter(|folder| folder.is_dir())
+            .collect();
+        if folders.is_empty() {
+            return Err("no folder Claude Code was used in is known yet".to_owned());
+        }
+        pick_trusted(folders, adapters::claude::trusted_folders())
     }
 
     fn start_codex_read(self: &Arc<Self>) {
@@ -676,5 +690,63 @@ pub(super) fn problem_text(response: Response) -> String {
     match response {
         Response::Error { message, .. } => message,
         other => format!("{other:?}"),
+    }
+}
+
+/// The first of `folders` (most recent first) that `trusted` lists, comparing each folder
+/// as given and resolved; the first folder when the trust record could not be read.
+fn pick_trusted(folders: Vec<PathBuf>, trusted: Option<Vec<PathBuf>>) -> Result<PathBuf, String> {
+    let Some(trusted) = trusted else {
+        return folders
+            .into_iter()
+            .next()
+            .ok_or_else(|| NO_TRUSTED_FOLDER.to_owned());
+    };
+    folders
+        .into_iter()
+        .find(|folder| {
+            trusted.contains(folder)
+                || std::fs::canonicalize(folder).is_ok_and(|real| trusted.contains(&real))
+        })
+        .ok_or_else(|| NO_TRUSTED_FOLDER.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(list: &[&str]) -> Vec<PathBuf> {
+        list.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn the_read_skips_folders_claude_does_not_trust() {
+        let recent_first = paths(&["/Users/me", "/Users/me/api", "/Users/me/web"]);
+        let trusted = Some(paths(&["/Users/me/web", "/Users/me/api"]));
+        assert_eq!(
+            pick_trusted(recent_first.clone(), trusted),
+            Ok(PathBuf::from("/Users/me/api")),
+            "the home folder is skipped, the most recent trusted one wins"
+        );
+        assert_eq!(
+            pick_trusted(recent_first.clone(), Some(paths(&["/elsewhere"]))),
+            Err(NO_TRUSTED_FOLDER.to_owned())
+        );
+        assert_eq!(
+            pick_trusted(recent_first, None),
+            Ok(PathBuf::from("/Users/me")),
+            "an unreadable record keeps the old choice"
+        );
+    }
+
+    #[test]
+    fn a_folder_matches_its_resolved_path() {
+        let dir = std::env::temp_dir().canonicalize().unwrap();
+        let link = std::env::temp_dir().join(format!("hq-trust-{}", std::process::id()));
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&dir, &link).unwrap();
+        let picked = pick_trusted(vec![link.clone()], Some(vec![dir]));
+        std::fs::remove_file(&link).unwrap();
+        assert_eq!(picked, Ok(link));
     }
 }

@@ -3204,13 +3204,14 @@ fn sidebar_membership_and_groups() {
 /// Codex usage is read on request and while a client shows usage, never otherwise;
 /// a failed read keeps the last numbers with the reason.
 /// Claude Code that answers `/usage` with a screen like 2.1.306's, and asks the folder
-/// trust question instead while `$STUB_ARGS.trust` exists.
+/// trust question instead while `$STUB_ARGS.trust` exists or in a folder holding
+/// `.untrusted`.
 const CLAUDE_USAGE_SCREEN_STUB: &str = r#"case "$1 $2" in
   "auth status") echo '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'; exit 0 ;;
   "agents "*) echo '[]'; exit 0 ;;
 esac
 printf '%s\n' "$@" >> "$STUB_ARGS"
-if [ -e "$STUB_ARGS.trust" ]; then
+if [ -e "$STUB_ARGS.trust" ] || [ -e .untrusted ]; then
   printf 'Quick safety check\r\nYes, I trust this folder\r\n'
   sleep 30
   exit 0
@@ -3233,6 +3234,16 @@ fn watch_claude_usage(
     env: &mut TestEnv,
     done: impl Fn(&hq_protocol::AgentUsage) -> bool,
 ) -> hq_protocol::AgentUsage {
+    watch_claude_usage_after(env, |_| {}, done)
+}
+
+/// As `watch_claude_usage`, running `setup` after the first session starts and before
+/// usage is watched.
+fn watch_claude_usage_after(
+    env: &mut TestEnv,
+    setup: impl FnOnce(&TestEnv),
+    done: impl Fn(&hq_protocol::AgentUsage) -> bool,
+) -> hq_protocol::AgentUsage {
     // Codex and agy usage are read too: without stubs the host would find and start
     // the machine's own, with this test's home.
     env.stub("codex", "exit 1");
@@ -3251,6 +3262,7 @@ fn watch_claude_usage(
     let socket = env.host_dir().join("agentd.sock");
     wait_until("host socket", || UnixStream::connect(&socket).is_ok());
     env.create(Agent::Claude);
+    setup(env);
     let mut watcher = env.connect();
     assert!(matches!(
         watcher.request(&Request::Subscribe { usage: true }),
@@ -3312,6 +3324,80 @@ fn a_folder_trust_question_stops_the_usage_read_unanswered() {
     });
     assert!(claude.windows.is_empty());
     assert!(env.log().contains("source=usage-screen ok=false"));
+}
+
+/// The owner's newest Claude session runs in a folder Claude Code does not keep trusted
+/// (the home folder); the read uses an older one Claude trusts (fix-claude-usage-folder).
+#[test]
+fn the_usage_read_skips_a_folder_claude_does_not_trust() {
+    let mut env = TestEnv::new("usagehome");
+    env.stub("claude", CLAUDE_USAGE_SCREEN_STUB);
+    let untrusted = env.root.join("homefolder");
+    std::fs::create_dir_all(&untrusted).unwrap();
+    std::fs::write(untrusted.join(".untrusted"), "").unwrap();
+    let untrusted = untrusted.canonicalize().unwrap();
+    let record = serde_json::json!({ "projects": {
+        env.work().to_string_lossy(): { "hasTrustDialogAccepted": true },
+        untrusted.to_string_lossy(): { "hasTrustDialogAccepted": false },
+    }});
+    std::fs::write(env.root.join("home/.claude.json"), record.to_string()).unwrap();
+    let claude = watch_claude_usage_after(
+        &mut env,
+        |env| {
+            std::thread::sleep(Duration::from_millis(1100));
+            match env.connect().request(&Request::New {
+                agent: Agent::Claude,
+                cwd: untrusted.to_string_lossy().into_owned(),
+                args: vec![],
+                term: None,
+                name: None,
+                group: None,
+            }) {
+                Response::Created { .. } => {}
+                other => panic!("unexpected create answer {other:?}"),
+            }
+        },
+        |usage| {
+            !usage.windows.is_empty()
+                || usage
+                    .problem
+                    .as_deref()
+                    .is_some_and(|problem| problem.contains("trust"))
+        },
+    );
+    assert_eq!(claude.problem, None, "{}", env.log());
+    assert!(!claude.windows.is_empty());
+}
+
+/// A refresh right after a failed read reads again instead of keeping the failure
+/// (fix-claude-usage-folder D2).
+#[test]
+fn a_refresh_after_a_failed_usage_read_reads_again() {
+    let mut env = TestEnv::new("usageretry");
+    env.stub("claude", CLAUDE_USAGE_SCREEN_STUB);
+    let flag = env.root.join("stub-args.txt.trust");
+    std::fs::write(&flag, "").unwrap();
+    watch_claude_usage(&mut env, |usage| {
+        usage
+            .problem
+            .as_deref()
+            .is_some_and(|problem| problem.contains("trust"))
+    });
+    std::fs::remove_file(&flag).unwrap();
+    let mut conn = env.connect();
+    assert!(matches!(
+        conn.request(&Request::RefreshUsage {}),
+        Response::Done
+    ));
+    let claude = match conn.request(&Request::Usage {}) {
+        Response::Usage { agents } => agents
+            .into_iter()
+            .find(|usage| usage.agent == Agent::Claude)
+            .unwrap(),
+        other => panic!("unexpected usage answer {other:?}"),
+    };
+    assert_eq!(claude.problem, None, "{}", env.log());
+    assert!(!claude.windows.is_empty());
 }
 
 #[test]

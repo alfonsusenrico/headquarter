@@ -63,6 +63,7 @@ The system SHALL give each usage mark an outer ring filled to the share used of 
 #### Scenario: One window
 - **WHEN** an agent reports a single current window
 - **THEN** its mark has only the outer ring, filled to that window
+
 ### Requirement: Usage details
 The system SHALL show, when the owner opens an agent's ring, each window with its percentage used and its reset time in local 12-hour time, including per-model windows the agent reports. Clicking the ring that opened the panel, pressing Escape, or clicking outside SHALL close it.
 
@@ -96,6 +97,7 @@ The system SHALL let the owner refresh an agent's reading from its details, keep
 #### Scenario: Refresh just after a reading
 - **WHEN** the owner presses Refresh within the refresh floor after a reading
 - **THEN** no new reading is taken and the button returns to Refresh at once
+
 ### Requirement: Reading cadence
 The system SHALL read Codex usage 10 seconds after a hosted Codex session's turn ends, every five minutes while a client shows usage, and on refresh, and SHALL NOT read any agent's usage when no client is showing usage.
 
@@ -211,6 +213,7 @@ The system SHALL draw a ring red when its window has used 80% or more, and SHALL
 #### Scenario: Below the threshold
 - **WHEN** no agent has used 80% of any window
 - **THEN** no label is shown and no ring is red
+
 ### Requirement: Claude reading cadence
 The system SHALL take Claude usage from each report of a hosted Claude session and with a hidden `/usage` read on refresh, every ten minutes while a client shows usage and no hosted Claude session has reported, and after a Claude session in another terminal finishes a turn, at most every two minutes.
 
@@ -228,3 +231,21 @@ The system SHALL read agy usage 10 seconds after a hosted agy session's turn end
 #### Scenario: agy while usage is shown
 - **WHEN** the app shows usage for twenty minutes and no hosted agy session finishes a turn
 - **THEN** agy usage is read about every ten minutes
+
+### Requirement: The hidden Claude read picks a trusted folder
+The system SHALL run the hidden Claude usage read in the most recently used session folder that Claude Code records as trusted, reading only that record and never changing it, and SHALL fall back to the most recently used existing folder when the record cannot be read.
+
+#### Scenario: Working in the home folder
+- **WHEN** the owner's most recent Claude Code session runs in the home folder, which Claude Code does not keep trusted, and an earlier one ran in a trusted project folder
+- **THEN** the hidden read runs in that project folder and the usage updates
+
+#### Scenario: No trusted folder
+- **WHEN** none of the sessions' folders is trusted by Claude Code
+- **THEN** no hidden session starts and the details say Claude Code needs to be opened once in a project folder
+
+### Requirement: Refresh after a failed reading
+A refresh SHALL read an agent again at once when its last reading failed, even within the refresh floor.
+
+#### Scenario: Refresh twice after a failure
+- **WHEN** a Claude reading fails and the owner presses Refresh 10 seconds later
+- **THEN** a new reading is taken and the button shows "Refreshing…" until it is in

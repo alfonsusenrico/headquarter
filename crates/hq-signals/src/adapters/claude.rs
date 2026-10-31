@@ -2,7 +2,7 @@
 //! chosen up front with `--session-id` (or `--resume` to continue one). `--settings` adds to the owner's settings,
 //! so their own hooks keep running; their status line is chained by the wrapper.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -105,6 +105,30 @@ pub fn owner_theme(cwd: &Path) -> Option<String> {
         .find_map(|path| theme_from(&std::fs::read_to_string(path).ok()?))
 }
 
+/// The folders Claude Code records as trusted in its global config
+/// (`projects["<folder>"].hasTrustDialogAccepted`), read-only; `None` when that record
+/// cannot be read. Claude never keeps the home folder trusted, so it asks there each time.
+pub fn trusted_folders() -> Option<Vec<PathBuf>> {
+    trusted_from(&std::fs::read_to_string(paths::claude_global_config()?).ok()?)
+}
+
+fn trusted_from(config: &str) -> Option<Vec<PathBuf>> {
+    let value: Value = serde_json::from_str(config).ok()?;
+    let projects = value.get("projects")?.as_object()?;
+    Some(
+        projects
+            .iter()
+            .filter(|(_, project)| {
+                project
+                    .get("hasTrustDialogAccepted")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+            .map(|(folder, _)| PathBuf::from(folder))
+            .collect(),
+    )
+}
+
 fn follows_the_terminal(owner_theme: Option<&str>) -> bool {
     owner_theme.is_none_or(|theme| matches!(theme, "light" | "dark" | "auto"))
 }
@@ -131,7 +155,22 @@ fn status_line_from(settings: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+
+    #[test]
+    fn trusted_folders_come_from_claudes_own_record() {
+        let config = r#"{"numStartups": 3, "projects": {
+            "/Users/me": {"hasTrustDialogAccepted": false},
+            "/Users/me/api": {"hasTrustDialogAccepted": true, "lastCost": 1.5},
+            "/Users/me/web": {"allowedTools": []}
+        }}"#;
+        assert_eq!(
+            trusted_from(config),
+            Some(vec![PathBuf::from("/Users/me/api")])
+        );
+        assert_eq!(trusted_from(r#"{"projects": {}}"#), Some(Vec::new()));
+        assert_eq!(trusted_from(r#"{"numStartups": 3}"#), None, "no record");
+        assert_eq!(trusted_from("{not json"), None);
+    }
 
     fn spec_for(owner: &OwnerSettings, conversation: Conversation<'_>) -> LaunchSpec {
         let exe = PathBuf::from("/opt/hq probe/hq-probe");
