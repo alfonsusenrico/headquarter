@@ -622,16 +622,16 @@ impl Workspace {
                     .child(app_step),
             )
             .child(status_card)
-            .when(running, |body| {
-                body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(heading("PAIR A PHONE"))
-                        .child(pairing),
-                )
-            })
+            // Always offered: pairing is what turns remote control on
+            // (remote-follows-paired-phones D1).
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(heading("PAIR A PHONE"))
+                    .child(pairing),
+            )
             .child(
                 div()
                     .flex()
