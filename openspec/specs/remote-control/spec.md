@@ -5,21 +5,6 @@ Lets the owner follow and answer their sessions from a paired phone, anywhere, w
 
 ## Requirements
 
-### Requirement: Remote control off until turned on
-The system SHALL run no network endpoint for remote control until the owner turns it on, SHALL keep the host running while it is on, and SHALL stop it and close every phone connection when the owner turns it off.
-
-#### Scenario: Turned on
-- **WHEN** the owner runs `hq remote on`
-- **THEN** the settings file gains `[remote] enabled = true` with its other content kept, and the host starts its gateway without a restart
-
-#### Scenario: Kept up for phones
-- **WHEN** remote control is on and no session runs and no client is connected
-- **THEN** the host keeps running, since a phone cannot start it
-
-#### Scenario: Turned off with a phone connected
-- **WHEN** a phone is connected and the owner runs `hq remote off`
-- **THEN** the phone's connection closes and the host opens no network endpoint
-
 ### Requirement: Pairing with a one-time code
 The system SHALL pair a phone only with a code the owner has just shown, valid once and for 2 minutes, and SHALL record the paired phone's name, identity and pairing time.
 
@@ -76,15 +61,15 @@ The system SHALL log remote control events (turned on or off, paired, connected 
 - **THEN** the host log records the connection but not the text
 
 ### Requirement: Remote Control window
-The system SHALL offer, from the app's menu, a Remote Control window with a switch for remote control, how the computer is reached, a Pair a Phone button that shows the pairing code as an image QR code with its remaining time and as text, and the paired phones with whether each is connected or when it was last seen and a Remove button.
+The system SHALL offer, from the app's menu, a Remote Control window with how the computer is reached while remote control runs, a Pair a Phone button that shows the pairing code as an image QR code with its remaining time and as text, and the paired phones with whether each is connected or when it was last seen and a Remove button. It SHALL have no switch for remote control.
 
 #### Scenario: Pairing from the window
 - **WHEN** the owner opens Headquarter ▸ Remote Control…, presses Pair a Phone and scans the QR code with a phone
 - **THEN** the window says the phone is paired and lists it as connected
 
 #### Scenario: Turned on from the window
-- **WHEN** remote control is off and the owner turns the switch on
-- **THEN** the settings file gains `[remote] enabled = true`, the host starts its gateway, and the window says how the computer is reached
+- **WHEN** no phone is paired and the owner presses Pair a Phone
+- **THEN** the host starts its endpoint for the code, and the window says how the computer is reached
 
 #### Scenario: Terminal too small for the QR code
 - **WHEN** the owner runs `hq remote pair` in a terminal smaller than the QR code
@@ -134,7 +119,7 @@ The host SHALL refuse a paired phone's request for the resources of its sessions
 - **THEN** the host refuses it as it refuses any request outside the allow-list
 
 ### Requirement: Getting the phone app
-The Remote Control window SHALL show, as its first step and whether remote control is on or off, a QR code and a Copy link button for the newest stable Headquarter for Android APK, through an address that always names the latest release and skips pre-releases. Once a phone is paired, the step SHALL fold to one line that can be opened again.
+The Remote Control window SHALL always show, as its first step, a QR code and a Copy link button for the newest stable Headquarter for Android APK, through an address that always names the latest release and skips pre-releases.
 
 #### Scenario: Scanning for the app
 - **WHEN** the owner opens Headquarter ▸ Remote Control… with no phone paired and scans the first QR code with the phone's camera
@@ -145,12 +130,12 @@ The Remote Control window SHALL show, as its first step and whether remote contr
 - **THEN** the clipboard holds the latest-download address and the button reads "Copied" for a moment
 
 #### Scenario: Remote control off
-- **WHEN** remote control is off
-- **THEN** the step still shows, so the app can be installed before remote control is turned on
+- **WHEN** no phone is paired, so remote control is not running
+- **THEN** the step still shows, so the app can be installed before pairing
 
 #### Scenario: A phone already paired
 - **WHEN** at least one phone is paired
-- **THEN** the step is one line with a Show button, and Show opens the QR code and Copy link
+- **THEN** the QR code and Copy link still show in full, with no Show button
 
 ### Requirement: The host names the phone
 The system SHALL name a paired phone's connection to the host with that phone's name from the index, and SHALL refuse a phone's own request to name its connection, keeping the connection.
@@ -162,3 +147,22 @@ The system SHALL name a paired phone's connection to the host with that phone's 
 #### Scenario: A phone names itself
 - **WHEN** a phone sends a request naming its own connection
 - **THEN** the request is refused, the connection stays open, and the name is unchanged
+
+### Requirement: Remote control runs while a phone is paired
+The system SHALL run the remote control endpoint only while at least one phone is paired or a pairing code is shown, SHALL keep the host running while it runs, and SHALL stop it and close every phone connection when the last phone is removed.
+
+#### Scenario: No phone paired
+- **WHEN** no phone is paired and no pairing code is shown
+- **THEN** the host opens no network endpoint
+
+#### Scenario: Pairing the first phone
+- **WHEN** no phone is paired and the owner shows a pairing code
+- **THEN** the host starts the endpoint, and after a phone pairs it keeps running
+
+#### Scenario: A code expires unused
+- **WHEN** no phone is paired and the shown code expires or is cancelled
+- **THEN** the endpoint stops
+
+#### Scenario: The last phone removed
+- **WHEN** the owner removes the only paired phone while it is connected
+- **THEN** its connection closes, the phone says it was removed from the computer, and the host opens no network endpoint

@@ -4,7 +4,6 @@
 //! Headquarter does not support are warnings, so an Alacritty file can be copied in.
 
 mod appearance;
-pub mod remote;
 mod schema;
 pub mod setup;
 pub mod themes;
@@ -36,11 +35,11 @@ pub struct Settings {
     pub imports: Vec<PathBuf>,
 }
 
-/// Remote control from a phone (add-remote-gateway): off by default; n0's public relays
-/// unless the owner lists their own.
+/// Remote control from a phone (add-remote-gateway): n0's public relays unless the owner
+/// lists their own. It runs while a phone is paired, so it has no switch
+/// (remote-follows-paired-phones D2).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Remote {
-    pub enabled: bool,
     /// The owner's relay URLs, used instead of n0's public relays when not empty.
     pub relays: Vec<String>,
 }
@@ -180,6 +179,8 @@ struct RawUpdates {
 
 #[derive(Deserialize, Default)]
 struct RawRemote {
+    /// Older files' switch, accepted and not acted on (remote-follows-paired-phones D2).
+    #[allow(dead_code)]
     enabled: Option<bool>,
     relays: Option<Vec<toml::Spanned<String>>>,
 }
@@ -269,9 +270,6 @@ pub fn parse(
     }
     if let Some(check) = raw.updates.check {
         settings.check_updates = check;
-    }
-    if let Some(enabled) = raw.remote.enabled {
-        settings.remote.enabled = enabled;
     }
     for relay in raw.remote.relays.unwrap_or_default() {
         if !is_relay_url(relay.get_ref()) {
@@ -463,15 +461,11 @@ mod tests {
     fn update_checks_are_on_unless_turned_off() {
         assert!(parse_text("").unwrap().check_updates);
         let remote = parse_text("").unwrap().remote;
-        assert!(
-            !remote.enabled && remote.relays.is_empty(),
-            "off by default"
-        );
+        assert!(remote.relays.is_empty(), "n0's relays by default");
         let own =
             parse_text("[remote]\nenabled = true\nrelays = [\"https://relay.example.com\"]\n")
                 .unwrap()
                 .remote;
-        assert!(own.enabled);
         assert_eq!(own.relays, ["https://relay.example.com"]);
         let plain = parse_text("[remote]\nrelays = [\"http://relay.example.com\"]\n").unwrap_err();
         assert_eq!(plain.line, Some(2), "{plain}");

@@ -45,14 +45,6 @@ pub fn notifications(
 }
 
 /// Whether to check for updates by itself; an invalid file keeps the last good choice.
-/// Whether remote control is on, for the quit dialog's warning (add-quit-stops-host).
-pub fn remote_enabled(watcher: &mut SettingsWatcher, last_good: Option<bool>) -> bool {
-    match watcher.current() {
-        Ok(settings) => settings.remote.enabled,
-        Err(_) => last_good.unwrap_or(false),
-    }
-}
-
 pub fn check_updates(watcher: &mut SettingsWatcher, last_good: Option<bool>) -> bool {
     match watcher.current() {
         Ok(settings) => settings.check_updates,

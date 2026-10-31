@@ -204,7 +204,7 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
     }
     {
         let host = Arc::clone(&host);
-        thread::spawn(move || host.start_remote_if_enabled());
+        thread::spawn(move || host.follow_phones());
     }
     {
         let order = host.queue_starts();
@@ -708,10 +708,8 @@ impl Host {
                             ErrorCode::BadRequest,
                             "unpairing is for phones, through remote control",
                         )),
-                        Request::RemoteStatus {} => {
-                            send(self.remote_status(self.remote_enabled_setting()));
-                        }
-                        Request::RemoteSet { enabled } => send(self.remote_set(enabled)),
+                        Request::RemoteStatus {} => send(self.remote_status(self.has_phones())),
+                        Request::RemoteSet { .. } => send(self.remote_set()),
                         Request::RemotePair {} => {
                             send(self.remote_pair(tx.clone(), connection));
                         }

@@ -1,5 +1,6 @@
-//! `hq remote` (add-remote-gateway D9): turn remote control on or off, pair a phone with a
-//! QR code, list and remove paired phones.
+//! `hq remote` (add-remote-gateway D9): pair a phone with a QR code, list and remove paired
+//! phones. Remote control runs while a phone is paired, with no switch
+//! (remote-follows-paired-phones D3).
 
 use std::process::ExitCode;
 
@@ -11,10 +12,6 @@ use hq_protocol::{RemoteDevice, Request, Response};
 
 #[derive(Subcommand)]
 pub enum RemoteCommand {
-    /// Turn remote control on (kept in the settings file).
-    On,
-    /// Turn remote control off and disconnect every phone.
-    Off,
     /// Show whether remote control runs and how the computer is reached.
     Status,
     /// Show a QR code that pairs one phone; it works once, for 2 minutes.
@@ -24,14 +21,13 @@ pub enum RemoteCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Remove a paired phone by name or id; it is disconnected at once.
+    /// Remove a paired phone by name or id; it is disconnected at once, and remote control
+    /// stops with the last one.
     Remove { device: String },
 }
 
 pub fn run(paths: &HostPaths, command: RemoteCommand) -> Result<ExitCode> {
     match command {
-        RemoteCommand::On => set(paths, true),
-        RemoteCommand::Off => set(paths, false),
         RemoteCommand::Status => {
             let mut client = Client::connect_or_start(paths)?;
             print!(
@@ -64,31 +60,6 @@ pub fn run(paths: &HostPaths, command: RemoteCommand) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
-}
-
-/// Writes the setting first, so it holds after a restart, then tells the host.
-fn set(paths: &HostPaths, enabled: bool) -> Result<ExitCode> {
-    let file = hq_config::settings_path().context("cannot find the settings folder")?;
-    let known: Vec<&str> = hq_discovery::KNOWN_AGENTS
-        .iter()
-        .map(|agent| agent.id)
-        .collect();
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    hq_config::remote::set_enabled(&file, enabled, &known, home.as_deref())?;
-    let client = if enabled {
-        Some(Client::connect_or_start(paths)?)
-    } else {
-        // Nothing to stop when no host runs.
-        Client::connect(paths).ok()
-    };
-    match client {
-        Some(mut client) => {
-            let status = expect_ok(client.request(&Request::RemoteSet { enabled })?)?;
-            print!("{}", status_text(&status));
-        }
-        None => println!("Remote control is off."),
-    }
-    Ok(ExitCode::SUCCESS)
 }
 
 fn pair(paths: &HostPaths) -> Result<ExitCode> {
@@ -156,8 +127,12 @@ fn status_text(status: &Response) -> String {
     let mut text = String::new();
     match (enabled, running) {
         (_, true) => text.push_str("Remote control is on.\n"),
-        (true, false) => text.push_str("Remote control is turned on but not running.\n"),
-        (false, false) => text.push_str("Remote control is off.\n"),
+        (true, false) => text.push_str("A phone is paired but remote control is not running.\n"),
+        (false, false) => {
+            text.push_str(
+                "Remote control is off: no phone is paired. `hq remote pair` pairs one.\n",
+            );
+        }
     }
     if let Some(problem) = problem {
         text.push_str(&format!("Problem: {problem}\n"));

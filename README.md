@@ -134,7 +134,8 @@ and a terminal you can type into, at your phone's width. It needs Android 10 or 
 
 Want to check the file first? Its SHA-256 is in `headquarter-android.apk.sha256` beside it
 on the release page. The app connects only while it is on screen and keeps no session content
-on the phone. When a newer release is out it says so, and installing the new APK over it keeps
+on the phone. Remote control runs only while a phone is paired: remove the last one and the
+computer stops listening. When a newer release is out it says so, and installing the new APK over it keeps
 your paired computers.
 
 ## How light is it
