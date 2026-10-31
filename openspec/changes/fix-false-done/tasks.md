@@ -16,7 +16,7 @@ Expected Result: no "replied" while work goes on, and Wait waits for it.
 
 ## 3. Verification and delivery
 
-- [ ] 3.1 `./scripts/check` passes. On screen with the stand-ins: a background agent holds the notification and the restart, then both follow when it ends (with the owner's go for the Mac). `verification.md` written.
+- [x] 3.1 `./scripts/check` passes. On screen with the stand-ins: a background agent holds the notification and the restart, then both follow when it ends (with the owner's go for the Mac). `verification.md` written.
 - [ ] 3.2 The owner checks it.
 - [ ] 3.3 After the owner accepts: archive, push `fix/false-done`, open the PR, report its URL.
 
