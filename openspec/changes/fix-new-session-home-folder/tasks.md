@@ -8,7 +8,7 @@ Expected Result: the field opens empty and an empty field starts in the home fol
 
 ## 2. Verification and delivery
 
-- [ ] 2.1 `./scripts/check` passes; on screen with the dev app. `verification.md` written.
+- [x] 2.1 `./scripts/check` passes; on screen with the dev app. `verification.md` written.
 - [ ] 2.2 The owner checks it.
 - [ ] 2.3 After the owner accepts: archive, push `fix/new-session-home-folder`, open the PR, report its URL.
 
