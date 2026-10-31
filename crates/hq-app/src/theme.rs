@@ -155,6 +155,15 @@ impl Theme {
         Paint::solid(self.palette.ansi[1])
     }
 
+    /// `near_limit` while its reading is old: a paler red, the red mixed into the sidebar
+    /// rather than see-through, then stepped just enough to keep 3:1 against the sidebar
+    /// and the ring's track.
+    pub fn old_near_limit(&self) -> Paint {
+        let pale = mix(self.chrome.sidebar.rgb, self.palette.ansi[1], 0.7);
+        let on_track = readable(pale, self.chrome.track.rgb, 3.0);
+        Paint::solid(readable(on_track, self.chrome.sidebar.rgb, 3.0))
+    }
+
     /// A group's colour, from a soft palette per mode whatever the theme
     /// (add-group-colors D1): Catppuccin Mocha in dark mode; in light mode Latte, with
     /// the lighter hues deepened so a dot keeps 3:1 against the sidebar.
@@ -661,6 +670,7 @@ mod tests {
             for (name, color) in [
                 ("fill", chrome.text),
                 ("near limit fill", theme.near_limit()),
+                ("old near limit fill", theme.old_near_limit()),
                 ("old fill", chrome.muted),
             ] {
                 for (against, background) in [("sidebar", chrome.sidebar), ("track", chrome.track)]

@@ -177,6 +177,41 @@ pub fn status(glyph: Glyph, chrome: Chrome) -> AnyElement {
     .into_any_element()
 }
 
+/// The stacked layers after "background": work still running behind the prompt
+/// (refine-background-mark-and-ring D1). A back sheet outlined, a front sheet filled.
+pub fn background(chrome: Chrome) -> AnyElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, (), window, _| {
+            let grid = Grid::new(bounds, 17.0);
+            let sheet = |left: f32, top: f32| {
+                let (right, bottom, cut) = (left + 13.0, top + 11.0, 2.0);
+                [
+                    (left + cut, top),
+                    (right - cut, top),
+                    (right, top + cut),
+                    (right, bottom - cut),
+                    (right - cut, bottom),
+                    (left + cut, bottom),
+                    (left, bottom - cut),
+                    (left, top + cut),
+                ]
+            };
+            let mut back = PathBuilder::stroke(grid.width(2.0));
+            polyline(&mut back, grid, &sheet(7.0, 3.5));
+            back.close();
+            paint(window, back, chrome.teal.with_opacity(60));
+            let mut front = PathBuilder::fill();
+            polyline(&mut front, grid, &sheet(4.0, 9.5));
+            front.close();
+            paint(window, front, chrome.teal);
+        },
+    )
+    .size(px(CELL))
+    .flex_none()
+    .into_any_element()
+}
+
 /// The diamond after "review": a plan waits for the owner's review
 /// (add-background-work-status D8).
 pub fn review(chrome: Chrome) -> AnyElement {
