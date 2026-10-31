@@ -2,8 +2,12 @@
 //! (add-notifications D1, D2). Only changes notify: a session must already be known,
 //! be in the sidebar, and not be the one the owner is watching.
 
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
 use hq_config::Notifications;
 use hq_protocol::SessionInfo;
+use hq_protocol::sidebar::{self, Beside};
 use hq_signals::event::{Agent, NeedsReason};
 use hq_signals::status::Status;
 
@@ -33,19 +37,91 @@ pub fn notice(
     {
         return None;
     }
-    let agent = agent_name(current.agent);
-    let wants = match current.status {
-        Status::NeedsYou if settings.needs_you => asks(current.needs_reason),
-        Status::DoneUnread if settings.replied => "replied",
-        _ => return None,
-    };
-    Some(Notice {
+    // A reply waits until the session settles (`PendingReplies`).
+    match current.status {
+        Status::NeedsYou if settings.needs_you => Some(posted(current, asks(current.needs_reason))),
+        _ => None,
+    }
+}
+
+/// The "replied" notification for a session whose reply has settled, unless the owner
+/// is watching it, it left the sidebar, or replies are turned off.
+pub fn replied(current: &SessionInfo, watched: bool, settings: Notifications) -> Option<Notice> {
+    let shown = current.in_sidebar && current.external.is_none() && !watched;
+    (shown && settings.replied && current.status == Status::DoneUnread)
+        .then(|| posted(current, "replied"))
+}
+
+fn posted(current: &SessionInfo, wants: &str) -> Notice {
+    Notice {
         tag: current.id.clone(),
         // What the sidebar row shows: the owner's name for it, else the agent's title,
         // else "Untitled conversation · id" (owner, 2026-10-24).
-        title: hq_protocol::sidebar::display_title(current),
-        body: format!("{agent} {wants}"),
-    })
+        title: sidebar::display_title(current),
+        body: format!("{} {wants}", agent_name(current.agent)),
+    }
+}
+
+/// How long a reply must stay unread, with no background work, before it is announced.
+/// Of the owner's turns that Claude Code started again by itself, most that came quickly
+/// came within 10 s (fix-false-done D1).
+pub const REPLY_QUIET: Duration = Duration::from_secs(10);
+
+/// Replies waiting to be announced (fix-false-done D1): each session's quiet-since time,
+/// `None` while its background work runs.
+#[derive(Debug, Default)]
+pub struct PendingReplies {
+    quiet_since: HashMap<String, Option<Instant>>,
+}
+
+impl PendingReplies {
+    /// Follows a session's change: a new reply starts waiting; work, needs you, reading it
+    /// or leaving the sidebar drops it; background work pauses the wait until it ends.
+    pub fn track(
+        &mut self,
+        previous: Option<&SessionInfo>,
+        current: &SessionInfo,
+        settings: Notifications,
+        now: Instant,
+    ) {
+        let unread = current.status == Status::DoneUnread
+            && current.in_sidebar
+            && current.external.is_none();
+        if !unread {
+            self.quiet_since.remove(&current.id);
+            return;
+        }
+        let busy = sidebar::beside(current) == Some(Beside::Background);
+        let quiet = (!busy).then_some(now);
+        let new_reply = previous.is_some_and(|previous| previous.status != Status::DoneUnread);
+        if new_reply && settings.replied {
+            self.quiet_since.insert(current.id.clone(), quiet);
+        } else if let Some(since) = self.quiet_since.get_mut(&current.id) {
+            if busy {
+                *since = None;
+            } else if since.is_none() {
+                *since = quiet;
+            }
+        }
+    }
+
+    /// The sessions whose replies have been quiet long enough; they stop waiting.
+    pub fn due(&mut self, now: Instant) -> Vec<String> {
+        let due: Vec<String> = self
+            .quiet_since
+            .iter()
+            .filter(|(_, since)| since.is_some_and(|since| now >= since + REPLY_QUIET))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &due {
+            self.quiet_since.remove(id);
+        }
+        due
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.quiet_since.is_empty()
+    }
 }
 
 /// The notifications for sidebar sessions the host could not start with itself that
@@ -181,9 +257,7 @@ mod tests {
         titled.owner_named = false;
         titled.name = "claude-e0c6f139".into();
         titled.title = Some("Fixing Unresponsive Docker Daemon".into());
-        let mut before = titled.clone();
-        before.status = Status::Working;
-        let posted = notice(Some(&before), &titled, false, Notifications::default()).unwrap();
+        let posted = replied(&titled, false, Notifications::default()).unwrap();
         assert_eq!(
             posted.title, "Fixing Unresponsive Docker Daemon",
             "not the id"
@@ -192,7 +266,17 @@ mod tests {
 
     #[test]
     fn a_finished_turn_notifies_as_replied_without_the_folder() {
-        let posted = change(Status::Working, Status::DoneUnread).unwrap();
+        assert_eq!(
+            change(Status::Working, Status::DoneUnread),
+            None,
+            "a reply waits to settle"
+        );
+        let posted = replied(
+            &session(Status::DoneUnread),
+            false,
+            Notifications::default(),
+        )
+        .unwrap();
         assert_eq!(posted.title, "Fix login", "the owner's name for it wins");
         assert_eq!(posted.body, "Claude replied");
         assert!(!posted.body.contains("api"), "no folder");
@@ -220,12 +304,7 @@ mod tests {
     #[test]
     fn watched_and_unlisted_sessions_stay_quiet() {
         let working = session(Status::Working);
-        let watched = notice(
-            Some(&working),
-            &session(Status::DoneUnread),
-            true,
-            Notifications::default(),
-        );
+        let watched = replied(&session(Status::DoneUnread), true, Notifications::default());
         assert_eq!(watched, None);
         let mut unlisted = session(Status::NeedsYou);
         unlisted.in_sidebar = false;
@@ -240,13 +319,8 @@ mod tests {
             replied: false,
         };
         let working = session(Status::Working);
-        let replied = notice(
-            Some(&working),
-            &session(Status::DoneUnread),
-            false,
-            quiet_replies,
-        );
-        assert_eq!(replied, None);
+        let reply = replied(&session(Status::DoneUnread), false, quiet_replies);
+        assert_eq!(reply, None);
         let needs_you = notice(
             Some(&working),
             &session(Status::NeedsYou),
@@ -286,8 +360,93 @@ mod tests {
     #[test]
     fn a_session_keeps_one_tag_so_newer_notices_replace_older() {
         let asked = change(Status::Working, Status::NeedsYou).unwrap();
-        let replied = change(Status::Working, Status::DoneUnread).unwrap();
-        assert_eq!(asked.tag, replied.tag);
+        let reply = replied(
+            &session(Status::DoneUnread),
+            false,
+            Notifications::default(),
+        )
+        .unwrap();
+        assert_eq!(asked.tag, reply.tag);
+    }
+
+    fn pending_after(steps: &[(SessionInfo, u64)]) -> (PendingReplies, Instant) {
+        let start = Instant::now();
+        let mut pending = PendingReplies::default();
+        let mut previous: Option<SessionInfo> = None;
+        for (current, at) in steps {
+            let now = start + Duration::from_secs(*at);
+            pending.track(previous.as_ref(), current, Notifications::default(), now);
+            previous = Some(current.clone());
+        }
+        (pending, start)
+    }
+
+    fn at(start: Instant, seconds: u64) -> Instant {
+        start + Duration::from_secs(seconds)
+    }
+
+    #[test]
+    fn a_reply_is_announced_after_ten_quiet_seconds() {
+        let (mut pending, start) = pending_after(&[
+            (session(Status::Working), 0),
+            (session(Status::DoneUnread), 1),
+        ]);
+        assert!(pending.due(at(start, 10)).is_empty());
+        assert_eq!(pending.due(at(start, 11)), ["s-1"]);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn carrying_on_reading_or_needing_the_owner_drops_the_reply() {
+        for next in [Status::Working, Status::Done, Status::NeedsYou] {
+            let (mut pending, start) = pending_after(&[
+                (session(Status::Working), 0),
+                (session(Status::DoneUnread), 1),
+                (session(next), 5),
+            ]);
+            assert!(pending.due(at(start, 60)).is_empty(), "{next:?}");
+        }
+    }
+
+    #[test]
+    fn background_work_holds_the_reply_until_it_ends() {
+        let mut busy = session(Status::DoneUnread);
+        busy.background.agents = 1;
+        let (mut pending, start) = pending_after(&[
+            (session(Status::Working), 0),
+            (busy.clone(), 1),
+            (busy, 30),
+            (session(Status::DoneUnread), 40),
+        ]);
+        assert!(
+            pending.due(at(start, 45)).is_empty(),
+            "quiet only since the work ended"
+        );
+        assert_eq!(pending.due(at(start, 50)), ["s-1"]);
+    }
+
+    #[test]
+    fn replies_turned_off_never_wait() {
+        let mut pending = PendingReplies::default();
+        let quiet = Notifications {
+            needs_you: true,
+            replied: false,
+        };
+        let now = Instant::now();
+        pending.track(
+            Some(&session(Status::Working)),
+            &session(Status::DoneUnread),
+            quiet,
+            now,
+        );
+        assert!(pending.is_empty());
+        pending.track(
+            None,
+            &session(Status::DoneUnread),
+            Notifications::default(),
+            now,
+        );
+        assert!(pending.is_empty(), "the first listing never notifies");
     }
 
     #[test]

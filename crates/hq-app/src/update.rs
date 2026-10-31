@@ -471,15 +471,16 @@ fn curl(args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// The sidebar sessions a restart would interrupt: live and working (background work
-/// included) or waiting for the owner (D5).
+/// The sidebar sessions a restart would interrupt: live and working, waiting for the
+/// owner, running background work or holding a plan to review (D5, fix-false-done D4).
 pub fn busy(sessions: &[SessionInfo]) -> Vec<&SessionInfo> {
     sessions
         .iter()
         .filter(|session| {
             session.in_sidebar
                 && session.live
-                && matches!(session.status, Status::Working | Status::NeedsYou)
+                && (matches!(session.status, Status::Working | Status::NeedsYou)
+                    || hq_protocol::sidebar::beside(session).is_some())
         })
         .collect()
 }
@@ -744,19 +745,28 @@ mod tests {
     }
 
     #[test]
-    fn working_or_asking_sessions_are_busy() {
+    fn working_asking_background_and_review_sessions_are_busy() {
+        let mut background = session("background", Status::DoneUnread, true, true);
+        background.background.commands = 1;
+        let mut review = session("review", Status::Done, true, true);
+        review.review = true;
+        let mut stopped_background = session("stopped", Status::Inactive, false, true);
+        stopped_background.background.commands = 1;
         let sessions = [
             session("working", Status::Working, true, true),
             session("asking", Status::NeedsYou, true, true),
             session("idle", Status::Done, true, true),
             session("inactive", Status::Inactive, false, true),
             session("elsewhere", Status::Working, true, false),
+            background,
+            review,
+            stopped_background,
         ];
         let busy: Vec<&str> = busy(&sessions)
             .iter()
             .map(|session| session.id.as_str())
             .collect();
-        assert_eq!(busy, ["working", "asking"]);
+        assert_eq!(busy, ["working", "asking", "background", "review"]);
     }
 
     #[test]
