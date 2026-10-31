@@ -136,9 +136,12 @@ impl Mirror {
             .sessions
             .iter()
             .filter(|session| {
+                // A reply whose background work still runs stays in its group, showing
+                // "background", until the work ends (fix-false-done D3).
                 session.in_sidebar
                     && session.external.is_none()
                     && session.status == Status::DoneUnread
+                    && sidebar::beside(session) != Some(sidebar::Beside::Background)
             })
             .collect();
         unread.sort_by_key(|session| std::cmp::Reverse(session.last_activity_at));
@@ -374,6 +377,34 @@ mod tests {
         let plain = home.ungrouped.iter().find(|row| row.id == "plain").unwrap();
         assert_eq!(plain.beside, None);
         assert_eq!(home.ungrouped[0].id, "busy", "rises like working");
+    }
+
+    #[test]
+    fn a_reply_with_background_work_stays_in_its_group() {
+        let mut busy = session("busy", Status::DoneUnread, 1, None);
+        busy.background.commands = 1;
+        let quiet = session("quiet", Status::DoneUnread, 2, None);
+        let mirror = Mirror {
+            sessions: vec![busy.clone(), quiet],
+            ..Mirror::default()
+        };
+        let home = mirror.home(10);
+        let alerts: Vec<&str> = home.alerts.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(alerts, ["quiet"]);
+        let row = home.ungrouped.iter().find(|row| row.id == "busy").unwrap();
+        assert_eq!(row.beside, Some(RowBeside::Background));
+        busy.background.commands = 0;
+        let mirror = Mirror {
+            sessions: vec![busy],
+            ..Mirror::default()
+        };
+        let alerts: Vec<String> = mirror
+            .home(10)
+            .alerts
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        assert_eq!(alerts, ["busy"], "rises once the work ends");
     }
 
     #[test]

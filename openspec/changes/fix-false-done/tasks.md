@@ -8,9 +8,9 @@ Expected Result: the cause is known and recorded.
 
 ## 2. Build
 
-- [ ] 2.1 Desktop: pending "replied" notices, posted after 10 quiet seconds without background work, dropped on work, needs you, read or leaving the sidebar (D1, D2). Evidence: unit tests with a fake clock for each case.
-- [ ] 2.2 Phone home: unread replies with background work stay in their group (D3). Evidence: `hq-mobile` mirror test.
-- [ ] 2.3 Updater: background work and plans to review are busy (D4). Evidence: `update::busy` test.
+- [x] 2.1 Desktop: pending "replied" notices, posted after 10 quiet seconds without background work, dropped on work, needs you, read or leaving the sidebar (D1, D2). Evidence: unit tests with a fake clock for each case.
+- [x] 2.2 Phone home: unread replies with background work stay in their group (D3). Evidence: `hq-mobile` mirror test.
+- [x] 2.3 Updater: background work and plans to review are busy (D4). Evidence: `update::busy` test.
 
 Expected Result: no "replied" while work goes on, and Wait waits for it.
 

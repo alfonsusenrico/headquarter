@@ -299,6 +299,10 @@ pub struct Workspace {
     usage_all: bool,
     /// A refresh asked of the host has not been answered yet.
     usage_refreshing: bool,
+    /// Replies waiting until their sessions settle, and the timer that checks them while
+    /// any wait (fix-false-done D1, D2).
+    pending_replies: notifications::PendingReplies,
+    reply_timer: Option<Task<()>>,
     /// The panel the backdrop just closed, so the click that closed it does not reopen
     /// it on the ring or chip underneath (`None` for the all-agents panel).
     usage_dismissed: Option<(Option<Agent>, Instant)>,
@@ -454,6 +458,8 @@ impl Workspace {
             resources: None,
             usage_all: false,
             usage_refreshing: false,
+            pending_replies: notifications::PendingReplies::default(),
+            reply_timer: None,
             usage_dismissed: None,
             rows_scroll: ScrollHandle::new(),
             ring_focus: Agent::ALL
@@ -512,19 +518,55 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Posts the system notification a session's change calls for, if any (D1, D2).
+    /// Posts the system notification a session's change calls for, if any (D1, D2), and
+    /// follows its reply until it settles (fix-false-done D1).
     fn notify_change(
-        &self,
+        &mut self,
         previous: Option<&SessionInfo>,
         current: &SessionInfo,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.pending_replies
+            .track(previous, current, self.notifications, Instant::now());
+        if !self.pending_replies.is_empty() && self.reply_timer.is_none() {
+            self.reply_timer = Some(cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+                    let waiting = this
+                        .update_in(cx, |this, window, cx| this.post_settled_replies(window, cx));
+                    if !matches!(waiting, Ok(true)) {
+                        break;
+                    }
+                }
+            }));
+        }
         let watched = self.watching(&current.id, window, cx);
-        let Some(notice) = notifications::notice(previous, current, watched, self.notifications)
-        else {
-            return;
-        };
+        if let Some(notice) = notifications::notice(previous, current, watched, self.notifications)
+        {
+            Self::post(notice, cx);
+        }
+    }
+
+    /// Announces the replies that have settled; returns whether any still wait.
+    fn post_settled_replies(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        for id in self.pending_replies.due(Instant::now()) {
+            let watched = self.watching(&id, window, cx);
+            if let Some(notice) = self
+                .session(&id)
+                .and_then(|session| notifications::replied(session, watched, self.notifications))
+            {
+                Self::post(notice, cx);
+            }
+        }
+        let waiting = !self.pending_replies.is_empty();
+        if !waiting {
+            self.reply_timer = None;
+        }
+        waiting
+    }
+
+    fn post(notice: notifications::Notice, cx: &mut Context<Self>) {
         cx.show_system_notification(SystemNotification {
             tag: notice.tag.into(),
             title: notice.title.into(),
