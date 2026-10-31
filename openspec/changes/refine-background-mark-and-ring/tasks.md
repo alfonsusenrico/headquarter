@@ -9,7 +9,7 @@ Expected Result: background has its own mark and an old 93% stays red.
 
 ## 2. Verification and delivery
 
-- [ ] 2.1 `./scripts/check` passes; on screen with stand-ins. `verification.md` written.
+- [x] 2.1 `./scripts/check` passes; on screen with stand-ins. `verification.md` written.
 - [ ] 2.2 The owner checks it.
 - [ ] 2.3 After the owner accepts: archive, push `feat/background-mark-and-ring`, open the PR, report its URL.
 
