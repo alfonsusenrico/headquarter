@@ -2,7 +2,7 @@
 
 ## 1. Build
 
-- [ ] 1.1 Empty field, hint, empty browses and starts in the home folder (D1). Evidence: folder browser unit tests for empty text; on screen.
+- [x] 1.1 Empty field, hint, empty browses and starts in the home folder (D1). Evidence: folder browser unit tests for empty text; on screen.
 
 Expected Result: the field opens empty and an empty field starts in the home folder.
 

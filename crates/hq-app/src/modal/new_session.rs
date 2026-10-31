@@ -231,11 +231,11 @@ impl NewSession {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> NewSession {
-        let start_text = "~/";
+        // Empty means the home folder, so there is nothing to delete before typing
+        // (fix-new-session-home-folder D1).
+        let start_text = "";
         let field = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("A folder path, or a folder name to search")
-                .default_value(start_text)
+            InputState::new(window, cx).placeholder("Home folder, or type a path or a folder name")
         });
         let field_changes = cx.subscribe(
             &field,
@@ -888,6 +888,20 @@ mod tests {
             fs::create_dir_all(home.join(folder)).unwrap();
         }
         home
+    }
+
+    #[test]
+    fn an_empty_field_browses_and_starts_in_the_home_folder() {
+        let home = home("empty");
+        let mut browser = Browser::new("", &home, &[]);
+        assert_eq!(browser.start_folder(), Some(home.as_path()));
+        assert_eq!(browser.key("enter", true, &home), Step::Start(home.clone()));
+        assert_eq!(browser.key("down", true, &home), Step::Moved);
+        assert_eq!(
+            browser.key("tab", true, &home),
+            Step::Text("~/code/".to_owned()),
+            "Tab from empty goes into the subfolder"
+        );
     }
 
     #[test]
