@@ -39,18 +39,9 @@ pub(super) struct RemoteWindow {
     problem: Option<String>,
     /// The phone app link's QR code: its modules, row by row, and its width.
     app_qr: Option<(Vec<bool>, usize)>,
-    /// Whether the owner opened the folded phone app step.
-    app_shown: bool,
     /// While set, Copy link reads "Copied"; it clears itself.
     copied: Option<Task<()>>,
     _refresh: Task<()>,
-}
-
-/// Whether the phone app step shows in full: always until a phone is paired, then only
-/// once the owner asks (add-phone-app-download D3). Before the first listing it stays
-/// folded, so it does not open and close again.
-fn app_step_open(listed: bool, phones: usize, shown: bool) -> bool {
-    shown || (listed && phones == 0)
 }
 
 /// A QR code's modules, row by row, true for dark, and its width.
@@ -127,7 +118,6 @@ impl Workspace {
             pairing: Pairing::Idle,
             problem: None,
             app_qr: qr_modules(&crate::update::phone_app_link()),
-            app_shown: false,
             copied: None,
             _refresh: refresh,
         });
@@ -212,32 +202,6 @@ impl Workspace {
     }
 
     /// The switch: the settings file first, so it holds after a restart, then the host.
-    fn set_remote(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(remote) = self.remote_window.as_mut() {
-            if !enabled {
-                remote.pairing.withdraw();
-                remote.pairing = Pairing::Idle;
-            }
-            remote.problem = None;
-        }
-        self.remote_call(
-            window,
-            cx,
-            move |paths| {
-                let file = hq_config::settings_path()
-                    .ok_or_else(|| anyhow::anyhow!("cannot find the settings folder"))?;
-                let known: Vec<&str> = hq_discovery::KNOWN_AGENTS
-                    .iter()
-                    .map(|agent| agent.id)
-                    .collect();
-                let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-                hq_config::remote::set_enabled(&file, enabled, &known, home.as_deref())?;
-                hq_client::remote(paths, &Request::RemoteSet { enabled })
-            },
-            |this, _, window, cx| this.refresh_remote(window, cx),
-        );
-    }
-
     fn pair_phone(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(remote) = self.remote_window.as_mut() else {
             return;
@@ -434,35 +398,17 @@ impl Workspace {
                     }
                 },
             ),
+            // Remote control follows the paired phones, with no switch
+            // (remote-follows-paired-phones D4).
             Some(status) => (
                 "Remote control is off".to_owned(),
                 status.problem.clone().unwrap_or_else(|| {
-                    "Turn it on to pair a phone. Nothing is reachable from outside while it is off."
+                    "Pair a phone to turn it on. Nothing is reachable from outside until then."
                         .to_owned()
                 }),
             ),
         };
-        let switch = div()
-            .id("remote-switch")
-            .flex_none()
-            .w(px(42.))
-            .h(px(24.))
-            .rounded(px(12.))
-            .p(px(3.))
-            .flex()
-            .when(running, |switch| switch.justify_end())
-            .bg(hsla(if running { chrome.accent } else { chrome.track }))
-            .cursor_pointer()
-            .child(div().size(px(18.)).rounded(px(999.)).bg(gpui::white()))
-            .on_click(
-                cx.listener(move |this, _, window, cx| this.set_remote(!running, window, cx)),
-            );
-        let status_card = card().child(
-            item()
-                .child(dot(running))
-                .child(lines(title, detail))
-                .child(switch),
-        );
+        let status_card = card().child(item().child(dot(running)).child(lines(title, detail)));
 
         let pairing = match &remote.pairing {
             Pairing::Idle | Pairing::Ended(_) => {
@@ -558,9 +504,10 @@ impl Workspace {
             ),
         };
 
-        let listed = remote.status.is_some();
+        // Always open, so another phone can get the app at any time
+        // (remote-follows-paired-phones D4).
         let app_step =
-            if app_step_open(listed, remote.devices.len(), remote.app_shown) {
+            {
                 let copied = remote.copied.is_some();
                 card().child(
                     div()
@@ -605,25 +552,6 @@ impl Workspace {
                                             })),
                                     ),
                                 ),
-                        ),
-                )
-            } else {
-                card().child(
-                    item()
-                        .child(lines(
-                            "For another phone".into(),
-                            "Shows the QR code and the link to the app.".into(),
-                        ))
-                        .child(
-                            Button::new("remote-app-show")
-                                .w(px(BUTTON_WIDTH))
-                                .label("Show")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if let Some(remote) = this.remote_window.as_mut() {
-                                        remote.app_shown = true;
-                                        cx.notify();
-                                    }
-                                })),
                         ),
                 )
             };
@@ -807,17 +735,6 @@ fn qr_code(modules: Vec<bool>, width: usize, side: f32) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_app_step_folds_once_a_phone_is_paired() {
-        assert!(app_step_open(true, 0, false), "no phone: open");
-        assert!(!app_step_open(true, 1, false), "a phone paired: folded");
-        assert!(app_step_open(true, 2, true), "Show opens it");
-        assert!(
-            !app_step_open(false, 0, false),
-            "folded until the phones are listed"
-        );
-    }
 
     #[test]
     fn the_phone_app_link_fits_a_small_qr_code() {

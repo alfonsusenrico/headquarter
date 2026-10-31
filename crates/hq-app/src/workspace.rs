@@ -243,7 +243,8 @@ pub struct Workspace {
     /// The update window's focus, and what had focus before it opened (fix-update-window-keys).
     update_focus: FocusHandle,
     update_return: Option<FocusHandle>,
-    /// Remote control is on in the settings file, for the quit dialog.
+    /// Remote control runs (a phone is paired), as the host answered when quitting was
+    /// asked, for the quit dialog's warning.
     remote_on: bool,
     /// The session whose agent is being started again because it was opened.
     resuming: Option<String>,
@@ -469,7 +470,6 @@ impl Workspace {
         };
         workspace.notifications = settings::notifications(&mut workspace.watcher, None);
         workspace.check_updates = settings::check_updates(&mut workspace.watcher, None);
-        workspace.remote_on = settings::remote_enabled(&mut workspace.watcher, None);
         // The window's close button quits too, so it asks first (add-quit-stops-host).
         let asker = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -609,7 +609,6 @@ impl Workspace {
         }
         self.notifications = settings::notifications(&mut self.watcher, Some(self.notifications));
         self.check_updates = settings::check_updates(&mut self.watcher, Some(self.check_updates));
-        self.remote_on = settings::remote_enabled(&mut self.watcher, Some(self.remote_on));
         let (appearance, note) = settings::read(&mut self.watcher, Some(&self.appearance));
         if appearance == self.appearance && note == self.settings_note {
             return;

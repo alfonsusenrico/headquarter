@@ -2,10 +2,10 @@
 
 ## 1. Build
 
-- [ ] 1.1 Host: gateway follows paired phones and shown codes (D1); `enabled` ignored (D2). Evidence: host tests (no phone: no endpoint; pair starts and keeps it; code expiry stops it; removing the last phone stops it and closes the connection), with `HQ_REMOTE_RELAYS=none`.
-- [ ] 1.2 CLI: `on` and `off` removed, `RemoteSet` answers the status (D3). Evidence: CLI and protocol tests.
+- [x] 1.1 Host: gateway follows paired phones and shown codes (D1); `enabled` ignored (D2). Evidence: host tests (no phone: no endpoint; pair starts and keeps it; code expiry stops it; removing the last phone stops it and closes the connection), with `HQ_REMOTE_RELAYS=none`.
+- [x] 1.2 CLI: `on` and `off` removed, `RemoteSet` answers the status (D3). Evidence: CLI and protocol tests.
 - [ ] 1.3 Window: no switch, app step always open, reach line (D4). Evidence: on screen.
-- [ ] 1.4 Docs: settings reference and README mentions of `hq remote on`. Evidence: grep.
+- [x] 1.4 Docs: settings reference and README mentions of `hq remote on`. Evidence: grep.
 
 Expected Result: remote control runs exactly while a phone is paired.
 

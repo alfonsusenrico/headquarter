@@ -1,6 +1,6 @@
 # Remote control follows the paired phones
 
-Status: plan, waiting for the owner's approval.
+Status: approved by the owner 2026-10-31 ("ok approved", with the other four plans of that day).
 
 ## Why
 
@@ -21,6 +21,7 @@ the last one is removed (to save resources), and the app's QR code should simply
   (D1); `[remote] enabled` is accepted but ignored (D2).
 - CLI: `hq remote on` and `off` are removed; `status`, `pair`, `devices`, `remove` stay (D3).
 - Window: no switch; the app step always open (D4).
+- Phone core: a phone removed while connected is told so, since nothing answers afterwards (D5).
 - Specs: `remote-control`, `settings`.
 
 ## Non-goals
@@ -35,5 +36,5 @@ No new project capability. Modified: `remote-control`, `settings`.
 ## Impact
 
 `hq-daemon` (`host/remote.rs`), `hq-cli` (`remote` commands), `hq-config` (the key kept, ignored),
-`hq-app` (`workspace/remote.rs`). Protocol: `RemoteSet` stays for older clients and only reports
+`hq-app` (`workspace/remote.rs`, the quit dialog asks the host), `hq-mobile` (`link.rs`). Protocol: `RemoteSet` stays for older clients and only reports
 the status.

@@ -17,7 +17,7 @@ The system SHALL run the remote control endpoint only while at least one phone i
 
 #### Scenario: The last phone removed
 - **WHEN** the owner removes the only paired phone while it is connected
-- **THEN** its connection closes and the host opens no network endpoint
+- **THEN** its connection closes, the phone says it was removed from the computer, and the host opens no network endpoint
 
 ## REMOVED Requirements
 

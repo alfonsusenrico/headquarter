@@ -325,11 +325,28 @@ async fn connect(
         }
         session.pending.push_back(answer);
     }
-    let ending = session.serve(rx).await;
+    let ending = match session.serve(rx).await {
+        // The computer closed the link because it removed this phone: it will not answer
+        // again (remote control stops with its last phone), so say so instead of retrying.
+        Ending::Lost { .. } if removed_by_computer(&connection) => {
+            Ending::Final(LinkStatus::NotKnown)
+        }
+        ending => ending,
+    };
     shared.disconnected(&connection);
     connection.close(0u32.into(), b"bye");
     endpoint.close().await;
     ending
+}
+
+/// Whether the computer closed `connection` because it removed this phone (the host closes
+/// with the reason `removed`).
+fn removed_by_computer(connection: &Connection) -> bool {
+    matches!(
+        connection.close_reason(),
+        Some(iroh::endpoint::ConnectionError::ApplicationClosed(close))
+            if close.reason.as_ref() == b"removed"
+    )
 }
 
 struct Session<'a> {

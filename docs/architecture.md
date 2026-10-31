@@ -24,7 +24,7 @@ the behaviour.
   history every 60 s (`HQ_HISTORY_INTERVAL_SECS` shortens it in tests), `host/outside.rs` links outside agents every 5 s,
   `host/close.rs` closes a session with the agent's own keys, and `host/usage.rs`
   reads usage only while a client shows it (`HQ_USAGE_INTERVAL_SECS` shortens the 5-minute Codex interval in tests).
-  `host/remote.rs` is remote control's gateway: off unless enabled, an iroh endpoint
+  `host/remote.rs` is remote control's gateway: running only while a phone is paired or a code is shown, an iroh endpoint
   on its own thread that passes each paired phone to `agentd.sock` as an ordinary
   client through an allow-list (add-remote-gateway).
 - `crates/hq-remote`: remote control's connection, shared by the host's gateway and the

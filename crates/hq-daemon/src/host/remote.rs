@@ -41,6 +41,9 @@ fn pairing_valid() -> Duration {
 #[derive(Default)]
 pub(super) struct Remote {
     state: Mutex<State>,
+    /// Held while the gateway is started or stopped to follow the phones, so two such
+    /// turns cannot interleave.
+    following: Mutex<()>,
 }
 
 #[derive(Default)]
@@ -210,20 +213,16 @@ fn device_name(name: &str) -> String {
 }
 
 impl Host {
-    /// Starts the gateway when the settings file turns remote control on.
-    pub(super) fn start_remote_if_enabled(self: &Arc<Self>) {
-        let enabled = lock(&self.settings)
-            .current()
-            .map(|settings| settings.remote.enabled)
-            .unwrap_or(false);
-        if enabled {
-            self.remote_set(true);
-        }
-    }
-
-    /// Turns the gateway on or off; the settings file is the caller's to change.
-    pub(super) fn remote_set(self: &Arc<Self>, enabled: bool) -> Response {
-        if enabled {
+    /// Runs the gateway exactly while a phone is paired or a pairing code is shown, and
+    /// stops it otherwise (remote-follows-paired-phones D1). Safe to call at any time
+    /// from outside the gateway's own runtime; from inside it, use `follow_phones_later`.
+    pub(super) fn follow_phones(self: &Arc<Self>) {
+        let _turn = lock(&self.remote.following);
+        let pairing = lock(&self.remote.state)
+            .running
+            .as_ref()
+            .is_some_and(|running| lock(&running.shared.pairing).is_some());
+        if self.has_phones() || pairing {
             if !self.remote.running()
                 && let Err(problem) = self.start_gateway()
             {
@@ -233,7 +232,26 @@ impl Host {
         } else {
             self.stop_gateway();
         }
-        self.remote_status(enabled)
+    }
+
+    /// `follow_phones` on a thread of its own: stopping the gateway waits for its runtime,
+    /// so it cannot run on one of that runtime's threads.
+    fn follow_phones_later(self: &Arc<Self>) {
+        let host = Arc::clone(self);
+        thread::spawn(move || host.follow_phones());
+    }
+
+    /// Whether at least one phone is paired.
+    pub(super) fn has_phones(&self) -> bool {
+        lock(&self.store)
+            .devices()
+            .is_ok_and(|devices| !devices.is_empty())
+    }
+
+    /// Older clients' on/off switch: remote control follows the paired phones now, so it
+    /// only answers the status (remote-follows-paired-phones D3).
+    pub(super) fn remote_set(&self) -> Response {
+        self.remote_status(self.has_phones())
     }
 
     fn start_gateway(self: &Arc<Self>) -> Result<(), String> {
@@ -326,23 +344,28 @@ impl Host {
         }
     }
 
-    /// Whether the settings file turns remote control on.
-    pub(super) fn remote_enabled_setting(&self) -> bool {
-        lock(&self.settings)
-            .current()
-            .is_ok_and(|settings| settings.remote.enabled)
-    }
-
     /// A new one-time code; the client hears again on `tell` when a phone uses it or it
     /// expires (D4). A code shown before is replaced.
-    pub(super) fn remote_pair(&self, tell: mpsc::Sender<Outgoing>, connection: u64) -> Response {
+    /// Starts the gateway first when no phone is paired yet (remote-follows-paired-phones D1).
+    pub(super) fn remote_pair(
+        self: &Arc<Self>,
+        tell: mpsc::Sender<Outgoing>,
+        connection: u64,
+    ) -> Response {
+        if !self.remote.running() {
+            let _turn = lock(&self.remote.following);
+            if !self.remote.running()
+                && let Err(problem) = self.start_gateway()
+            {
+                self.log.line(&format!("remote failed problem={problem}"));
+                lock(&self.remote.state).problem = Some(problem.clone());
+                return Response::error(ErrorCode::RemoteOff, problem);
+            }
+        }
         let (endpoint, runtime, shared) = {
             let state = lock(&self.remote.state);
             let Some(running) = state.running.as_ref() else {
-                return Response::error(
-                    ErrorCode::RemoteOff,
-                    "remote control is off; turn it on with `hq remote on`",
-                );
+                return Response::error(ErrorCode::RemoteOff, "remote control stopped");
             };
             (
                 running.endpoint.clone(),
@@ -375,17 +398,25 @@ impl Host {
         lock(&shared.guesses).clear();
         {
             let shared = Arc::clone(&shared);
+            let host = Arc::clone(self);
             runtime.spawn(async move {
                 tokio::time::sleep(pairing_valid()).await;
-                let mut pairing = lock(&shared.pairing);
-                if pairing
-                    .as_ref()
-                    .is_some_and(|pending| pending.code.secret == secret)
-                    && let Some(expired) = pairing.take()
-                {
+                let expired = {
+                    let mut pairing = lock(&shared.pairing);
+                    if pairing
+                        .as_ref()
+                        .is_some_and(|pending| pending.code.secret == secret)
+                    {
+                        pairing.take()
+                    } else {
+                        None
+                    }
+                };
+                if let Some(expired) = expired {
                     expired.tell(&Response::RemotePairExpired {
                         reason: "the code expired".into(),
                     });
+                    host.follow_phones_later();
                 }
             });
         }
@@ -398,7 +429,7 @@ impl Host {
 
     /// The client that showed the pairing code left (its window closed, Cancel, Ctrl-C):
     /// the code stops working (D13).
-    pub(super) fn remote_client_left(&self, connection: u64) {
+    pub(super) fn remote_client_left(self: &Arc<Self>, connection: u64) {
         let Some(shared) = lock(&self.remote.state)
             .running
             .as_ref()
@@ -412,7 +443,9 @@ impl Host {
             .is_some_and(|pending| pending.connection == connection)
         {
             *pairing = None;
+            drop(pairing);
             self.log.line("remote pairing code withdrawn");
+            self.follow_phones_later();
         }
     }
 
@@ -441,7 +474,7 @@ impl Host {
     }
 
     /// Removes a phone by name (any case) or endpoint id prefix, closing its connection.
-    pub(super) fn remote_remove(&self, reference: &str) -> Response {
+    pub(super) fn remote_remove(self: &Arc<Self>, reference: &str) -> Response {
         let rows = match lock(&self.store).devices() {
             Ok(rows) => rows,
             Err(error) => return Response::error(ErrorCode::Storage, error.to_string()),
@@ -482,6 +515,8 @@ impl Host {
         }
         self.log
             .line(&format!("remote removed device={}", device.name));
+        // The last phone gone, remote control stops (remote-follows-paired-phones D1).
+        self.follow_phones();
         Response::Done
     }
 }
@@ -587,6 +622,7 @@ async fn serve_phone(
         let _ = tokio::time::timeout(FIRST_FRAME_WAIT / 5, connection.closed()).await;
         connection.close(0u32.into(), b"unpaired");
         host.log.line(&format!("remote unpaired device={name}"));
+        host.follow_phones_later();
         return;
     }
     let still_ours = {
@@ -616,7 +652,12 @@ async fn serve_phone(
 
 /// Checks a phone's first frame against the shown code; records the phone when it
 /// matches (D4).
-fn pair(host: &Host, shared: &Shared, phone: &str, first: &Frame) -> Result<String, Box<Response>> {
+fn pair(
+    host: &Arc<Host>,
+    shared: &Shared,
+    phone: &str,
+    first: &Frame,
+) -> Result<String, Box<Response>> {
     let refused = |message: &str| Box::new(Response::error(ErrorCode::NotAllowed, message));
     let Frame::Control(bytes) = first else {
         return Err(refused("this phone is not paired"));
@@ -651,7 +692,7 @@ fn pair(host: &Host, shared: &Shared, phone: &str, first: &Frame) -> Result<Stri
 }
 
 /// Five wrong codes within a minute void the code being shown.
-fn guessed_wrong(host: &Host, shared: &Shared) {
+fn guessed_wrong(host: &Arc<Host>, shared: &Shared) {
     let now = Instant::now();
     let mut guesses = lock(&shared.guesses);
     guesses.push_back(now);
@@ -669,6 +710,7 @@ fn guessed_wrong(host: &Host, shared: &Shared) {
             });
             host.log
                 .line("remote pairing code voided after wrong codes");
+            host.follow_phones_later();
         }
     }
 }

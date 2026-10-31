@@ -52,6 +52,25 @@ impl Workspace {
         self.quit = Some(QuitState::Asking);
         self.quit_return = window.focused(cx);
         window.focus(&self.quit_focus, cx);
+        // Whether a phone can reach the computer: remote control runs while one is paired
+        // (remote-follows-paired-phones D1), so the host knows, not the settings file.
+        self.remote_on = false;
+        let status = cx.background_executor().spawn(async move {
+            let paths = HostPaths::standard()?;
+            std::os::unix::net::UnixStream::connect(&paths.control_socket).ok()?;
+            match hq_client::remote(&paths, &hq_protocol::Request::RemoteStatus {}) {
+                Ok(hq_protocol::Response::RemoteStatus { running, .. }) => Some(running),
+                _ => None,
+            }
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let running = status.await.unwrap_or(false);
+            let _ = this.update(cx, |this, cx| {
+                this.remote_on = running;
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 

@@ -3838,14 +3838,9 @@ impl Phone {
 }
 
 impl TestEnv {
-    /// Turns remote control on and shows a pairing code on a connection kept to hear
+    /// Shows a pairing code, which starts remote control, on a connection kept to hear
     /// when it is used.
     fn remote_on_and_pair(&self) -> (Conn, String) {
-        let mut local = self.connect();
-        match local.request(&Request::RemoteSet { enabled: true }) {
-            Response::RemoteStatus { running: true, .. } => {}
-            other => panic!("remote did not start: {other:?}"),
-        }
         let mut shower = self.connect();
         let code = match shower.request(&Request::RemotePair {}) {
             Response::RemotePairing { code, .. } => code,
@@ -3997,7 +3992,17 @@ fn a_paired_phone_follows_types_and_is_held_to_the_allow_list() {
     let secret = hq_remote::PairingCode::parse(&code).unwrap().secret;
     assert!(!log.contains(&secret), "{log}");
 
-    // Removed: cut off at once, refused afterwards.
+    // Removed: cut off at once, refused afterwards. Another phone stays paired, so remote
+    // control keeps running to refuse it (it stops with the last phone).
+    let mut other_shower = env.connect();
+    let other_code = match other_shower.request(&Request::RemotePair {}) {
+        Response::RemotePairing { code, .. } => code,
+        other => panic!("no code: {other:?}"),
+    };
+    assert!(matches!(
+        Phone::new().pair(&other_code, "Other Phone"),
+        Some(Response::Paired { .. })
+    ));
     assert!(matches!(
         local.request(&Request::RemoteRemove {
             device: "test phone".into()
@@ -4260,7 +4265,6 @@ fn a_phone_removed_on_the_computer_hears_so() {
     phone.pair(code, "Removed Phone".into()).unwrap();
     shower.next_response();
     wait_until("connected", || phone.status() == LinkStatus::Connected);
-    phone.disconnect();
     let mut local = env.connect();
     assert!(matches!(
         local.request(&Request::RemoteRemove {
@@ -4268,7 +4272,8 @@ fn a_phone_removed_on_the_computer_hears_so() {
         }),
         Response::Done
     ));
-    phone.connect();
+    // Removed while connected: it is told, although remote control stops with it, the
+    // last phone (remote-follows-paired-phones D5).
     wait_until("told it is not known", || {
         phone.status() == LinkStatus::NotKnown
     });
@@ -4427,30 +4432,65 @@ fn pairing_codes_work_once_and_briefly() {
     }
 }
 
+/// Remote control runs while a phone is paired; removing the last one stops it and closes
+/// the phone (remote-follows-paired-phones D1).
 #[test]
-fn turning_remote_control_off_closes_phones_and_keeps_the_host() {
+fn removing_the_last_phone_stops_remote_control() {
     let mut env = TestEnv::new("remoteoff");
     env.start_daemon();
+    let running = |env: &TestEnv| match env.connect().request(&Request::RemoteStatus {}) {
+        Response::RemoteStatus { running, .. } => running,
+        other => panic!("unexpected status {other:?}"),
+    };
+    assert!(!running(&env), "no phone, no endpoint");
     let (_shower, code) = env.remote_on_and_pair();
     let mut phone = Phone::new();
     assert!(matches!(
         phone.pair(&code, "Phone"),
         Some(Response::Paired { .. })
     ));
-    let mut local = env.connect();
-    match local.request(&Request::RemoteSet { enabled: false }) {
-        Response::RemoteStatus { running, .. } => assert!(!running),
-        other => panic!("unexpected answer {other:?}"),
-    }
-    while phone.next().is_some() {}
-    assert!(env.log().contains("remote disabled"));
+    assert!(running(&env));
     assert!(matches!(
-        local.request(&Request::RemotePair {}),
-        Response::Error {
-            code: ErrorCode::RemoteOff,
-            ..
-        }
+        env.connect().request(&Request::RemoteRemove {
+            device: "phone".into()
+        }),
+        Response::Done
     ));
+    while phone.next().is_some() {}
+    assert!(!running(&env), "{}", env.log());
+    assert!(env.log().contains("remote disabled"));
+    // Older clients' switch only answers the status now.
+    assert!(matches!(
+        env.connect().request(&Request::RemoteSet { enabled: true }),
+        Response::RemoteStatus { running: false, .. }
+    ));
+}
+
+/// A code shown with no phone paired starts remote control for its lifetime only.
+#[test]
+fn an_unused_code_stops_remote_control_again() {
+    let mut env = TestEnv::new("remotecode");
+    let daemon = env
+        .command()
+        .env("HQ_REMOTE_PAIR_SECS", "1")
+        .arg("daemon")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    env.daemons.push(daemon);
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    let (mut shower, _code) = env.remote_on_and_pair();
+    assert!(env.log().contains("remote enabled"));
+    assert!(matches!(
+        shower.next_response(),
+        Response::RemotePairExpired { .. }
+    ));
+    wait_until("the endpoint to stop", || {
+        env.log().contains("remote disabled")
+    });
 }
 
 #[test]
@@ -4531,20 +4571,17 @@ fn the_terminal_is_sized_for_the_device_in_use() {
 }
 
 #[test]
-fn hq_remote_turns_on_pairs_lists_and_removes() {
+fn hq_remote_pairs_lists_and_removes() {
     let mut env = TestEnv::new("remotecli");
     env.settings("# kept\n[font]\nsize = 15\n");
     env.start_daemon();
-    let on = env.hq(&["remote", "on"]);
-    assert!(on.status.success(), "{on:?}");
-    assert!(String::from_utf8_lossy(&on.stdout).contains("Remote control is on."));
-    let settings =
-        std::fs::read_to_string(env.root.join("config/headquarter/config.toml")).unwrap();
+    let off = env.hq(&["remote", "status"]);
     assert!(
-        settings.starts_with("# kept\n[font]\nsize = 15\n"),
-        "{settings}"
+        String::from_utf8_lossy(&off.stdout).contains("no phone is paired"),
+        "{off:?}"
     );
-    assert!(settings.contains("[remote]\nenabled = true"), "{settings}");
+    let gone = env.hq(&["remote", "on"]);
+    assert!(!gone.status.success(), "no switch any more");
 
     // `pair` waits for the phone and names it.
     let mut pair = env
@@ -4574,6 +4611,8 @@ fn hq_remote_turns_on_pairs_lists_and_removes() {
     std::io::Read::read_to_string(&mut out, &mut rest).unwrap();
     assert!(pair.wait().unwrap().success());
     assert!(rest.contains("Paired Pixel Test."), "{rest}");
+    let on = env.hq(&["remote", "status"]);
+    assert!(String::from_utf8_lossy(&on.stdout).contains("Remote control is on."));
 
     let devices = env.hq(&["remote", "devices"]);
     assert!(String::from_utf8_lossy(&devices.stdout).contains("Pixel Test"));
@@ -4581,18 +4620,38 @@ fn hq_remote_turns_on_pairs_lists_and_removes() {
     assert!(removed.status.success(), "{removed:?}");
     let devices = env.hq(&["remote", "devices"]);
     assert!(String::from_utf8_lossy(&devices.stdout).contains("No paired phones"));
-
-    let off = env.hq(&["remote", "off"]);
-    assert!(String::from_utf8_lossy(&off.stdout).contains("Remote control is off."));
+    let off = env.hq(&["remote", "status"]);
+    assert!(String::from_utf8_lossy(&off.stdout).contains("Remote control is off"));
     let settings =
         std::fs::read_to_string(env.root.join("config/headquarter/config.toml")).unwrap();
-    assert!(settings.contains("enabled = false"), "{settings}");
+    assert_eq!(
+        settings, "# kept\n[font]\nsize = 15\n",
+        "the settings file is left alone"
+    );
 }
 
+/// A host started with a phone paired runs the gateway; an older file's switch alone does
+/// not (remote-follows-paired-phones D1, D2).
 #[test]
-fn a_host_started_with_remote_control_on_runs_the_gateway() {
+fn a_host_with_a_paired_phone_starts_the_gateway() {
     let mut env = TestEnv::new("remotestart");
     env.settings("[remote]\nenabled = true\n");
+    env.start_daemon();
+    assert!(matches!(
+        env.connect().request(&Request::RemoteStatus {}),
+        Response::RemoteStatus { running: false, .. }
+    ));
+    let (_shower, code) = env.remote_on_and_pair();
+    assert!(matches!(
+        Phone::new().pair(&code, "Phone"),
+        Some(Response::Paired { .. })
+    ));
+    assert!(matches!(
+        env.connect().request(&Request::Stop {}),
+        Response::Done
+    ));
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("the host to stop", || UnixStream::connect(&socket).is_err());
     env.start_daemon();
     wait_until("the gateway", || {
         matches!(
@@ -4604,13 +4663,11 @@ fn a_host_started_with_remote_control_on_runs_the_gateway() {
             }
         )
     });
-    assert!(env.log().contains("remote enabled"), "{}", env.log());
 }
 
 #[test]
 fn remote_control_keeps_an_idle_host_up() {
     let mut env = TestEnv::new("remoteidle");
-    env.settings("[remote]\nenabled = true\n");
     let daemon = env
         .command()
         .env("HQ_IDLE_EXIT_SECS", "1")
@@ -4623,6 +4680,12 @@ fn remote_control_keeps_an_idle_host_up() {
     env.daemons.push(daemon);
     let socket = env.host_dir().join("agentd.sock");
     wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+    let (shower, code) = env.remote_on_and_pair();
+    assert!(matches!(
+        Phone::new().pair(&code, "Phone"),
+        Some(Response::Paired { .. })
+    ));
+    shower.close();
     wait_until("the gateway", || env.log().contains("remote enabled"));
     // Idle for well past the timeout with no client: a phone could not start it again.
     std::thread::sleep(Duration::from_secs(3));
@@ -4630,11 +4693,13 @@ fn remote_control_keeps_an_idle_host_up() {
         env.daemons[0].try_wait().unwrap().is_none(),
         "the host exited"
     );
-    // Turned off, the host idles out as before.
+    // With the last phone removed, the host idles out as before.
     let mut local = env.connect();
     assert!(matches!(
-        local.request(&Request::RemoteSet { enabled: false }),
-        Response::RemoteStatus { running: false, .. }
+        local.request(&Request::RemoteRemove {
+            device: "phone".into()
+        }),
+        Response::Done
     ));
     local.close();
     // Watch the process, not the socket: every connection counts as a client.

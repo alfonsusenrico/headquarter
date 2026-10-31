@@ -21,6 +21,14 @@ protocol's `RemoteSet` stays (older apps send it) and answers with the status wi
 
 Rejected: keeping `off` as a pause. The owner asked for no toggles; removing the phones is the off.
 
+## D5. The phone hears it was removed
+
+When the last phone is removed while it is connected, the gateway stops right after closing its
+connection, so the phone would only find the computer unreachable. The host already closes that
+connection with the reason `removed`; the phone core now takes that reason as "removed from this
+computer" (`LinkStatus::NotKnown`) instead of retrying. A phone that was offline when it was
+removed finds nothing listening once no phone is paired, and shows the computer as unreachable.
+
 ## D4. The window
 
 The switch goes. The first step always shows the app's QR code and Copy link; the "For another
