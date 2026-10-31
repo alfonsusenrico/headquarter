@@ -2,7 +2,7 @@
 
 ## 1. Build
 
-- [ ] 1.1 Totals from the existing reading, popover and window (D1). Evidence: unit test of the sums; on screen with stand-ins.
+- [x] 1.1 Totals from the existing reading, popover and window (D1). Evidence: unit test of the sums; on screen with stand-ins.
 
 Expected Result: both end with the total.
 

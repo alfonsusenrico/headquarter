@@ -1,6 +1,6 @@
 # A total in the Usage popover and window
 
-Status: plan, waiting for the owner's approval.
+Status: approved by the owner 2026-10-31 ("ok approved", with the other four plans of that day).
 
 ## Why
 
