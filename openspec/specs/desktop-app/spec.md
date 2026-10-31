@@ -251,6 +251,13 @@ The New session window SHALL show how many sessions each folder holds, sidebar s
 - **WHEN** the owner ticks "Don't ask again for these" and starts a new session
 - **THEN** later starts in that folder do not offer those sessions, and a session forgotten later is still offered
 
+### Requirement: Usage total
+The Usage popover and the Usage window SHALL end with Headquarter's own figures, all running sessions' figures together, and their sum, each with CPU and memory, counting every running session even where the popover lists only some.
+
+#### Scenario: Popover total
+- **WHEN** the owner opens the Usage popover with 12 sessions running
+- **THEN** below the five busiest it shows Headquarter, all 12 sessions and the total, with CPU and memory for each
+
 ### Requirement: Quiet notices
 The app SHALL show short messages in a notice at the bottom right of the window that slides in, leaves by itself after 5 seconds unless the pointer is on it, can be dismissed, never takes the keyboard, and appears without sliding when reduced motion is on. A notice reporting a failure SHALL stay until dismissed.
 

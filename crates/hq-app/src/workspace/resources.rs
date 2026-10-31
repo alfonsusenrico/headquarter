@@ -149,6 +149,37 @@ fn top(lines: &[Line]) -> Vec<&Line> {
 }
 
 /// All agents together, with how many run and how many do not.
+/// Headquarter's own figures and every running session's together (add-usage-total D1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Totals {
+    headquarter: Footprint,
+    sessions: Footprint,
+    running: usize,
+}
+
+impl Totals {
+    fn of(reading: &Reading, lines: &[Line]) -> Totals {
+        let (sessions, running, _) = all_agents(lines);
+        Totals {
+            headquarter: reading.headquarter(),
+            sessions,
+            running,
+        }
+    }
+
+    fn total(self) -> Footprint {
+        self.headquarter.plus(self.sessions)
+    }
+}
+
+/// "All 12 sessions", "1 session".
+fn sessions_label(running: usize) -> String {
+    match running {
+        1 => "1 session".to_owned(),
+        count => format!("All {count} sessions"),
+    }
+}
+
 fn all_agents(lines: &[Line]) -> (Footprint, usize, usize) {
     let total = lines.iter().filter(|line| line.running).fold(
         Footprint {
@@ -489,24 +520,6 @@ impl Workspace {
                 )
                 .into_any_element();
         };
-        let headquarter = reading.headquarter();
-        panel = panel.child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .flex_1()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child("Headquarter"),
-                )
-                .child(Self::resources_figure(CPU_WIDTH, cpu_text(headquarter.cpu)))
-                .child(Self::resources_figure(
-                    MEMORY_WIDTH,
-                    memory_text(headquarter.memory),
-                )),
-        );
         panel = panel.child(
             div()
                 .text_size(px(11.5))
@@ -533,6 +546,42 @@ impl Workspace {
                     )),
             );
         }
+        // What Headquarter and every running session use together, the five listed or
+        // not (add-usage-total D1).
+        let totals = Totals::of(reading, lines);
+        let total_line = |label: String, footprint: Footprint, strong: bool| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .when(strong, |line| line.font_weight(gpui::FontWeight::SEMIBOLD))
+                .child(div().flex_1().child(label))
+                .child(Self::resources_figure(CPU_WIDTH, cpu_text(footprint.cpu)))
+                .child(Self::resources_figure(
+                    MEMORY_WIDTH,
+                    memory_text(footprint.memory),
+                ))
+        };
+        panel = panel.child(
+            div()
+                .pt(px(10.))
+                .border_t_1()
+                .border_color(hsla(chrome.sidebar_line))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(total_line(
+                    "Headquarter".to_owned(),
+                    totals.headquarter,
+                    false,
+                ))
+                .child(total_line(
+                    sessions_label(totals.running),
+                    totals.sessions,
+                    false,
+                ))
+                .child(total_line("Total".to_owned(), totals.total(), true)),
+        );
         panel
             .children(
                 view.problem
@@ -632,7 +681,11 @@ impl Workspace {
                 )
                 .child(figure_pair(footprint))
         };
-        let (agents, running, stopped) = all_agents(lines);
+        let (_, running, stopped) = all_agents(lines);
+        let totals = view
+            .reading
+            .as_ref()
+            .map(|reading| Totals::of(reading, lines));
         let headquarter_detail = view.reading.as_ref().map_or_else(
             || "Measuring…".to_owned(),
             |reading| {
@@ -656,13 +709,22 @@ impl Workspace {
             .child(card_row(
                 "HEADQUARTER",
                 headquarter_detail,
-                view.reading.as_ref().map(Reading::headquarter),
+                totals.map(|totals| totals.headquarter),
             ))
             .child(
                 card_row(
-                    "ALL AGENTS",
+                    "ALL SESSIONS",
                     format!("{running} running, {stopped} not running"),
-                    view.reading.as_ref().map(|_| agents),
+                    totals.map(|totals| totals.sessions),
+                )
+                .border_t_1()
+                .border_color(hsla(chrome.sidebar_line)),
+            )
+            .child(
+                card_row(
+                    "TOTAL",
+                    "Headquarter and every running session".to_owned(),
+                    totals.map(|totals| totals.total()),
                 )
                 .border_t_1()
                 .border_color(hsla(chrome.sidebar_line)),
@@ -802,7 +864,6 @@ impl Workspace {
             .text_size(px(13.5))
             .text_color(hsla(chrome.text))
             .child(self.resources_header(cx))
-            .child(card)
             .child(
                 div()
                     .flex_1()
@@ -819,6 +880,7 @@ impl Workspace {
                             .child(rows),
                     ),
             )
+            .child(card)
             .children(
                 view.problem
                     .clone()
@@ -937,6 +999,26 @@ mod tests {
         let stopped = &by(Sort::Sidebar)[0];
         assert_eq!(stopped.status, "not running");
         assert_eq!(stopped.footprint, None);
+    }
+
+    #[test]
+    fn the_total_adds_headquarter_and_every_running_session() {
+        let sessions = sessions();
+        let reading = reading();
+        let lines = lines(&sessions, &[], None, Some(&reading), Sort::Sidebar);
+        let totals = Totals::of(&reading, &lines);
+        assert_eq!(totals.headquarter.memory, 140 * 1024 * 1024);
+        assert_eq!(
+            totals.sessions.cpu,
+            Some(142.0),
+            "the stopped one adds nothing"
+        );
+        assert_eq!(totals.running, 2);
+        let total = totals.total();
+        assert_eq!(total.cpu, Some(143.5));
+        assert_eq!(total.memory, (140 + 1200) * 1024 * 1024);
+        assert_eq!(sessions_label(2), "All 2 sessions");
+        assert_eq!(sessions_label(1), "1 session");
     }
 
     #[test]
