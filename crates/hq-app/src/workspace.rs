@@ -810,7 +810,6 @@ impl Workspace {
             }
         }
         self.tell_start_failures(cx);
-        self.restart_if_idle(window, cx);
         if let Some(Modal::Open { view: window, .. }) = &self.modal {
             let sessions = self.sessions.clone();
             let loaded = self.listed;

@@ -59,7 +59,7 @@ The system SHALL install an update with that release's own installer after check
 - **THEN** the window shows its error and the installed version is unchanged
 
 ### Requirement: Busy sessions before a restart
-The system SHALL, before restarting for an update while any live sidebar session is working, needs the owner, shows background work, or has a plan to review, name those sessions and offer Restart Now or Wait, and with Wait SHALL install at once and restart by itself as soon as no session is busy.
+The system SHALL, before restarting for an update while any live sidebar session is working, needs the owner, shows background work, or has a plan to review, name those sessions and offer to restart now or wait. Wait SHALL install at once and never restart by itself; the sidebar SHALL then offer "Update Now", which restarts at once when nothing is busy and otherwise asks again.
 
 #### Scenario: Ask first
 - **WHEN** the owner presses Update Now while "Fix login" is working
@@ -67,15 +67,19 @@ The system SHALL, before restarting for an update while any live sidebar session
 
 #### Scenario: Wait
 - **WHEN** the owner chooses Wait and "Fix login" finishes its turn
-- **THEN** the new version is installed and the restart runs without another click
+- **THEN** the new version is installed, nothing restarts, and the sidebar shows "Update Now"
 
 #### Scenario: Background work holds the restart
-- **WHEN** the owner chooses Wait and "Fix login" finishes its turn while a background agent it started still runs
-- **THEN** the restart waits until that agent ends
+- **WHEN** the owner presses the sidebar's Update Now while a session's background agent still runs
+- **THEN** the window names that session and offers Later and Restart Now
 
 #### Scenario: A plan to review holds the restart
-- **WHEN** the owner chooses Wait while an agy session has a plan to review
-- **THEN** the restart waits until the owner approves or rejects it
+- **WHEN** the owner presses the sidebar's Update Now while an agy session has a plan to review
+- **THEN** the window names that session and offers Later and Restart Now
+
+#### Scenario: Nothing busy
+- **WHEN** the update is installed, no session is busy, and the owner presses the sidebar's Update Now
+- **THEN** Headquarter restarts onto the new version at once
 
 ### Requirement: Restarting onto the new version
 The system SHALL restart for an update by stopping the host, which marks its running sessions to start again, then reopening the app from the new version, whose host starts those sessions, the shown one first.
