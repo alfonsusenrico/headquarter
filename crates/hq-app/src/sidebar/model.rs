@@ -115,11 +115,11 @@ impl Row {
         matches!(self.glyph, Glyph::Working | Glyph::Starting)
     }
 
-    /// Whether the row ends with a cell for its glyph. A breathing word and "background"
-    /// carry their dots instead, so they end the row themselves, right-aligned where the
-    /// glyphs end (owner, 2026-10-26); "review" keeps the cell for its diamond.
+    /// Whether the row ends with a cell for its glyph. A breathing word carries its dots
+    /// instead, so it ends the row itself, right-aligned where the glyphs end (owner,
+    /// 2026-10-26); "background" and "review" keep the cell for their marks.
     pub fn glyph_cell(&self) -> bool {
-        !self.breathing() && self.beside != Some(sidebar::Beside::Background)
+        !self.breathing()
     }
 
     /// "background" or "review", which, like "working", ends the row in place of the age
@@ -665,7 +665,7 @@ mod tests {
         );
         let row = &rows(&open, "bg")[0];
         assert_eq!(row.beside_word(), Some("background"));
-        assert!(!row.glyph_cell(), "the word and its dots end the row");
+        assert!(row.glyph_cell(), "the stacked layers end the row");
         assert_eq!(rows(&open, "rv")[0].beside_word(), Some("review"));
         assert!(
             rows(&open, "rv")[0].glyph_cell(),

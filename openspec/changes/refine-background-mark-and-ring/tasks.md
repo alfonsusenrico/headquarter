@@ -2,8 +2,8 @@
 
 ## 1. Build
 
-- [ ] 1.1 Stacked-layers glyph in the glyph cell for background rows (D1). Evidence: model test (glyph cell for background), on screen in light and dark.
-- [ ] 1.2 Softened near-limit ring for old readings (D2). Evidence: contrast test, on screen.
+- [x] 1.1 Stacked-layers glyph in the glyph cell for background rows (D1). Evidence: model test (glyph cell for background), on screen in light and dark.
+- [x] 1.2 Softened near-limit ring for old readings (D2). Evidence: contrast test, on screen.
 
 Expected Result: background has its own mark and an old 93% stays red.
 

@@ -2050,20 +2050,16 @@ impl Workspace {
                     })
             }))
             .child(match row.status_word() {
-                Some(word) if row.breathing() => {
-                    dotted_word(word, 3, self.lit_dot(), chrome.accent)
-                }
-                // Background work keeps its dots still: nothing waits on the owner, and
-                // the sidebar stays at rest (add-background-work-status D8).
-                None if row.beside == Some(Beside::Background) => {
-                    dotted_word("background", 2, None, chrome.teal)
-                }
+                Some(word) if row.breathing() => dotted_word(word, self.lit_dot(), chrome.accent),
                 None if let Some(word) = row.beside_word() => div()
                     .flex_none()
                     .text_right()
                     .text_size(px(12.5))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(hsla(chrome.violet))
+                    .text_color(hsla(match row.beside {
+                        Some(Beside::Background) => chrome.teal,
+                        _ => chrome.violet,
+                    }))
                     .child(word)
                     .into_any_element(),
                 Some(word) => div()
@@ -2086,10 +2082,10 @@ impl Workspace {
                     .into_any_element(),
             })
             .when(row.glyph_cell(), |line| {
-                line.child(if row.beside == Some(Beside::Review) {
-                    glyph::review(chrome)
-                } else {
-                    glyph::status(row.glyph, chrome)
+                line.child(match row.beside {
+                    Some(Beside::Review) => glyph::review(chrome),
+                    Some(Beside::Background) => glyph::background(chrome),
+                    None => glyph::status(row.glyph, chrome),
                 })
             })
             .child(self.hover_close(
@@ -2542,13 +2538,15 @@ impl Workspace {
         let agent = usage.agent;
         let rings = usage::rings(usage, now);
         let note = usage::update_note(usage, &chrono::Local::now());
+        // An old reading greys its rings, except one near its limit, which stays a pale
+        // red so a high share never looks calm (refine-background-mark-and-ring D2).
         let color = |percent: Option<f64>| {
-            if note.is_some() {
-                chrome.muted
-            } else if percent.is_some_and(|percent| percent >= usage::NEAR_LIMIT_PERCENT) {
-                self.theme.near_limit()
-            } else {
-                chrome.text
+            let near = percent.is_some_and(|percent| percent >= usage::NEAR_LIMIT_PERCENT);
+            match (note.is_some(), near) {
+                (true, true) => self.theme.old_near_limit(),
+                (true, false) => chrome.muted,
+                (false, true) => self.theme.near_limit(),
+                (false, false) => chrome.text,
             }
         };
         let who = usage.account.as_ref().map_or_else(
@@ -3345,14 +3343,9 @@ fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
 /// A working or starting row's word in the accent colour, then three dots lit one after
 /// another (refresh-pane-and-status D1). `lit` is `None` while motion is held still, when
 /// all three show at full strength, and `Some(None)` on the step where all rest.
-/// A status word followed by `dots` dots in `color`; `lit` picks the bright one while
+/// A status word followed by three dots in `color`; `lit` picks the bright one while
 /// they move, `None` keeps them all bright.
-fn dotted_word(
-    word: &'static str,
-    dots: usize,
-    lit: Option<Option<usize>>,
-    color: Paint,
-) -> AnyElement {
+fn dotted_word(word: &'static str, lit: Option<Option<usize>>, color: Paint) -> AnyElement {
     let color = hsla(color);
     let dot = |index: usize| {
         let bright = match lit {
@@ -3374,7 +3367,9 @@ fn dotted_word(
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(color)
         .child(div().mr(px(1.5)).child(word))
-        .children((0..dots).map(dot))
+        .child(dot(0))
+        .child(dot(1))
+        .child(dot(2))
         .into_any_element()
 }
 
