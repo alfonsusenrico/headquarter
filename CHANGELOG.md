@@ -2,6 +2,23 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.22 (2026-10-31)
+
+- Remote control follows your phones. It runs while at least one phone is paired, and while a
+  pairing code is showing, and stops when you remove the last phone. There is no switch any more:
+  the Remote Control window always shows the phone app's QR code, and Pair a Phone turns remote
+  control on. `hq remote on` and `hq remote off` are gone; `[remote] enabled` in the settings file
+  is ignored. A phone removed while it is connected now says it was removed.
+- Quieter update checks. Check for Updates… with nothing new shows a small notice at the bottom
+  right that slides away after 5 seconds, instead of a window over your session. A failed check
+  stays until you close it.
+- The Usage popover and window end with a total: Headquarter itself, all your sessions, and both
+  together.
+- Background work gets its own mark: "background" now ends with stacked layers instead of two dots.
+- A usage ring near its limit stays red while its reading is old, paler than a fresh one, so a
+  93% week never looks calm.
+- The New session folder field starts empty; an empty field means your home folder.
+
 ## 0.1.21 (2026-10-31)
 
 - "Replied" means done. A reply notification now comes once the session has stayed at its
