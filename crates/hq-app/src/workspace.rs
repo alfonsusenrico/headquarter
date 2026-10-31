@@ -53,6 +53,7 @@ use crate::themes::{self, Library, Look, ThemeChoice, Token};
 mod groups;
 mod header;
 mod in_use;
+mod notice;
 mod quit;
 mod rail;
 mod remote;
@@ -299,6 +300,9 @@ pub struct Workspace {
     usage_all: bool,
     /// A refresh asked of the host has not been answered yet.
     usage_refreshing: bool,
+    /// The quiet notice at the bottom right, and how many were shown (add-quiet-notice).
+    notice: Option<notice::Notice>,
+    notice_count: u64,
     /// Replies waiting until their sessions settle, and the timer that checks them while
     /// any wait (fix-false-done D1, D2).
     pending_replies: notifications::PendingReplies,
@@ -458,6 +462,8 @@ impl Workspace {
             resources: None,
             usage_all: false,
             usage_refreshing: false,
+            notice: None,
+            notice_count: 0,
             pending_replies: notifications::PendingReplies::default(),
             reply_timer: None,
             usage_dismissed: None,
@@ -3288,6 +3294,7 @@ impl Render for Workspace {
             .children(self.render_update_window(cx))
             .children(self.render_remote_window(cx))
             .children(self.render_resources(window, cx))
+            .children(self.render_notice(cx))
             // Last, so it covers every window: quitting can be asked from anywhere
             // (fix-quit-over-windows D1).
             .children(self.render_quit(cx))

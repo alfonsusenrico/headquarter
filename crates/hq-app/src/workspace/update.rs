@@ -101,8 +101,6 @@ pub(super) struct Updates {
     page: bool,
     notes: Notes,
     phase: Phase,
-    /// What a manual check found, when it found nothing to update.
-    checked: Option<String>,
     /// The installer's copy and the app to reopen, when the installer installed this one.
     installed: Option<Installed>,
     /// Restart as soon as the install ends, without waiting for busy sessions.
@@ -123,7 +121,6 @@ impl Updates {
             page: false,
             notes: Notes::NotLoaded,
             phase: Phase::Offer,
-            checked: None,
             installed: update::installed_copy(),
             restart_now: false,
             log: UpdateLog::default(),
@@ -175,20 +172,18 @@ impl Workspace {
                             this.updates.notes = Notes::NotLoaded;
                         }
                         this.updates.available = Some(latest);
-                        this.updates.checked = None;
                         if manual {
                             this.show_whats_new(window, cx);
                         }
                     }
+                    // A quiet notice, so the pane stays uncovered (add-quiet-notice D3).
                     Ok(_) if manual => {
-                        this.updates.checked =
-                            Some(format!("Headquarter {running} is the latest version."));
-                        this.open_update_window(window, cx);
+                        let text = format!("Headquarter {running} is the latest version.");
+                        this.show_notice(text, false, window, cx);
                     }
                     Err(error) if manual => {
-                        this.updates.checked =
-                            Some(format!("Couldn't check for updates: {error:#}"));
-                        this.open_update_window(window, cx);
+                        let text = format!("Couldn't check for updates: {error:#}");
+                        this.show_notice(text, true, window, cx);
                     }
                     // Automatic checks that find nothing, or fail, say nothing.
                     _ => {}
@@ -766,7 +761,6 @@ impl Workspace {
     /// Closes the update window and gives the keyboard back to what had it.
     fn close_update_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.updates.open = false;
-        self.updates.checked = None;
         if matches!(self.updates.phase, Phase::Asking | Phase::Failed(_)) {
             self.updates.phase = Phase::Offer;
         }
@@ -799,8 +793,10 @@ impl Workspace {
         let mut body = div().flex().flex_col().gap(px(12.));
         let mut buttons = div().flex().justify_end().gap(px(8.));
         match (&self.updates.phase, self.updates.available) {
-            (Phase::Offer, None) if self.updates.checked.is_some() || !self.updates.host_behind => {
-                body = body.child(muted(self.updates.checked.clone().unwrap_or_default()));
+            (Phase::Offer, None) if !self.updates.host_behind => {
+                body = body.child(muted(format!(
+                    "Headquarter {running} is the latest version."
+                )));
                 buttons = buttons.child(later("OK"));
             }
             (Phase::Offer, None) => {

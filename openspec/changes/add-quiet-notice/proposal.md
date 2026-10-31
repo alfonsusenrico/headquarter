@@ -1,6 +1,6 @@
 # A quiet notice for "you're on the latest version"
 
-Status: plan, waiting for the owner's approval.
+Status: approved by the owner 2026-10-31 ("ok approved", with the other four plans of that day).
 
 ## Why
 
