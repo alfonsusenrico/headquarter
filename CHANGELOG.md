@@ -2,6 +2,19 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.21 (2026-10-31)
+
+- "Replied" means done. A reply notification now comes once the session has stayed at its
+  prompt for 10 seconds with no background work running, so an agent that carries on by itself
+  no longer looks finished. Needs-you notifications stay immediate.
+- Waiting for an update waits for real. "Wait until no session is busy" also waits for sessions
+  with background work and for agy plans waiting for your review.
+- Claude usage keeps updating while you work in your home folder. It is now read in a folder
+  Claude Code trusts, and Refresh tries again at once after a failed read.
+- Scroll Claude Code on your phone. Dragging the terminal scrolls full-screen agents the way your
+  mouse wheel does on the desktop. On the phone, a reply whose background work still runs stays in
+  its group as "background" until the work ends.
+
 ## 0.1.20 (2026-10-29)
 
 - Sessions say what they still have going. When Claude Code's turn ends but a background agent,
