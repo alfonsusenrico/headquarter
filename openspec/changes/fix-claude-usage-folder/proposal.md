@@ -1,6 +1,6 @@
 # Claude usage reads in a folder Claude trusts
 
-Status: plan, waiting for the owner's approval.
+Status: approved by the owner 2026-10-31 ("ok let's do it", with fix-phone-scroll and fix-false-done, in that order).
 
 ## Why
 
