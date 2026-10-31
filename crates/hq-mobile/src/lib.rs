@@ -745,12 +745,19 @@ impl Phone {
         }
     }
 
-    /// Scrolls the open terminal by `lines`. Positive goes back into history.
-    pub fn scroll(&self, lines: i32) {
-        if let Some(terminal) = self.shared.lock().terminal.as_mut() {
-            terminal.scroll(lines);
+    /// Scrolls the open terminal by `lines` at the cell `row`, `col`. Positive goes back.
+    /// A full-screen agent scrolls itself, so it is sent wheel reports or arrows; other
+    /// output scrolls the phone's history (fix-phone-scroll D1).
+    pub fn scroll(&self, lines: i32, row: u16, col: u16) {
+        let to_agent = match self.shared.lock().terminal.as_mut() {
+            Some(terminal) => terminal.scroll(lines, row, col),
+            None => return,
+        };
+        if to_agent.is_empty() {
+            self.shared.changed();
+        } else if let Ok(tx) = self.link_tx() {
+            let _ = tx.send(Command::Input(to_agent));
         }
-        self.shared.changed();
     }
 
     /// Types `text`, then Enter a moment later (D8).
