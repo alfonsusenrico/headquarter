@@ -2,6 +2,13 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.1.24 (2026-11-02)
+
+- Claude usage updates again. Claude Code 2.1.316 stopped showing the five-hour session window
+  in `/usage`, and Headquarter treated the screen as unreadable, so Claude's usage stayed on an
+  old reading after sessions and after Refresh. It now reads the weekly windows on their own, and
+  Claude's usage shows the week (and the per-model week) without a five-hour ring.
+
 ## 0.1.23 (2026-10-31)
 
 - Updates restart only when you say so. If sessions are busy and you choose Wait, the update
