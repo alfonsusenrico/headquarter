@@ -981,6 +981,8 @@ mod tests {
         );
     }
 
+    // This computer's folders: browsed only beside a local host, which runs on Unix.
+    #[cfg(unix)]
     #[test]
     fn keys_move_into_and_out_of_folders_and_start_only_from_open_here() {
         let home = home("keys");

@@ -135,6 +135,20 @@ pub fn is_path(text: &str) -> bool {
     text.starts_with('~') || text.starts_with('/')
 }
 
+/// `name` inside `parent`. On Windows the browser holds only a remote host's paths,
+/// which are Unix paths, so they join with `/` there; `Path::join` would put `\`
+/// between them and the host would refuse the path (add-windows-client D2).
+fn child(parent: &Path, name: &str) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(format!(
+            "{}/{name}",
+            parent.to_string_lossy().trim_end_matches('/')
+        ))
+    } else {
+        parent.join(name)
+    }
+}
+
 /// The folder `text` names, with `~` standing for the home folder.
 pub fn expand(text: &str, home: &Path) -> PathBuf {
     let text = text.trim();
@@ -142,7 +156,7 @@ pub fn expand(text: &str, home: &Path) -> PathBuf {
         return home.to_path_buf();
     }
     match text.strip_prefix("~/") {
-        Some(rest) => home.join(rest.trim_start_matches('/')),
+        Some(rest) => child(home, rest.trim_start_matches('/')),
         None => PathBuf::from(text),
     }
 }
@@ -208,7 +222,7 @@ pub fn list_in(source: &Source, text: &str, home: &Path, found: &[PathBuf]) -> L
                     .chain(
                         names
                             .into_iter()
-                            .map(|name| FolderRow::Sub(path.join(name))),
+                            .map(|name| FolderRow::Sub(child(&path, &name))),
                     )
                     .collect(),
                 problem: None,
@@ -237,7 +251,7 @@ pub fn list_in(source: &Source, text: &str, home: &Path, found: &[PathBuf]) -> L
         .unwrap_or_default()
         .into_iter()
         .filter(|name| name.to_lowercase().starts_with(&start))
-        .map(|name| FolderRow::Sub(parent.join(name)))
+        .map(|name| FolderRow::Sub(child(parent, &name)))
         .collect();
     Listing {
         rows,
@@ -396,6 +410,8 @@ mod tests {
         );
     }
 
+    // This computer's folders: browsed only beside a local host, which runs on Unix.
+    #[cfg(unix)]
     #[test]
     fn a_half_typed_name_lists_the_folders_that_start_with_it() {
         let (_root, home) = tree("half");
@@ -439,6 +455,31 @@ mod tests {
             list_in(&source, "~/gone/", home, &[]).problem.as_deref(),
             Some("No folder ~/gone")
         );
+    }
+
+    #[test]
+    fn a_remote_hosts_paths_keep_their_slashes() {
+        let remote = Rc::new(RemoteFolders::default());
+        let source = Source::Remote(Rc::clone(&remote));
+        let home = Path::new("/home/me");
+        let project = expand("~/code/project", home);
+        assert_eq!(project.to_string_lossy(), "/home/me/code/project");
+        remote.answer(project.clone(), Ok(vec!["api".into()]));
+        // Strings, not paths: Windows compares paths by component, `/` and `\` alike.
+        let texts: Vec<String> = list_in(&source, "~/code/project/", home, &[])
+            .rows
+            .iter()
+            .map(|row| match row {
+                FolderRow::Here(path) | FolderRow::Sub(path) | FolderRow::Found(path) => {
+                    path.to_string_lossy().into_owned()
+                }
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            ["/home/me/code/project/", "/home/me/code/project/api"]
+        );
+        assert_eq!(into_text(Path::new(&texts[1]), home), "~/code/project/api/");
     }
 
     #[test]
@@ -490,6 +531,8 @@ mod tests {
         assert_eq!(subfolders(root.path()).unwrap().len(), MAX_LISTED);
     }
 
+    // This computer's folders: browsed only beside a local host, which runs on Unix.
+    #[cfg(unix)]
     #[test]
     fn a_bare_name_finds_folders_anywhere_shortest_first() {
         let (_root, home) = tree("found");
@@ -505,6 +548,8 @@ mod tests {
         );
     }
 
+    // This computer's folders: browsed only beside a local host, which runs on Unix.
+    #[cfg(unix)]
     #[test]
     fn the_walk_leaves_media_libraries_and_packages_unread() {
         let root = Scratch::new("media");
