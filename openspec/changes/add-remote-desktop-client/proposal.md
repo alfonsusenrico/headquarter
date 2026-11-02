@@ -1,6 +1,6 @@
 # The desktop app as a client of a remote host
 
-Status: plan, waiting for the owner's approval.
+Status: approved by the owner 2026-11-02 ("approve all three").
 
 ## Why
 
