@@ -44,7 +44,9 @@ the behaviour.
   binding are generated (`scripts/android-core`) and not committed.
 - `crates/hq-client`: the host connection shared by the CLI and the app; it starts the
   host (`hq` beside the running executable) when none is running. A `Host` is this
-  computer's (its socket) or a paired remote one (a `Link`); the app's `hosts.rs` keeps the
+  computer's (its socket; Unix only) or a paired remote one (a `Link`). On Windows the app
+  builds with remote hosts only (add-windows-client); `HostPaths` lives in
+  `hq_signals::paths`, so clients build without `hq-daemon`; the app's `hosts.rs` keeps the
   paired hosts (`hosts.json`) and this computer's key (`client.key`, mode 600).
 - `crates/hq-cli`: the `hq` and `headquarter` executables. They are thin entry points
   over `hq_cli::main`.
