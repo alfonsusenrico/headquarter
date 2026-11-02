@@ -94,7 +94,7 @@ Each crate and folder: [`docs/architecture.md`](docs/architecture.md).
 - Licence hygiene: do not copy code from AGPL or GPL projects (Warp, Zed's `terminal`
   crate, cmux). Ideas and wire formats only; dependencies must be MIT, Apache-2.0, or
   similarly permissive.
-- Remote access: a phone reaches only what `allowed()` in `host/remote.rs` lists, and
+- Remote access: a paired phone or desktop reaches only what `allowed()` in `host/remote.rs` lists for its kind, and
   the host enforces it; a new request is decided there (the match is exhaustive). The
   host key (`remote.key`, mode 600), pairing secrets, typed input and terminal output
   never reach logs. Relays default to n0's public ones; a personal relay is a setting,

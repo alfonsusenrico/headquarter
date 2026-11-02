@@ -1,44 +1,108 @@
 //! The folder browser shared by both session windows (redesign-session-modal D6):
 //! folder names only, read when shown and never stored.
 
-use std::collections::VecDeque;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-/// At most this many subfolders are listed for one folder.
-pub const MAX_LISTED: usize = 200;
-/// The walk that finds folders by name stops this many levels below the home folder…
-pub const WALK_DEPTH: usize = 8;
-/// …or after this many folders.
-pub const WALK_LIMIT: usize = 50_000;
-/// At most this many folders found by name are listed.
-pub const MAX_FOUND: usize = 50;
-/// Trees that never hold projects and would swamp the walk.
-const SKIPPED: [&str; 4] = ["node_modules", "target", "Library", ".git"];
-/// Media folders directly in the home folder. They hold no projects, and reading the
-/// Music and Photos libraries inside them makes macOS ask the owner for access.
-const HOME_MEDIA: [&str; 3] = ["Music", "Movies", "Pictures"];
-/// Package folders (apps, media libraries) are files to the owner; reading into one
-/// can also make macOS ask for access.
-const PACKAGES: [&str; 6] = [
-    ".app",
-    ".photoslibrary",
-    ".musiclibrary",
-    ".tvlibrary",
-    ".imovielibrary",
-    ".bundle",
-];
+pub use hq_discovery::folders::{MAX_FOUND, subfolders, walk};
 
-/// Whether the walk leaves the folder `name`, found `depth` levels below the home
-/// folder (0 for its own subfolders), unread.
-fn skipped(name: &str, depth: usize) -> bool {
-    name.starts_with('.')
-        || SKIPPED.contains(&name)
-        || (depth == 0 && HOME_MEDIA.contains(&name))
-        || PACKAGES.iter().any(|suffix| name.ends_with(suffix))
+/// Where the browser reads folders: this computer, or the remote host on screen, whose
+/// answers arrive later (add-remote-desktop-client D7).
+#[derive(Clone, Default)]
+pub enum Source {
+    #[default]
+    Local,
+    Remote(Rc<RemoteFolders>),
 }
-/// Folders found by the walk reach the window in batches of this size.
-const BATCH: usize = 500;
+
+impl std::fmt::Debug for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Source::Local => f.write_str("Local"),
+            Source::Remote(_) => f.write_str("Remote"),
+        }
+    }
+}
+
+impl PartialEq for Source {
+    fn eq(&self, other: &Source) -> bool {
+        match (self, other) {
+            (Source::Local, Source::Local) => true,
+            (Source::Remote(a), Source::Remote(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Source {}
+
+/// A folder's subfolders, or why it could not be read (`None`: it does not exist).
+pub type FolderAnswer = Result<Vec<String>, Option<String>>;
+
+/// A remote host's folders as far as it has answered, and the folders asked for since.
+#[derive(Default)]
+pub struct RemoteFolders {
+    answers: RefCell<HashMap<PathBuf, FolderAnswer>>,
+    wanted: RefCell<Vec<PathBuf>>,
+}
+
+impl RemoteFolders {
+    /// Folders a listing needed that the host has not answered yet; each is asked once.
+    pub fn take_wanted(&self) -> Vec<PathBuf> {
+        std::mem::take(&mut *self.wanted.borrow_mut())
+    }
+
+    pub fn answer(&self, folder: PathBuf, answer: FolderAnswer) {
+        self.answers.borrow_mut().insert(folder, answer);
+    }
+
+    fn ask(&self, folder: &Path) {
+        let mut wanted = self.wanted.borrow_mut();
+        if !wanted.iter().any(|known| known == folder) {
+            wanted.push(folder.to_path_buf());
+        }
+    }
+}
+
+impl Source {
+    fn subfolders(&self, folder: &Path) -> io::Result<Vec<String>> {
+        match self {
+            Source::Local => subfolders(folder),
+            Source::Remote(remote) => {
+                let answers = remote.answers.borrow();
+                match answers.get(folder) {
+                    Some(Ok(names)) => Ok(names.clone()),
+                    Some(Err(None)) => Err(io::ErrorKind::NotFound.into()),
+                    Some(Err(Some(reason))) => Err(io::Error::other(reason.clone())),
+                    None => {
+                        drop(answers);
+                        remote.ask(folder);
+                        Err(io::ErrorKind::WouldBlock.into())
+                    }
+                }
+            }
+        }
+    }
+
+    fn is_dir(&self, path: &Path) -> bool {
+        match self {
+            Source::Local => path.is_dir(),
+            Source::Remote(remote) => {
+                let known = remote.answers.borrow().get(path).map(Result::is_ok);
+                match known {
+                    Some(folder) => folder,
+                    None => {
+                        remote.ask(path);
+                        false
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderRow {
@@ -116,27 +180,15 @@ pub fn up_text(text: &str, home: &Path) -> Option<String> {
     path.parent().map(|parent| into_text(parent, home))
 }
 
-/// The subfolders of `folder` by name, hidden ones left out, links to folders followed,
-/// at most [`MAX_LISTED`].
-pub fn subfolders(folder: &Path) -> io::Result<Vec<String>> {
-    let mut names: Vec<String> = std::fs::read_dir(folder)?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let name = entry.file_name().into_string().ok()?;
-            // `metadata` follows links, so a link to a folder counts as a folder.
-            let folder = std::fs::metadata(entry.path()).ok()?.is_dir();
-            (folder && !name.starts_with('.')).then_some(name)
-        })
-        .collect();
-    names.sort_by_key(|name| name.to_lowercase());
-    names.truncate(MAX_LISTED);
-    Ok(names)
-}
-
 /// The rows under the field for `text`. A path lists that folder and then its
 /// subfolders, or, while its last part is half typed, the folders starting with it; a
 /// bare name lists the matching folders from `found`, shortest first.
 pub fn list(text: &str, home: &Path, found: &[PathBuf]) -> Listing {
+    list_in(&Source::Local, text, home, found)
+}
+
+/// [`list`] reading folders from `source`.
+pub fn list_in(source: &Source, text: &str, home: &Path, found: &[PathBuf]) -> Listing {
     let text = text.trim();
     let text = if text.is_empty() { "~/" } else { text };
     if !is_path(text) {
@@ -149,8 +201,8 @@ pub fn list(text: &str, home: &Path, found: &[PathBuf]) -> Listing {
         };
     }
     let path = expand(text, home);
-    if text.ends_with('/') || path.is_dir() {
-        return match subfolders(&path) {
+    if text.ends_with('/') || source.is_dir(&path) {
+        return match source.subfolders(&path) {
             Ok(names) => Listing {
                 rows: std::iter::once(FolderRow::Here(path.clone()))
                     .chain(
@@ -165,6 +217,11 @@ pub fn list(text: &str, home: &Path, found: &[PathBuf]) -> Listing {
                 rows: Vec::new(),
                 problem: Some(format!("No folder {}", shown(&path, home))),
             },
+            // The remote host has not answered yet.
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Listing {
+                rows: vec![FolderRow::Here(path.clone())],
+                problem: Some("Reading the host's folders…".to_owned()),
+            },
             Err(error) => Listing {
                 rows: vec![FolderRow::Here(path.clone())],
                 problem: Some(format!("Cannot read {}: {error}", shown(&path, home))),
@@ -175,7 +232,8 @@ pub fn list(text: &str, home: &Path, found: &[PathBuf]) -> Listing {
         return Listing::default();
     };
     let start = start.to_string_lossy().to_lowercase();
-    let rows = subfolders(parent)
+    let rows = source
+        .subfolders(parent)
         .unwrap_or_default()
         .into_iter()
         .filter(|name| name.to_lowercase().starts_with(&start))
@@ -234,49 +292,11 @@ pub fn match_range(shown: &str, name: &str) -> Option<std::ops::Range<usize>> {
     Some(last_start + at..last_start + at + needle.len())
 }
 
-/// Walks the folders under `home` breadth first, skipping hidden folders and
-/// [`SKIPPED`] trees and not following links, and hands them to `send` in batches. It
-/// stops at [`WALK_DEPTH`] levels, [`WALK_LIMIT`] folders, or when `send` returns false.
-pub fn walk(home: &Path, mut send: impl FnMut(Vec<PathBuf>) -> bool) {
-    let mut queue = VecDeque::from([(home.to_path_buf(), 0usize)]);
-    let mut batch = Vec::new();
-    let mut seen = 0usize;
-    while let Some((folder, depth)) = queue.pop_front() {
-        let Ok(entries) = std::fs::read_dir(&folder) else {
-            continue;
-        };
-        for entry in entries.filter_map(Result::ok) {
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !kind.is_dir() || skipped(&name, depth) {
-                continue;
-            }
-            let path = entry.path();
-            if depth + 1 < WALK_DEPTH {
-                queue.push_back((path.clone(), depth + 1));
-            }
-            batch.push(path);
-            seen += 1;
-            if seen >= WALK_LIMIT {
-                send(batch);
-                return;
-            }
-            if batch.len() >= BATCH && !send(std::mem::take(&mut batch)) {
-                return;
-            }
-        }
-    }
-    if !batch.is_empty() {
-        send(batch);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
+
+    use hq_discovery::folders::{BATCH, MAX_LISTED, WALK_DEPTH};
 
     use super::*;
 
@@ -389,6 +409,36 @@ mod tests {
         let (_root, home) = tree("empty");
         let rows = shown_rows(&list("", &home, &[]), &home);
         assert_eq!(rows, ["here ~", "~/code", "~/Library", "~/work"]);
+    }
+
+    #[test]
+    fn a_remote_hosts_folders_list_once_it_answers() {
+        let remote = Rc::new(RemoteFolders::default());
+        let source = Source::Remote(Rc::clone(&remote));
+        let home = Path::new("/home/me");
+        let waiting = list_in(&source, "~/", home, &[]);
+        assert_eq!(
+            waiting.problem.as_deref(),
+            Some("Reading the host's folders…")
+        );
+        assert_eq!(remote.take_wanted(), [home.to_path_buf()]);
+        assert!(remote.take_wanted().is_empty(), "asked once");
+        remote.answer(home.to_path_buf(), Ok(vec!["code".into(), "notes".into()]));
+        let listed = list_in(&source, "~/", home, &[]);
+        assert_eq!(listed.problem, None);
+        assert_eq!(
+            listed.rows,
+            [
+                FolderRow::Here(home.to_path_buf()),
+                FolderRow::Sub(home.join("code")),
+                FolderRow::Sub(home.join("notes")),
+            ]
+        );
+        remote.answer(home.join("gone"), Err(None));
+        assert_eq!(
+            list_in(&source, "~/gone/", home, &[]).problem.as_deref(),
+            Some("No folder ~/gone")
+        );
     }
 
     #[test]

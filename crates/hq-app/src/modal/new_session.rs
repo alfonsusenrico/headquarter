@@ -25,7 +25,7 @@ use hq_protocol::sidebar::{age, display_title};
 use hq_signals::event::Agent;
 
 use super::folder_sessions;
-use super::folders::{self, FolderRow, Listing};
+use super::folders::{self, FolderRow, Listing, RemoteFolders, Source};
 use crate::marks::Marks;
 use crate::terminal::view::hsla;
 use crate::theme::Chrome;
@@ -82,25 +82,37 @@ pub struct Browser {
     pub text: String,
     pub index: usize,
     pub listing: Listing,
+    /// Where folders are read: this computer, or the remote host on screen.
+    source: Source,
 }
 
 impl Browser {
+    #[cfg(test)]
     pub fn new(text: &str, home: &Path, found: &[PathBuf]) -> Browser {
+        Browser::reading(Source::Local, text, home, found)
+    }
+
+    pub fn reading(source: Source, text: &str, home: &Path, found: &[PathBuf]) -> Browser {
         Browser {
             text: text.to_owned(),
             index: 0,
-            listing: folders::list(text, home, found),
+            listing: folders::list_in(&source, text, home, found),
+            source,
         }
     }
 
     /// Lists again for the same text, keeping the highlight where it can.
     pub fn refresh(&mut self, home: &Path, found: &[PathBuf]) {
-        self.listing = folders::list(&self.text, home, found);
+        self.listing = folders::list_in(&self.source, &self.text, home, found);
         self.index = self.index.min(self.listing.rows.len().saturating_sub(1));
     }
 
     pub fn set_text(&mut self, text: &str, home: &Path, found: &[PathBuf]) {
-        *self = Browser::new(text, home, found);
+        *self = Browser::reading(self.source.clone(), text, home, found);
+    }
+
+    pub fn source(&self) -> Source {
+        self.source.clone()
     }
 
     pub fn highlighted(&self) -> Option<&FolderRow> {
@@ -216,21 +228,36 @@ pub struct NewSession {
     chrome: Chrome,
     marks: Marks,
     _field_changes: Subscription,
+    /// The remote host on screen, whose folders the browser lists
+    /// (add-remote-desktop-client D7); `None` for this computer.
+    remote: Option<hq_client::Host>,
     _walk: Task<()>,
 }
 
 impl EventEmitter<NewEvent> for NewSession {}
 
+/// Whose folders New session browses: the host's home folder, and the remote host on
+/// screen (`None` for this computer).
+pub struct HostFolders {
+    pub home: PathBuf,
+    pub remote: Option<hq_client::Host>,
+}
+
 impl NewSession {
     pub fn new(
         providers: Vec<Provider>,
         agent: Option<Agent>,
-        home: PathBuf,
+        place: HostFolders,
         chrome: Chrome,
         marks: Marks,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> NewSession {
+        let HostFolders { home, remote } = place;
+        let source = match remote {
+            Some(_) => Source::Remote(std::rc::Rc::new(RemoteFolders::default())),
+            None => Source::Local,
+        };
         // Empty means the home folder, so there is nothing to delete before typing
         // (fix-new-session-home-folder D1).
         let start_text = "";
@@ -243,16 +270,17 @@ impl NewSession {
                 if matches!(event, InputEvent::Change) {
                     let text = field.read(cx).value().to_string();
                     this.browser.set_text(&text, &this.home, &this.found);
+                    this.ask_host(cx);
                     this.scroll.scroll_to_item(0, ScrollStrategy::Top);
                     cx.notify();
                 }
             },
         );
         window.focus(&field.focus_handle(cx), cx);
-        let walk = Self::start_walk(home.clone(), cx);
+        let walk = Self::start_walk(home.clone(), remote.clone(), cx);
         let mut window_state = NewSession {
             agent: None,
-            browser: Browser::new(start_text, &home, &[]),
+            browser: Browser::reading(source, start_text, &home, &[]),
             found: Vec::new(),
             walking: true,
             error: None,
@@ -269,18 +297,66 @@ impl NewSession {
             marks,
             providers: Vec::new(),
             _field_changes: field_changes,
+            remote,
             _walk: walk,
         };
         window_state.set_providers(providers, agent, cx);
+        window_state.ask_host(cx);
         window_state
     }
 
+    /// Asks the remote host for the folders the last listing needed, and lists again as
+    /// each answer arrives.
+    fn ask_host(&mut self, cx: &mut Context<Self>) {
+        let (Some(host), Source::Remote(remote)) = (self.remote.clone(), self.browser.source())
+        else {
+            return;
+        };
+        for folder in remote.take_wanted() {
+            let host = host.clone();
+            let asked = folder.clone();
+            let task = cx.background_executor().spawn(async move {
+                let path = asked.to_string_lossy().into_owned();
+                match hq_client::list_folder(&host, &path) {
+                    Ok(listed) => Ok(listed.folders),
+                    Err(error) => match error.downcast_ref::<hq_client::Refused>() {
+                        Some(refused) if refused.message.contains("not found") => Err(None),
+                        _ => Err(Some(format!("{error:#}"))),
+                    },
+                }
+            });
+            cx.spawn(async move |this, cx| {
+                let answer = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    if let Source::Remote(remote) = this.browser.source() {
+                        remote.answer(folder, answer);
+                    }
+                    this.browser.refresh(&this.home, &this.found);
+                    this.ask_host(cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+    }
+
     /// Walks the home folder in the background while the window is open; dropping the
-    /// window drops the receiver, which stops the walk.
-    fn start_walk(home: PathBuf, cx: &mut Context<Self>) -> Task<()> {
+    /// window drops the receiver, which stops the walk. A remote host walks its own home
+    /// folder and sends the batches (add-remote-desktop-client D7).
+    fn start_walk(
+        home: PathBuf,
+        remote: Option<hq_client::Host>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let (sender, mut batches) = unbounded::<Vec<PathBuf>>();
-        std::thread::spawn(move || {
-            folders::walk(&home, |batch| sender.unbounded_send(batch).is_ok());
+        std::thread::spawn(move || match remote {
+            Some(host) => {
+                let _ = hq_client::find_folders(&host, |batch| {
+                    let batch = batch.into_iter().map(PathBuf::from).collect();
+                    sender.unbounded_send(batch).is_ok()
+                });
+            }
+            None => folders::walk(&home, |batch| sender.unbounded_send(batch).is_ok()),
         });
         cx.spawn(async move |this, cx| {
             while let Some(batch) = batches.next().await {
@@ -430,6 +506,7 @@ impl NewSession {
         self.field
             .update(cx, |field, cx| field.set_value(text.clone(), window, cx));
         self.browser.set_text(&text, &self.home, &self.found);
+        self.ask_host(cx);
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         cx.notify();
     }

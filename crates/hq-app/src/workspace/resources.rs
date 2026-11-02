@@ -13,7 +13,6 @@ use gpui::{
     KeyDownEvent, MouseButton, ParentElement, StatefulInteractiveElement, Styled, Task, Window,
     div, px,
 };
-use hq_client::HostPaths;
 use hq_protocol::{Footprint, GroupInfo, SessionInfo, sidebar};
 use hq_signals::event::Agent;
 use hq_signals::resources::Sampler;
@@ -252,9 +251,8 @@ fn key_label(mac: bool) -> &'static str {
 
 /// Measures the app here and asks the host for the rest; runs off the main thread.
 fn read(sampler: &Mutex<Sampler>) -> anyhow::Result<Reading> {
-    let paths =
-        HostPaths::standard().ok_or_else(|| anyhow::anyhow!("cannot find the home folder"))?;
-    let (host, sessions) = hq_client::resources(&paths)?;
+    let target = crate::hosts::current()?;
+    let (host, sessions) = hq_client::resources(&target)?;
     let mut sampler = sampler.lock().unwrap_or_else(PoisonError::into_inner);
     sampler.refresh();
     let app = sampler.alone(std::process::id()).unwrap_or_default();
@@ -686,11 +684,17 @@ impl Workspace {
             .reading
             .as_ref()
             .map(|reading| Totals::of(reading, lines));
+        // With a remote host on screen, the app runs here and the host there
+        // (add-remote-desktop-client D7).
+        let (app_place, host_place) = match crate::hosts::shown_name() {
+            Some(name) => ("app on this computer".to_owned(), format!("host on {name}")),
+            None => ("app".to_owned(), "host".to_owned()),
+        };
         let headquarter_detail = view.reading.as_ref().map_or_else(
             || "Measuring…".to_owned(),
             |reading| {
                 format!(
-                    "app {} · {}, host {} · {}",
+                    "{app_place} {} · {}, {host_place} {} · {}",
                     cpu_text(reading.app.cpu),
                     memory_text(reading.app.memory),
                     cpu_text(reading.host.cpu),

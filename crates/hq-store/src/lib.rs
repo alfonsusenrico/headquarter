@@ -63,13 +63,20 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "remote_devices",
         sql: include_str!("../migrations/0009_remote_devices.sql"),
     },
+    Migration {
+        version: 10,
+        name: "device_kind",
+        sql: include_str!("../migrations/0010_device_kind.sql"),
+    },
 ];
 
-/// A phone paired for remote control.
+/// A device paired for remote control.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceRow {
     pub endpoint_id: String,
     pub name: String,
+    /// `phone` or `desktop` (add-remote-desktop-client D1).
+    pub kind: String,
     /// Unix milliseconds.
     pub paired_at: i64,
     pub last_seen_at: Option<i64>,
@@ -418,12 +425,13 @@ impl Store {
     }
 
     /// Records a paired phone, or renames one paired again.
-    pub fn add_device(&self, endpoint_id: &str, name: &str, at: u64) -> Result<()> {
+    pub fn add_device(&self, endpoint_id: &str, name: &str, kind: &str, at: u64) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO remote_devices (endpoint_id, name, paired_at, last_seen_at)
-             VALUES (?1, ?2, ?3, ?3)
-             ON CONFLICT(endpoint_id) DO UPDATE SET name = ?2, paired_at = ?3, last_seen_at = ?3",
-            params![endpoint_id, name, millis(at)],
+            "INSERT INTO remote_devices (endpoint_id, name, kind, paired_at, last_seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(endpoint_id) DO UPDATE SET name = ?2, kind = ?3, paired_at = ?4,
+                 last_seen_at = ?4",
+            params![endpoint_id, name, kind, millis(at)],
         )?;
         Ok(())
     }
@@ -431,7 +439,7 @@ impl Store {
     /// Paired phones, most recently paired first.
     pub fn devices(&self) -> Result<Vec<DeviceRow>> {
         let mut statement = self.conn.prepare(
-            "SELECT endpoint_id, name, paired_at, last_seen_at FROM remote_devices
+            "SELECT endpoint_id, name, kind, paired_at, last_seen_at FROM remote_devices
              ORDER BY paired_at DESC, endpoint_id",
         )?;
         let devices = statement
@@ -439,8 +447,9 @@ impl Store {
                 Ok(DeviceRow {
                     endpoint_id: row.get(0)?,
                     name: row.get(1)?,
-                    paired_at: row.get(2)?,
-                    last_seen_at: row.get(3)?,
+                    kind: row.get(2)?,
+                    paired_at: row.get(3)?,
+                    last_seen_at: row.get(4)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<DeviceRow>>>()?;
@@ -1080,11 +1089,24 @@ mod tests {
     }
 
     #[test]
+    fn devices_paired_before_kinds_are_phones() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO remote_devices (endpoint_id, name, paired_at) VALUES ('aa', 'Pixel 8', 1)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(store.device("aa").unwrap().unwrap().kind, "phone");
+    }
+
+    #[test]
     fn paired_devices_are_kept_touched_and_removed() {
         let store = Store::open_in_memory().unwrap();
         assert!(store.devices().unwrap().is_empty());
-        store.add_device("aa", "Pixel 8", 1_000).unwrap();
-        store.add_device("bb", "Galaxy", 2_000).unwrap();
+        store.add_device("aa", "Pixel 8", "phone", 1_000).unwrap();
+        store.add_device("bb", "Galaxy", "phone", 2_000).unwrap();
         let names: Vec<String> = store
             .devices()
             .unwrap()
@@ -1097,12 +1119,14 @@ mod tests {
             store.device("aa").unwrap().unwrap().last_seen_at,
             Some(5_000)
         );
-        store.add_device("aa", "Pixel 8 Pro", 6_000).unwrap();
+        store
+            .add_device("aa", "Studio PC", "desktop", 6_000)
+            .unwrap();
         let again = store.device("aa").unwrap().unwrap();
         assert_eq!(
-            (again.name.as_str(), again.paired_at),
-            ("Pixel 8 Pro", 6_000),
-            "paired again"
+            (again.name.as_str(), again.kind.as_str(), again.paired_at),
+            ("Studio PC", "desktop", 6_000),
+            "paired again, as what it says it is now"
         );
         assert!(store.remove_device("aa").unwrap());
         assert!(!store.remove_device("aa").unwrap(), "already gone");

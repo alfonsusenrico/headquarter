@@ -189,6 +189,11 @@ pub struct TerminalView {
     link_press: Option<LinkPress>,
 }
 
+/// Files were dropped on a remote host's session and not typed (add-remote-desktop-client D8).
+pub struct DropRefused;
+
+impl gpui::EventEmitter<DropRefused> for TerminalView {}
+
 impl TerminalView {
     pub fn new(
         session: Entity<TerminalSession>,
@@ -395,7 +400,13 @@ impl TerminalView {
     }
 
     /// Files dropped on the pane are typed as their paths, as a paste (add-terminal-file-drop).
+    /// On a remote host's session they are refused: the files are on this computer, and the
+    /// paths would name nothing on the host (add-remote-desktop-client D8).
     fn drop_paths(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+        if crate::hosts::is_remote() {
+            cx.emit(DropRefused);
+            return;
+        }
         let text = keys::dropped_paths(paths.paths());
         if text.is_empty() {
             return;
@@ -659,7 +670,11 @@ impl TerminalView {
     /// The left button came up, anywhere in the window, after a press in the pane.
     fn finish_press(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         if let Some(press) = self.link_press.take() {
-            cx.open_url(press.link.address());
+            // A file link names a file on the host's computer (add-remote-desktop-client D8).
+            let file = press.link.address().starts_with("file:");
+            if !(file && crate::hosts::is_remote()) {
+                cx.open_url(press.link.address());
+            }
             return;
         }
         if let Some(last) = self.forwarding.take() {

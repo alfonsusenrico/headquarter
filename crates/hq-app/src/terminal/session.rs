@@ -4,7 +4,6 @@
 
 use std::cell::Cell;
 use std::io::BufReader;
-use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -12,7 +11,6 @@ use alacritty_terminal::term::ClipboardType;
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{App, ClipboardItem, Context, Task};
-use hq_client::HostPaths;
 use hq_protocol::{Frame, Holder, Request, Response, SessionInfo, read_frame, write_frame};
 
 use super::model::{GridSize, TerminalModel};
@@ -28,7 +26,7 @@ const INITIAL_SIZE: GridSize = GridSize {
 const LAYOUT_WAIT: Duration = Duration::from_millis(500);
 
 enum Incoming {
-    Connected(UnixStream),
+    Connected(hq_client::Writer),
     Output(Vec<u8>),
     InUse(Holder),
     Ended(Option<u32>),
@@ -38,7 +36,7 @@ enum Incoming {
 pub struct TerminalSession {
     pub info: SessionInfo,
     model: TerminalModel,
-    writer: Option<Arc<Mutex<UnixStream>>>,
+    writer: Option<Arc<Mutex<hq_client::Writer>>>,
     /// Why the pane shows no live agent: it ended, or the connection failed.
     pub ended: Option<String>,
     /// How many copies the agent has made (OSC 52), and the note for the latest, so
@@ -266,14 +264,14 @@ fn run_connection(
     let fail = |message: String| {
         let _ = tx.unbounded_send(Incoming::Failed(message));
     };
-    let Some(paths) = HostPaths::standard() else {
-        fail("cannot find the home folder".to_owned());
-        return;
+    let host = match crate::hosts::current() {
+        Ok(host) => host,
+        Err(error) => return fail(format!("{error:#}")),
     };
     let attached = if shell {
-        hq_client::attach_shell(&paths, session_id, cols, rows)
+        hq_client::attach_shell(&host, session_id, cols, rows)
     } else {
-        hq_client::attach(&paths, session_id, cols, rows)
+        hq_client::attach(&host, session_id, cols, rows)
     };
     let client = match attached {
         Ok(client) => client,
@@ -287,7 +285,7 @@ fn run_connection(
         }
         Err(error) => return fail(format!("connection error: {error}")),
     }
-    let mut reader: BufReader<UnixStream> = client.reader;
+    let mut reader: BufReader<hq_client::Stream> = client.reader;
     loop {
         let incoming = match read_frame(&mut reader) {
             Ok(Some(Frame::Output(bytes))) => Incoming::Output(bytes),

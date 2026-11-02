@@ -16,7 +16,7 @@ pub use hq_signals::resources::Footprint;
 use hq_signals::status::Status;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 pub const MAX_PAYLOAD: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,6 +275,10 @@ pub enum Request {
         secret: String,
         /// The phone's name, such as its model.
         name: String,
+        /// What is pairing; phone apps of protocol 14 leave it out and pair as phones
+        /// (add-remote-desktop-client D1).
+        #[serde(default, skip_serializing_if = "DeviceKind::is_phone")]
+        kind: DeviceKind,
     },
     /// Remote control's state; local clients only.
     RemoteStatus {},
@@ -294,6 +298,14 @@ pub enum Request {
     /// A paired phone removes its own pairing. The remote gateway handles it, and the
     /// local socket refuses it (add-android-app D5).
     Unpair {},
+    /// The subfolders of a folder on the host's computer, for the New session folder
+    /// browser; an empty path is the home folder (add-remote-desktop-client D7).
+    ListFolder {
+        path: String,
+    },
+    /// Folders under the host's home folder, for finding one by name; answered with
+    /// `FoundFolders` batches on the same connection, the last one `done`.
+    FindFolders {},
 }
 
 impl Request {
@@ -411,9 +423,12 @@ pub enum Response {
         code: String,
         expires_in_secs: u64,
     },
-    /// The shown code paired the named phone.
+    /// The shown code paired the named device.
     RemotePairUsed {
         device: String,
+        /// A host of protocol 14 leaves it out: it pairs phones only.
+        #[serde(default)]
+        kind: DeviceKind,
     },
     /// The shown code expired, or was voided after wrong guesses.
     RemotePairExpired {
@@ -421,6 +436,17 @@ pub enum Response {
     },
     RemoteDevices {
         devices: Vec<RemoteDevice>,
+    },
+    /// A folder's subfolders by name, hidden ones left out, and the host's home folder.
+    Folder {
+        home: String,
+        path: String,
+        folders: Vec<String>,
+    },
+    /// A batch of folders found under the home folder, as full paths.
+    FoundFolders {
+        folders: Vec<String>,
+        done: bool,
     },
     SessionChanged {
         session: SessionInfo,
@@ -527,12 +553,46 @@ pub struct UsageWindow {
     pub model: Option<String>,
 }
 
-/// A phone paired for remote control (add-remote-gateway).
+/// What a paired device is: a phone, or a desktop app on another computer
+/// (add-remote-desktop-client D1). Each has its own allow-list in the gateway.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeviceKind {
+    #[default]
+    Phone,
+    Desktop,
+}
+
+impl DeviceKind {
+    pub fn is_phone(&self) -> bool {
+        *self == DeviceKind::Phone
+    }
+
+    /// The name stored in the index and shown in lists.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeviceKind::Phone => "phone",
+            DeviceKind::Desktop => "desktop",
+        }
+    }
+
+    /// The stored name back; anything unknown is a phone, the narrower kind.
+    pub fn from_stored(text: &str) -> DeviceKind {
+        match text {
+            "desktop" => DeviceKind::Desktop,
+            _ => DeviceKind::Phone,
+        }
+    }
+}
+
+/// A device paired for remote control (add-remote-gateway).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RemoteDevice {
-    /// The phone's endpoint id (its public key).
+    /// The device's endpoint id (its public key).
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: DeviceKind,
     /// Unix milliseconds.
     pub paired_at: i64,
     pub last_seen_at: Option<i64>,
@@ -1068,12 +1128,39 @@ mod tests {
     }
 
     #[test]
+    fn a_pairing_without_a_kind_is_a_phone() {
+        let older = br#"{"type":"pair","secret":"s","name":"Pixel 8"}"#;
+        let Ok(Request::Pair { kind, .. }) = Request::parse(older) else {
+            panic!("not a pairing");
+        };
+        assert_eq!(kind, DeviceKind::Phone);
+        let phone = Request::Pair {
+            secret: "s".into(),
+            name: "Pixel 8".into(),
+            kind: DeviceKind::Phone,
+        };
+        let bytes = serde_json::to_vec(&phone).unwrap();
+        assert!(
+            !String::from_utf8(bytes).unwrap().contains("kind"),
+            "a phone's pairing reads as protocol 14's"
+        );
+        assert_eq!(DeviceKind::from_stored("desktop"), DeviceKind::Desktop);
+        assert_eq!(DeviceKind::from_stored("toaster"), DeviceKind::Phone);
+    }
+
+    #[test]
     fn remote_messages_round_trip() {
         for request in [
             Request::Focus {},
             Request::Pair {
                 secret: "s3cret".into(),
                 name: "Pixel 8".into(),
+                kind: DeviceKind::Phone,
+            },
+            Request::Pair {
+                secret: "s3cret".into(),
+                name: "Studio PC".into(),
+                kind: DeviceKind::Desktop,
             },
             Request::RemoteStatus {},
             Request::RemoteSet { enabled: true },
@@ -1083,6 +1170,8 @@ mod tests {
                 device: "pixel".into(),
             },
             Request::Unpair {},
+            Request::ListFolder { path: "~/w".into() },
+            Request::FindFolders {},
             Request::Device {
                 name: "Pixel 8".into(),
             },
@@ -1099,6 +1188,15 @@ mod tests {
                 version: "0.1.14".into(),
             },
             Response::Unpaired,
+            Response::Folder {
+                home: "/home/me".into(),
+                path: "/home/me".into(),
+                folders: vec!["work".into()],
+            },
+            Response::FoundFolders {
+                folders: vec!["/home/me/work".into()],
+                done: true,
+            },
             Response::RemoteStatus {
                 enabled: true,
                 running: false,
@@ -1112,6 +1210,7 @@ mod tests {
             },
             Response::RemotePairUsed {
                 device: "Pixel 8".into(),
+                kind: DeviceKind::Phone,
             },
             Response::RemotePairExpired {
                 reason: "expired".into(),
@@ -1120,6 +1219,7 @@ mod tests {
                 devices: vec![RemoteDevice {
                     id: "abc".into(),
                     name: "Pixel 8".into(),
+                    kind: DeviceKind::Desktop,
                     paired_at: 1,
                     last_seen_at: Some(2),
                     connected: true,

@@ -1,11 +1,15 @@
 //! Connection to the Headquarter host, starting it on demand. Shared by the `hq`
-//! command and the desktop app.
+//! command and the desktop app. A connection runs over this computer's socket, or over a
+//! stream of a remote link to a paired host on another computer
+//! (add-remote-desktop-client D4); either way the calls block as before.
 
 use std::collections::VecDeque;
-use std::io::BufReader;
+use std::io::{self, BufReader, Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -23,14 +27,136 @@ use hq_signals::event::Agent;
 /// wait ends as soon as the host answers.
 const START_TIMEOUT: Duration = Duration::from_secs(12);
 
+/// The host a client talks to: this computer's, through its socket, or a paired host on
+/// another computer, through a remote link.
+#[derive(Clone)]
+pub enum Host {
+    Local(HostPaths),
+    Remote(Link),
+}
+
+pub use hq_remote::client::{HostAddress, Link, LinkError, Welcome};
+
+/// Something a client can be connected to.
+pub trait Connect {
+    /// Connects to a running host without starting one.
+    fn connect(&self) -> Result<Client>;
+    /// Connects, starting this computer's host when none runs.
+    fn connect_or_start(&self) -> Result<Client>;
+}
+
+impl Connect for HostPaths {
+    fn connect(&self) -> Result<Client> {
+        Client::connect(self)
+    }
+
+    fn connect_or_start(&self) -> Result<Client> {
+        Client::connect_or_start(self)
+    }
+}
+
+impl Connect for Host {
+    fn connect(&self) -> Result<Client> {
+        match self {
+            Host::Local(paths) => Client::connect(paths),
+            Host::Remote(link) => Client::over_link(link),
+        }
+    }
+
+    /// A remote host is never started from here; it runs on its own computer.
+    fn connect_or_start(&self) -> Result<Client> {
+        match self {
+            Host::Local(paths) => Client::connect_or_start(paths),
+            Host::Remote(link) => Client::over_link(link),
+        }
+    }
+}
+
+/// The receiving side of a connection.
+pub enum Stream {
+    Local(UnixStream),
+    Remote(hq_remote::client::Reader),
+}
+
+impl Read for Stream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Stream::Local(stream) => stream.read(buf),
+            Stream::Remote(reader) => reader.read(buf),
+        }
+    }
+}
+
+enum WriterKind {
+    Local(UnixStream),
+    Remote(hq_remote::client::Writer),
+}
+
+/// The sending side of a connection; clones share it.
+#[derive(Clone)]
+pub struct Writer(Arc<Mutex<WriterKind>>);
+
+impl Writer {
+    fn lock(&self) -> std::sync::MutexGuard<'_, WriterKind> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Another handle on the same connection.
+    pub fn try_clone(&self) -> io::Result<Writer> {
+        Ok(self.clone())
+    }
+
+    /// Ends the connection both ways, so a reader blocked on it returns.
+    pub fn shutdown(&self) {
+        match &mut *self.lock() {
+            WriterKind::Local(stream) => {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+            WriterKind::Remote(writer) => writer.finish(),
+        }
+    }
+}
+
+impl Write for Writer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match &mut *self.lock() {
+            WriterKind::Local(stream) => stream.write(buf),
+            WriterKind::Remote(writer) => writer.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match &mut *self.lock() {
+            WriterKind::Local(stream) => stream.flush(),
+            WriterKind::Remote(writer) => writer.flush(),
+        }
+    }
+}
+
 pub struct Client {
-    pub reader: BufReader<UnixStream>,
-    pub writer: UnixStream,
+    pub reader: BufReader<Stream>,
+    pub writer: Writer,
     /// The version the host named in its welcome; empty until it answered.
     pub host_version: String,
 }
 
 impl Client {
+    /// A client on a new stream of `link`, greeted like a local one.
+    pub fn over_link(link: &Link) -> Result<Client> {
+        let (reader, writer) = link.open()?;
+        let client = Client {
+            reader: BufReader::new(Stream::Remote(reader)),
+            writer: Writer(Arc::new(Mutex::new(WriterKind::Remote(writer)))),
+            host_version: String::new(),
+        };
+        match client.hello(PROTOCOL_VERSION)? {
+            Greeting::Welcome(client) => Ok(client),
+            Greeting::OtherVersion { message, .. } => bail!(message),
+        }
+    }
+
     pub fn connect_or_start(paths: &HostPaths) -> Result<Client> {
         match Client::greet(paths, PROTOCOL_VERSION) {
             Ok(Greeting::Welcome(client)) => return Ok(client),
@@ -64,15 +190,20 @@ impl Client {
         let stream = UnixStream::connect(&paths.control_socket)
             .with_context(|| format!("connect to {}", paths.control_socket.display()))?;
         let writer = stream.try_clone()?;
-        let mut client = Client {
-            reader: BufReader::new(stream),
-            writer,
+        let client = Client {
+            reader: BufReader::new(Stream::Local(stream)),
+            writer: Writer(Arc::new(Mutex::new(WriterKind::Local(writer)))),
             host_version: String::new(),
         };
-        match client.request(&Request::Hello { protocol })? {
+        client.hello(protocol)
+    }
+
+    /// Says `Hello` in `protocol` on a new connection.
+    fn hello(mut self, protocol: u32) -> Result<Greeting> {
+        match self.request(&Request::Hello { protocol })? {
             Response::Welcome { version, .. } => {
-                client.host_version = version;
-                Ok(Greeting::Welcome(client))
+                self.host_version = version;
+                Ok(Greeting::Welcome(self))
             }
             Response::Error {
                 code: ErrorCode::ProtocolMismatch,
@@ -160,7 +291,7 @@ pub enum Change {
 /// its window can be seen. Writes on the feed's connection, so the answers arrive
 /// through the feed.
 pub struct FeedControl {
-    writer: UnixStream,
+    writer: Writer,
 }
 
 impl FeedControl {
@@ -189,8 +320,8 @@ pub struct SessionFeed {
 impl SessionFeed {
     /// Connects (starting the host if needed), subscribes, and lists every session;
     /// with `usage`, also reads usage and follows its changes.
-    pub fn open(paths: &HostPaths, usage: bool) -> Result<(SessionFeed, Catalog)> {
-        SessionFeed::start(Client::connect_or_start(paths)?, usage)
+    pub fn open(host: &impl Connect, usage: bool) -> Result<(SessionFeed, Catalog)> {
+        SessionFeed::start(host.connect_or_start()?, usage)
     }
 
     /// Subscribes before listing: the host tells only subscribers about a change, so
@@ -281,8 +412,8 @@ fn incoming(response: Response) -> Incoming {
 }
 
 /// Sends a request whose success answer is `Done`.
-fn request_done(paths: &HostPaths, request: &Request) -> Result<()> {
-    let mut client = Client::connect_or_start(paths)?;
+fn request_done(host: &impl Connect, request: &Request) -> Result<()> {
+    let mut client = host.connect_or_start()?;
     match expect_ok(client.request(request)?)? {
         Response::Done => Ok(()),
         other => bail!("unexpected answer: {other:?}"),
@@ -290,9 +421,9 @@ fn request_done(paths: &HostPaths, request: &Request) -> Result<()> {
 }
 
 /// Puts sessions (names or id prefixes) in the sidebar; all or nothing.
-pub fn add_to_sidebar(paths: &HostPaths, sessions: &[String]) -> Result<()> {
+pub fn add_to_sidebar(host: &impl Connect, sessions: &[String]) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::Add {
             sessions: sessions.to_vec(),
         },
@@ -300,9 +431,9 @@ pub fn add_to_sidebar(paths: &HostPaths, sessions: &[String]) -> Result<()> {
 }
 
 /// Takes sessions out of the sidebar; their history is untouched.
-pub fn remove_from_sidebar(paths: &HostPaths, sessions: &[String]) -> Result<()> {
+pub fn remove_from_sidebar(host: &impl Connect, sessions: &[String]) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::Remove {
             sessions: sessions.to_vec(),
         },
@@ -312,11 +443,11 @@ pub fn remove_from_sidebar(paths: &HostPaths, sessions: &[String]) -> Result<()>
 /// Adds a group after the others, named `name` or "New Group #n"; with `session`, that
 /// sidebar session moves into it.
 pub fn new_group(
-    paths: &HostPaths,
+    host: &impl Connect,
     name: Option<&str>,
     session: Option<&str>,
 ) -> Result<GroupInfo> {
-    let mut client = Client::connect_or_start(paths)?;
+    let mut client = host.connect_or_start()?;
     let response = client.request(&Request::NewGroup {
         name: name.map(str::to_owned),
         session: session.map(str::to_owned),
@@ -327,9 +458,9 @@ pub fn new_group(
     }
 }
 
-pub fn rename_group(paths: &HostPaths, group: i64, name: &str) -> Result<()> {
+pub fn rename_group(host: &impl Connect, group: i64, name: &str) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::RenameGroup {
             group,
             name: name.to_owned(),
@@ -338,23 +469,23 @@ pub fn rename_group(paths: &HostPaths, group: i64, name: &str) -> Result<()> {
 }
 
 /// Deletes a group; its sessions stay in the sidebar, in no group.
-pub fn delete_group(paths: &HostPaths, group: i64) -> Result<()> {
-    request_done(paths, &Request::DeleteGroup { group })
+pub fn delete_group(host: &impl Connect, group: i64) -> Result<()> {
+    request_done(host, &Request::DeleteGroup { group })
 }
 
 /// Moves a group to just before `before`, or to the end.
-pub fn move_group(paths: &HostPaths, group: i64, before: Option<i64>) -> Result<()> {
-    request_done(paths, &Request::MoveGroup { group, before })
+pub fn move_group(host: &impl Connect, group: i64, before: Option<i64>) -> Result<()> {
+    request_done(host, &Request::MoveGroup { group, before })
 }
 
-pub fn collapse_group(paths: &HostPaths, group: i64, collapsed: bool) -> Result<()> {
-    request_done(paths, &Request::CollapseGroup { group, collapsed })
+pub fn collapse_group(host: &impl Connect, group: i64, collapsed: bool) -> Result<()> {
+    request_done(host, &Request::CollapseGroup { group, collapsed })
 }
 
 /// Picks a group's colour by palette name, or `None` for automatic.
-pub fn set_group_color(paths: &HostPaths, group: i64, color: Option<GroupColor>) -> Result<()> {
+pub fn set_group_color(host: &impl Connect, group: i64, color: Option<GroupColor>) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::SetGroupColor {
             group,
             color: color.map(|color| color.name().to_owned()),
@@ -363,9 +494,9 @@ pub fn set_group_color(paths: &HostPaths, group: i64, color: Option<GroupColor>)
 }
 
 /// Puts a sidebar session in a group, or in none.
-pub fn set_group(paths: &HostPaths, session: &str, group: Option<i64>) -> Result<()> {
+pub fn set_group(host: &impl Connect, session: &str, group: Option<i64>) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::SetGroup {
             session: session.to_owned(),
             group,
@@ -374,15 +505,15 @@ pub fn set_group(paths: &HostPaths, session: &str, group: Option<i64>) -> Result
 }
 
 /// A remote control request (status, on or off, devices, removal); errors become `Err`.
-pub fn remote(paths: &HostPaths, request: &Request) -> Result<Response> {
-    let mut client = Client::connect_or_start(paths)?;
+pub fn remote(host: &impl Connect, request: &Request) -> Result<Response> {
+    let mut client = host.connect_or_start()?;
     expect_ok(client.request(request)?)
 }
 
 /// Asks the host for a pairing code and its lifetime in seconds. The returned client hears
 /// when the code is used or expires; closing it withdraws the code (add-remote-gateway D13).
-pub fn begin_pairing(paths: &HostPaths) -> Result<(Client, String, u64)> {
-    let mut client = Client::connect_or_start(paths)?;
+pub fn begin_pairing(host: &impl Connect) -> Result<(Client, String, u64)> {
+    let mut client = host.connect_or_start()?;
     match expect_ok(client.request(&Request::RemotePair {})?)? {
         Response::RemotePairing {
             code,
@@ -393,18 +524,18 @@ pub fn begin_pairing(paths: &HostPaths) -> Result<(Client, String, u64)> {
 }
 
 /// Tells the host the owner has seen the session's latest state.
-pub fn mark_seen(paths: &HostPaths, session: &str) -> Result<()> {
+pub fn mark_seen(host: &impl Connect, session: &str) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::Seen {
             session: session.to_owned(),
         },
     )
 }
 
-pub fn rename(paths: &HostPaths, session: &str, name: &str) -> Result<()> {
+pub fn rename(host: &impl Connect, session: &str, name: &str) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::Rename {
             session: session.to_owned(),
             name: name.to_owned(),
@@ -414,9 +545,9 @@ pub fn rename(paths: &HostPaths, session: &str, name: &str) -> Result<()> {
 
 /// Closes a session: its agent is stopped with its own keys and the session leaves the
 /// sidebar once the agent has exited.
-pub fn close(paths: &HostPaths, session: &str) -> Result<()> {
+pub fn close(host: &impl Connect, session: &str) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::Close {
             session: session.to_owned(),
         },
@@ -425,8 +556,8 @@ pub fn close(paths: &HostPaths, session: &str) -> Result<()> {
 
 /// Stops the host and every session it runs; those running start again with the next
 /// host (add-inactive-sessions).
-pub fn stop_host(paths: &HostPaths) -> Result<()> {
-    let mut client = Client::connect(paths)?;
+pub fn stop_host(host: &impl Connect) -> Result<()> {
+    let mut client = host.connect()?;
     match expect_ok(client.request(&Request::Stop {})?)? {
         Response::Done => Ok(()),
         other => bail!("unexpected answer: {other:?}"),
@@ -434,13 +565,13 @@ pub fn stop_host(paths: &HostPaths) -> Result<()> {
 }
 
 /// The version of the running host, without starting one.
-pub fn host_version(paths: &HostPaths) -> Result<String> {
-    Ok(Client::connect(paths)?.host_version)
+pub fn host_version(host: &impl Connect) -> Result<String> {
+    Ok(host.connect()?.host_version)
 }
 
 /// Every enabled agent's usage, read now when due.
-pub fn usage(paths: &HostPaths) -> Result<Vec<AgentUsage>> {
-    let mut client = Client::connect_or_start(paths)?;
+pub fn usage(host: &impl Connect) -> Result<Vec<AgentUsage>> {
+    let mut client = host.connect_or_start()?;
     match expect_ok(client.request(&Request::Usage {})?)? {
         Response::Usage { agents } => Ok(agents),
         other => bail!("unexpected answer to usage: {other:?}"),
@@ -448,13 +579,13 @@ pub fn usage(paths: &HostPaths) -> Result<Vec<AgentUsage>> {
 }
 
 /// Asks for a new reading; subscribers to usage receive it.
-pub fn refresh_usage(paths: &HostPaths) -> Result<()> {
-    request_done(paths, &Request::RefreshUsage {})
+pub fn refresh_usage(host: &impl Connect) -> Result<()> {
+    request_done(host, &Request::RefreshUsage {})
 }
 
 /// The host's own CPU and memory, and each running session's (add-usage-window D1).
-pub fn resources(paths: &HostPaths) -> Result<(Footprint, Vec<SessionFootprint>)> {
-    let mut client = Client::connect_or_start(paths)?;
+pub fn resources(host: &impl Connect) -> Result<(Footprint, Vec<SessionFootprint>)> {
+    let mut client = host.connect_or_start()?;
     match expect_ok(client.request(&Request::Resources {})?)? {
         Response::Resources { host, sessions } => Ok((host, sessions)),
         other => bail!("unexpected answer to resources: {other:?}"),
@@ -462,9 +593,9 @@ pub fn resources(paths: &HostPaths) -> Result<(Footprint, Vec<SessionFootprint>)
 }
 
 /// Removes a past conversation from its agent, the way that agent allows.
-pub fn remove_conversation(paths: &HostPaths, session: &str, way: RemoveWay) -> Result<()> {
+pub fn remove_conversation(host: &impl Connect, session: &str, way: RemoveWay) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::RemoveConversation {
             session: session.to_owned(),
             way,
@@ -473,8 +604,8 @@ pub fn remove_conversation(paths: &HostPaths, session: &str, way: RemoveWay) -> 
 }
 
 /// Continues an ended session's conversation in Headquarter.
-pub fn resume(paths: &HostPaths, session: &str) -> Result<SessionInfo> {
-    let mut client = Client::connect_or_start(paths)?;
+pub fn resume(host: &impl Connect, session: &str) -> Result<SessionInfo> {
+    let mut client = host.connect_or_start()?;
     let response = client.request(&Request::Resume {
         session: session.to_owned(),
         term: Some("xterm-256color".to_owned()),
@@ -486,8 +617,8 @@ pub fn resume(paths: &HostPaths, session: &str) -> Result<SessionInfo> {
 }
 
 /// Stops a conversation running in Claude Code's background and resumes it in Headquarter.
-pub fn bring_in(paths: &HostPaths, session: &str) -> Result<SessionInfo> {
-    let mut client = Client::connect_or_start(paths)?;
+pub fn bring_in(host: &impl Connect, session: &str) -> Result<SessionInfo> {
+    let mut client = host.connect_or_start()?;
     let response = client.request(&Request::BringIn {
         session: session.to_owned(),
         term: Some("xterm-256color".to_owned()),
@@ -500,12 +631,12 @@ pub fn bring_in(paths: &HostPaths, session: &str) -> Result<SessionInfo> {
 
 /// Starts `agent` in `folder` as a hosted session, in `group` when given.
 pub fn create_session(
-    paths: &HostPaths,
+    host: &impl Connect,
     agent: Agent,
     folder: &Path,
     group: Option<i64>,
 ) -> Result<SessionInfo> {
-    let mut client = Client::connect_or_start(paths)?;
+    let mut client = host.connect_or_start()?;
     let response = client.request(&Request::New {
         agent,
         cwd: folder.to_string_lossy().into_owned(),
@@ -521,8 +652,8 @@ pub fn create_session(
 }
 
 /// Attaches to a session; the returned client then carries its output and input.
-pub fn attach(paths: &HostPaths, session: &str, cols: u16, rows: u16) -> Result<Client> {
-    let mut client = Client::connect_or_start(paths)?;
+pub fn attach(host: &impl Connect, session: &str, cols: u16, rows: u16) -> Result<Client> {
+    let mut client = host.connect_or_start()?;
     let response = client.request(&Request::Attach {
         session: session.to_owned(),
         cols,
@@ -535,8 +666,8 @@ pub fn attach(paths: &HostPaths, session: &str, cols: u16, rows: u16) -> Result<
 }
 
 /// Attaches to a session's shell, starting it in the session's folder if needed.
-pub fn attach_shell(paths: &HostPaths, session: &str, cols: u16, rows: u16) -> Result<Client> {
-    let mut client = Client::connect_or_start(paths)?;
+pub fn attach_shell(host: &impl Connect, session: &str, cols: u16, rows: u16) -> Result<Client> {
+    let mut client = host.connect_or_start()?;
     let response = client.request(&Request::AttachShell {
         session: session.to_owned(),
         cols,
@@ -549,13 +680,59 @@ pub fn attach_shell(paths: &HostPaths, session: &str, cols: u16, rows: u16) -> R
 }
 
 /// Ends a session's shell, if one runs.
-pub fn close_shell(paths: &HostPaths, session: &str) -> Result<()> {
+pub fn close_shell(host: &impl Connect, session: &str) -> Result<()> {
     request_done(
-        paths,
+        host,
         &Request::CloseShell {
             session: session.to_owned(),
         },
     )
+}
+
+/// A folder's subfolders on the host's computer, and the host's home folder; an empty
+/// `path` lists the home folder (add-remote-desktop-client D7).
+pub struct Folder {
+    pub home: String,
+    pub path: String,
+    pub folders: Vec<String>,
+}
+
+pub fn list_folder(host: &impl Connect, path: &str) -> Result<Folder> {
+    let mut client = host.connect_or_start()?;
+    match expect_ok(client.request(&Request::ListFolder {
+        path: path.to_owned(),
+    })?)? {
+        Response::Folder {
+            home,
+            path,
+            folders,
+        } => Ok(Folder {
+            home,
+            path,
+            folders,
+        }),
+        other => bail!("unexpected answer to list folder: {other:?}"),
+    }
+}
+
+/// Folders under the host's home folder, handed to `send` in batches until it returns
+/// false or the host has walked them all.
+pub fn find_folders(host: &impl Connect, mut send: impl FnMut(Vec<String>) -> bool) -> Result<()> {
+    let mut client = host.connect_or_start()?;
+    client.send(&Request::FindFolders {})?;
+    loop {
+        match expect_ok(client.next_response()?)? {
+            Response::FoundFolders { folders, done } => {
+                if !folders.is_empty() && !send(folders) {
+                    return Ok(());
+                }
+                if done {
+                    return Ok(());
+                }
+            }
+            other => bail!("unexpected answer to find folders: {other:?}"),
+        }
+    }
 }
 
 /// Turns an error response into an error for the caller.
@@ -681,8 +858,10 @@ mod tests {
         let (near, far) = UnixStream::pair().unwrap();
         let host = std::thread::spawn(move || host_linking_after_the_list(far));
         let client = Client {
-            reader: BufReader::new(near.try_clone().unwrap()),
-            writer: near.try_clone().unwrap(),
+            reader: BufReader::new(Stream::Local(near.try_clone().unwrap())),
+            writer: Writer(Arc::new(Mutex::new(WriterKind::Local(
+                near.try_clone().unwrap(),
+            )))),
             host_version: String::new(),
         };
         let (mut feed, catalog) = SessionFeed::start(client, true).unwrap();

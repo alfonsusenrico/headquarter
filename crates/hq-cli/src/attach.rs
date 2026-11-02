@@ -4,13 +4,12 @@
 //! Ctrl-\ twice sends one Ctrl-\ to the agent.
 
 use std::io::{IsTerminal, Read, Write};
-use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow, bail};
 use hq_protocol::{Frame, Request, Response, SessionInfo, read_frame, write_frame};
 
-use hq_client::Client;
+use hq_client::{Client, Writer};
 
 const DETACH_PREFIX: u8 = 0x1c;
 const DETACH_KEY: u8 = b'd';
@@ -66,14 +65,14 @@ pub fn attach(mut client: Client, session: &SessionInfo) -> Result<Outcome> {
     }
 }
 
-fn send(writer: &Mutex<UnixStream>, frame: &Frame) -> bool {
+fn send(writer: &Mutex<Writer>, frame: &Frame) -> bool {
     let Ok(mut stream) = writer.lock() else {
         return false;
     };
     write_frame(&mut *stream, frame).is_ok()
 }
 
-fn spawn_input(writer: Arc<Mutex<UnixStream>>) {
+fn spawn_input(writer: Arc<Mutex<Writer>>) {
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin();
         let mut buffer = [0u8; 4096];
@@ -115,7 +114,7 @@ fn split_detach(input: &[u8], pending_prefix: &mut bool) -> (Vec<u8>, bool) {
     (keys, false)
 }
 
-fn spawn_resize(writer: Arc<Mutex<UnixStream>>) {
+fn spawn_resize(writer: Arc<Mutex<Writer>>) {
     std::thread::spawn(move || {
         let Ok(mut signals) = signal_hook::iterator::Signals::new([signal_hook::consts::SIGWINCH])
         else {

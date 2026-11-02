@@ -28,6 +28,7 @@ async fn main() {
         &request(&Request::Pair {
             secret: code.secret.clone(),
             name: name.clone(),
+            kind: hq_protocol::DeviceKind::Phone,
         }),
     )
     .await

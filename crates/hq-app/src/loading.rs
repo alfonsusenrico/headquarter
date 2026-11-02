@@ -37,7 +37,7 @@ pub fn agents_checking_in(
     marks: &Marks,
     size: f32,
     chrome: Chrome,
-    label: &'static str,
+    label: impl Into<SharedString>,
 ) -> AnyElement {
     let still = crate::settings::reduce_motion();
     let row = Agent::ALL.into_iter().enumerate().map(|(index, agent)| {
@@ -63,7 +63,7 @@ pub fn agents_checking_in(
             div()
                 .text_size(px(13.))
                 .text_color(hsla(chrome.muted))
-                .child(label),
+                .child(label.into()),
         )
         .into_any_element()
 }

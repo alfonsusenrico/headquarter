@@ -828,6 +828,7 @@ async fn pair_once(
     let pair = Request::Pair {
         secret: code.secret.clone(),
         name,
+        kind: hq_protocol::DeviceKind::Phone,
     };
     hq_remote::write_frame(&mut send, &Frame::request(&pair))
         .await

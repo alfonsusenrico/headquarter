@@ -3,6 +3,8 @@
 //! `hq-protocol` frames carried over a QUIC stream. Shared by the host's gateway and,
 //! later, the phone's core.
 
+pub mod client;
+
 use std::fmt;
 use std::net::SocketAddr;
 

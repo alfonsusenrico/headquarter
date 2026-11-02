@@ -3381,12 +3381,14 @@ dependencies = [
  "hq-config",
  "hq-discovery",
  "hq-protocol",
+ "hq-remote",
  "hq-signals",
  "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "qrcode",
+ "serde",
  "serde_json",
  "sha2 0.11.1",
 ]
@@ -3422,6 +3424,7 @@ dependencies = [
  "anyhow",
  "hq-daemon",
  "hq-protocol",
+ "hq-remote",
  "hq-signals",
 ]
 

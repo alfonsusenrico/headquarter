@@ -10,6 +10,7 @@ repository.workspace = true
 anyhow = "1.0.104"
 hq-daemon = { version = "0.1.24", path = "../hq-daemon" }
 hq-protocol = { version = "0.1.24", path = "../hq-protocol" }
+hq-remote = { version = "0.1.24", path = "../hq-remote" }
 hq-signals = { version = "0.1.24", path = "../hq-signals" }
 
 [lints]

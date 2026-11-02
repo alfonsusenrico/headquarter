@@ -23,9 +23,11 @@ use crate::terminal::view::hsla;
 use crate::theme::{Mode, Paint, Theme};
 use crate::themes::{self, Library, ThemeChoice};
 
-/// Whether setup replaces the sidebar at launch (design D1).
-pub fn should_show(settings_file_exists: bool, asked: bool) -> bool {
-    asked || !settings_file_exists
+/// Whether setup replaces the sidebar at launch (design D1). It reads this computer's
+/// agents, so it never starts on its own with a remote host on screen
+/// (add-remote-desktop-client D7).
+pub fn should_show(settings_file_exists: bool, asked: bool, remote_shown: bool) -> bool {
+    asked || (!settings_file_exists && !remote_shown)
 }
 
 /// `--setup` on the command line.
@@ -853,9 +855,11 @@ mod tests {
 
     #[test]
     fn launch_rule() {
-        assert!(should_show(false, false), "no settings file");
-        assert!(!should_show(true, false));
-        assert!(should_show(true, true), "--setup");
+        assert!(should_show(false, false, false), "no settings file");
+        assert!(!should_show(true, false, false));
+        assert!(should_show(true, true, false), "--setup");
+        assert!(!should_show(false, false, true), "a remote host on screen");
+        assert!(should_show(false, true, true), "--setup still asks");
     }
 
     #[test]
