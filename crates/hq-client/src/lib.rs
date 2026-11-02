@@ -46,6 +46,17 @@ pub enum Host {
 
 pub use hq_remote::client::{HostAddress, Link, LinkError, Welcome};
 
+impl Host {
+    /// The remote link, for a paired host on another computer.
+    pub fn link(&self) -> Option<&Link> {
+        match self {
+            #[cfg(unix)]
+            Host::Local(_) => None,
+            Host::Remote(link) => Some(link),
+        }
+    }
+}
+
 /// Something a client can be connected to.
 pub trait Connect {
     /// Connects to a running host without starting one.

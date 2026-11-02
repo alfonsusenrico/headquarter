@@ -3453,7 +3453,7 @@ fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
             Ok(host) => host,
             Err(error) => return fail(format!("{error:#}")),
         };
-        let remote = matches!(host, hq_client::Host::Remote(_));
+        let remote = host.link().is_some();
         let reason = match follow_host(&host, tx) {
             Followed::Gone => return,
             Followed::Final(message) => return fail(message),
@@ -3516,7 +3516,7 @@ fn follow_host(host: &hq_client::Host, tx: &UnboundedSender<ListEvent>) -> Follo
             return Followed::Failed(format!("cannot reach the Headquarter host: {error:#}"));
         }
     };
-    if let hq_client::Host::Remote(link) = host {
+    if let Some(link) = host.link() {
         crate::hosts::remember_address(link);
         if let Ok(folder) = hq_client::list_folder(host, "")
             && tx.unbounded_send(ListEvent::Home(folder.home)).is_err()
