@@ -792,6 +792,7 @@ fn pair(
     if let Some(used) = pairing.take() {
         used.tell(&Response::RemotePairUsed {
             device: name.clone(),
+            kind,
         });
     }
     host.log.line(&format!(

@@ -3910,7 +3910,7 @@ fn a_paired_phone_follows_types_and_is_held_to_the_allow_list() {
     ));
     assert!(matches!(
         shower.next_response(),
-        Response::RemotePairUsed { device } if device == "Test Phone"
+        Response::RemotePairUsed { device, .. } if device == "Test Phone"
     ));
 
     phone.request(&Request::Hello {
@@ -4084,7 +4084,7 @@ fn a_paired_desktop_works_on_several_streams_within_its_allow_list() {
     ));
     assert!(matches!(
         shower.next_response(),
-        Response::RemotePairUsed { device } if device == "Studio PC"
+        Response::RemotePairUsed { device, .. } if device == "Studio PC"
     ));
     match env.connect().request(&Request::RemoteDevices {}) {
         Response::RemoteDevices { devices } => {
@@ -4518,7 +4518,7 @@ fn the_phone_core_pairs_mirrors_types_reconnects_and_unpairs() {
     assert!(computer.selected && !computer.name.is_empty());
     assert!(matches!(
         shower.next_response(),
-        Response::RemotePairUsed { device } if device == "Core Phone"
+        Response::RemotePairUsed { device, .. } if device == "Core Phone"
     ));
     wait_until("connected", || phone.status() == LinkStatus::Connected);
     wait_until("the session mirrored", || {

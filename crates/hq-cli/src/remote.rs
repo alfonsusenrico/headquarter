@@ -97,7 +97,7 @@ fn pair(paths: &HostPaths) -> Result<ExitCode> {
     );
     loop {
         match client.next_response()? {
-            Response::RemotePairUsed { device } => {
+            Response::RemotePairUsed { device, .. } => {
                 println!("Paired {device}.");
                 return Ok(ExitCode::SUCCESS);
             }

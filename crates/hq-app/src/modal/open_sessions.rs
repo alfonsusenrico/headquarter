@@ -211,7 +211,9 @@ pub fn pick_items<Tz: TimeZone>(
 
 /// The folders offered under the search field while it holds a path.
 pub fn suggestions(text: &str, home: &Path) -> Vec<PathBuf> {
-    if !folders::is_path(text) {
+    // This computer's folders say nothing about a remote host's
+    // (add-remote-desktop-client D7).
+    if !folders::is_path(text) || crate::hosts::is_remote() {
         return Vec::new();
     }
     folders::list(text, home, &[])

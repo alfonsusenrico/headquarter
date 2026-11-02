@@ -33,7 +33,7 @@ use hq_signals::status::Status;
 use crate::app_state::SidebarState;
 use crate::marks::{self, Marks};
 use crate::menus;
-use crate::modal::new_session::{NewEvent, NewSession, Provider};
+use crate::modal::new_session::{HostFolders, NewEvent, NewSession, Provider};
 use crate::modal::open_sessions::{OpenEvent, OpenSessions};
 use crate::modal::shortcuts::{ShortcutsEvent, ShortcutsWindow};
 use crate::modal::theme_creator::{CreatorEvent, CreatorStart, ThemeCreator};
@@ -51,6 +51,7 @@ use crate::themes::{self, Library, Look, ThemeChoice, Token};
 
 mod groups;
 mod header;
+mod hosts;
 mod in_use;
 mod notice;
 mod quit;
@@ -104,6 +105,10 @@ enum ListEvent {
         details: SessionDetails,
     },
     Usage(Vec<AgentUsage>),
+    /// The remote host on screen is unreachable; the feed tries again by itself.
+    Reconnecting(String),
+    /// The remote host's home folder, labelled `~` (add-remote-desktop-client D7).
+    Home(String),
     Failed(String),
 }
 
@@ -143,6 +148,8 @@ enum Pane {
         view: Entity<TerminalView>,
         _focus: Subscription,
         _holder: Subscription,
+        /// Tells the owner when dropped files stay on this computer.
+        _drops: Subscription,
     },
     /// A session not attached here: ended, or running in another terminal.
     Details(String),
@@ -294,6 +301,12 @@ pub struct Workspace {
     usage_open: Option<Agent>,
     /// The Remote Control window, while open (add-remote-gateway D12).
     remote_window: Option<remote::RemoteWindow>,
+    /// The host list under the switcher, while open (add-remote-desktop-client D6).
+    host_menu_open: bool,
+    /// Connect to a Host, while open.
+    connect_window: Option<hosts::ConnectWindow>,
+    /// Why the remote host on screen is being reached again, while it is.
+    reconnecting: Option<String>,
     /// The Usage popover or window, while shown (add-usage-window).
     resources: Option<resources::ResourcesView>,
     /// The details list every agent: opened from the "+N" chip.
@@ -323,18 +336,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (tx, mut rx) = unbounded();
-        std::thread::spawn(move || watch_sessions(&tx));
-        let list = cx.spawn_in(window, async move |this, cx| {
-            while let Some(event) = rx.next().await {
-                let received = this.update_in(cx, |workspace, window, cx| {
-                    workspace.receive(event, window, cx);
-                });
-                if received.is_err() {
-                    break;
-                }
-            }
-        });
+        let list = Self::follow_sessions(window, cx);
         cx.observe_window_appearance(window, |this, window, cx| {
             this.system_mode = system_mode(window.appearance());
             this.apply_settings(window, cx);
@@ -459,6 +461,9 @@ impl Workspace {
             usage: Vec::new(),
             usage_open: None,
             remote_window: None,
+            host_menu_open: false,
+            connect_window: None,
+            reconnecting: None,
             resources: None,
             usage_all: false,
             usage_refreshing: false,
@@ -770,6 +775,52 @@ impl Workspace {
 
     // ---- data from the host -------------------------------------------------------
 
+    /// Follows the sessions of the host on screen on a thread of its own.
+    fn follow_sessions(window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
+        let (tx, mut rx) = unbounded();
+        std::thread::spawn(move || watch_sessions(&tx));
+        cx.spawn_in(window, async move |this, cx| {
+            while let Some(event) = rx.next().await {
+                let received = this.update_in(cx, |workspace, window, cx| {
+                    workspace.receive(event, window, cx);
+                });
+                if received.is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Shows the host now on screen from scratch: its sessions, nothing of the last one's
+    /// (add-remote-desktop-client D6). The old feed's thread ends when it next writes.
+    fn restart_feed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pane = Pane::Empty;
+        self.selected = None;
+        self.pending_shown = None;
+        self.sessions.clear();
+        self.groups.clear();
+        self.usage.clear();
+        self.details.clear();
+        self.feed_control = None;
+        self.followed = None;
+        self.message = None;
+        self.reconnecting = None;
+        self.listed = false;
+        self.modal = None;
+        // A remote host names its own home folder once reached.
+        self.home = if crate::hosts::is_remote() {
+            None
+        } else {
+            hq_signals::paths::home().map(|home| home.to_string_lossy().into_owned())
+        };
+        self.providers.clear();
+        self.remote_window = None;
+        self._list = Self::follow_sessions(window, cx);
+        self.sync_shell(window, cx);
+        window.focus(&self.sidebar_focus, cx);
+        cx.notify();
+    }
+
     fn receive(&mut self, event: ListEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             ListEvent::All {
@@ -777,6 +828,15 @@ impl Workspace {
                 groups,
                 usage,
             } => {
+                // Back after a drop: the open session attaches again
+                // (add-remote-desktop-client D6).
+                if self.reconnecting.take().is_some() {
+                    if let Pane::Terminal { id, .. } | Pane::Details(id) = &self.pane {
+                        self.pending_shown = Some(id.clone());
+                    }
+                    self.pane = Pane::Empty;
+                }
+                self.message = None;
                 self.sessions = sessions;
                 self.groups = groups;
                 self.usage = usage;
@@ -805,8 +865,13 @@ impl Workspace {
             }
             ListEvent::Failed(message) => {
                 self.listed = true;
+                self.reconnecting = None;
                 self.message = Some(message);
             }
+            ListEvent::Reconnecting(reason) => {
+                self.reconnecting = Some(reason);
+            }
+            ListEvent::Home(home) => self.home = Some(home),
         }
         self.tell_start_failures(cx);
         if let Some(Modal::Open { view: window, .. }) = &self.modal {
@@ -1028,12 +1093,26 @@ impl Workspace {
             this.mark_seen_if_watched(window, cx);
             this.tell_host_in_use(window, cx);
         });
+        let drops = cx.subscribe_in(
+            &view,
+            window,
+            |this, _, _: &crate::terminal::view::DropRefused, window, cx| {
+                let host = this.host_name_shown();
+                this.show_notice(
+                    format!("The files are on this computer; the session runs on {host}."),
+                    false,
+                    window,
+                    cx,
+                );
+            },
+        );
         window.focus(&view.focus_handle(cx), cx);
         self.pane = Pane::Terminal {
             id,
             view,
             _focus: focus,
             _holder: holder,
+            _drops: drops,
         };
         self.sync_shell(window, cx);
         self.mark_seen_if_watched(window, cx);
@@ -1163,7 +1242,16 @@ impl Workspace {
         } else {
             self.render_items(&items, window, cx)
         };
+        let switcher = (!rail).then(|| self.render_host_switcher(cx));
         let header = (!rail).then(|| self.render_header(cx));
+        let reconnecting = (!rail && self.reconnecting.is_some()).then(|| {
+            div()
+                .px(px(8.))
+                .pb(px(8.))
+                .text_size(px(13.))
+                .text_color(hsla(chrome.amber))
+                .child(format!("Reconnecting to {}…", self.host_name_shown()))
+        });
         // While the host starts, the pane shows it; the sidebar stays quiet.
         let empty_state = (empty && !rail && self.listed)
             .then(|| self.render_empty_sidebar(cx).into_any_element());
@@ -1207,13 +1295,17 @@ impl Workspace {
                     },
                 ),
             )
+            .children(switcher)
             .children(header)
+            .children(reconnecting)
             .child(
                 // A scrollbar shows when the rows do not all fit.
                 div()
                     .relative()
                     .flex_1()
                     .min_h(px(0.))
+                    // The last list stays while the host is reached again, greyed.
+                    .when(self.reconnecting.is_some(), |rows| rows.opacity(0.5))
                     .child(
                         div()
                             .id("sidebar-rows")
@@ -1491,8 +1583,20 @@ impl Workspace {
         let home = self.home_folder();
         let chrome = self.theme.chrome;
         let marks = self.marks.clone();
-        let new =
-            cx.new(|cx| NewSession::new(providers, preferred, home, chrome, marks, window, cx));
+        let remote = crate::hosts::is_remote()
+            .then(|| crate::hosts::current().ok())
+            .flatten();
+        let new = cx.new(|cx| {
+            NewSession::new(
+                providers,
+                preferred,
+                HostFolders { home, remote },
+                chrome,
+                marks,
+                window,
+                cx,
+            )
+        });
         let sessions = self.sessions.clone();
         let not_asked = crate::app_state::path()
             .map(|path| crate::app_state::load_not_asked(&path))
@@ -1757,6 +1861,10 @@ impl Workspace {
     /// Finds each enabled provider's executable and version as `hq agents` does, off
     /// the main thread, and passes them to New session if it is still open.
     fn discover_providers(&mut self, cx: &mut Context<Self>) {
+        // A remote host's agents are its own; this computer's say nothing about them.
+        if crate::hosts::is_remote() {
+            return;
+        }
         let settings = self.watcher.current().ok();
         let agents = self.enabled_agents();
         let task = cx.background_executor().spawn(async move {
@@ -3285,6 +3393,7 @@ impl Render for Workspace {
             .children(self.render_confirm_close(cx))
             .children(self.render_update_window(cx))
             .children(self.render_remote_window(cx))
+            .children(self.render_connect_window(cx))
             .children(self.render_resources(window, cx))
             .children(self.render_notice(cx))
             // Last, so it covers every window: quitting can be asked from anywhere
@@ -3299,23 +3408,99 @@ impl Focusable for Workspace {
     }
 }
 
-/// Runs on its own thread: lists sessions, then forwards every change.
+/// How long the feed waits before reaching a remote host again, at first and at most
+/// (add-remote-desktop-client D4).
+const RECONNECT_FIRST: Duration = Duration::from_secs(1);
+const RECONNECT_MOST: Duration = Duration::from_secs(30);
+
+/// How following a host's sessions ended.
+enum Followed {
+    /// The window no longer listens (the owner switched hosts, or it closed).
+    Gone,
+    /// It worked for a while, then the connection ended.
+    Ended(String),
+    /// It never got the list.
+    Failed(String),
+    /// Trying again cannot help: the host removed this computer, or versions differ.
+    Final(String),
+}
+
+/// Runs on its own thread: lists sessions, then forwards every change. A remote host is
+/// reached again with backoff while the window listens; this computer's host is not, as
+/// before.
 fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
     let fail = |message: String| {
         let _ = tx.unbounded_send(ListEvent::Failed(message));
     };
-    let host = match crate::hosts::current() {
-        Ok(host) => host,
-        Err(error) => return fail(format!("{error:#}")),
-    };
-    let (mut feed, catalog) = match SessionFeed::open(&host, true) {
+    let mut delay = RECONNECT_FIRST;
+    loop {
+        let host = match crate::hosts::current() {
+            Ok(host) => host,
+            Err(error) => return fail(format!("{error:#}")),
+        };
+        let remote = matches!(host, hq_client::Host::Remote(_));
+        let reason = match follow_host(&host, tx) {
+            Followed::Gone => return,
+            Followed::Final(message) => return fail(message),
+            Followed::Failed(message) | Followed::Ended(message) if !remote => {
+                return fail(message);
+            }
+            Followed::Ended(message) => {
+                delay = RECONNECT_FIRST;
+                message
+            }
+            Followed::Failed(message) => message,
+        };
+        if tx.unbounded_send(ListEvent::Reconnecting(reason)).is_err() {
+            return;
+        }
+        let until = Instant::now() + delay;
+        while Instant::now() < until {
+            if tx.is_closed() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        delay = (delay * 2).min(RECONNECT_MOST);
+    }
+}
+
+/// What a failure to reach a remote host means for the owner.
+fn link_failure(error: &anyhow::Error, host: &str) -> Option<String> {
+    match error.downcast_ref::<hq_client::LinkError>()? {
+        hq_client::LinkError::NotKnown => Some(format!(
+            "{host} no longer knows this computer. Pair it again with Connect to a Host."
+        )),
+        mismatch @ hq_client::LinkError::Mismatch { .. } => Some(format!(
+            "{mismatch}. Update the older side so both run the same release."
+        )),
+        _ => None,
+    }
+}
+
+fn follow_host(host: &hq_client::Host, tx: &UnboundedSender<ListEvent>) -> Followed {
+    let name = crate::hosts::shown_name().unwrap_or_else(|| "The host".to_owned());
+    let (mut feed, catalog) = match SessionFeed::open(host, true) {
         Ok(opened) => opened,
-        Err(error) => return fail(format!("cannot reach the Headquarter host: {error:#}")),
+        Err(error) => {
+            if let Some(message) = link_failure(&error, &name) {
+                return Followed::Final(message);
+            }
+            return Followed::Failed(format!("cannot reach the Headquarter host: {error:#}"));
+        }
     };
+    if let hq_client::Host::Remote(link) = host {
+        crate::hosts::remember_address(link);
+        if let Ok(folder) = hq_client::list_folder(host, "")
+            && tx.unbounded_send(ListEvent::Home(folder.home)).is_err()
+        {
+            return Followed::Gone;
+        }
+    }
     if let Ok(control) = feed.control()
         && tx.unbounded_send(ListEvent::Control(control)).is_err()
     {
-        return;
+        return Followed::Gone;
     }
     let all = ListEvent::All {
         sessions: catalog.sessions,
@@ -3323,7 +3508,7 @@ fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
         usage: catalog.usage,
     };
     if tx.unbounded_send(all).is_err() {
-        return;
+        return Followed::Gone;
     }
     loop {
         let event = match feed.next_change() {
@@ -3333,11 +3518,13 @@ fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
             Ok(Some(Change::Details { session, details })) => {
                 ListEvent::Details { session, details }
             }
-            Ok(None) => return fail("the Headquarter host closed the connection".to_owned()),
-            Err(error) => return fail(format!("{error:#}")),
+            Ok(None) => {
+                return Followed::Ended("the Headquarter host closed the connection".to_owned());
+            }
+            Err(error) => return Followed::Ended(format!("{error:#}")),
         };
         if tx.unbounded_send(event).is_err() {
-            return;
+            return Followed::Gone;
         }
     }
 }

@@ -721,7 +721,9 @@ impl Workspace {
     /// The sidebar's Update Now for an installed update: restarts at once when nothing is
     /// busy, otherwise asks first (D2).
     fn restart_when_asked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if update::busy(&self.sessions).is_empty() {
+        // With a remote host on screen only the app restarts, so its sessions are not
+        // this restart's to interrupt (add-remote-desktop-client D8).
+        if crate::hosts::is_remote() || update::busy(&self.sessions).is_empty() {
             self.restart_for_update(window, cx);
         } else {
             self.updates.phase = Phase::Asking;
@@ -745,9 +747,16 @@ impl Workspace {
             .as_ref()
             .map(|installed| installed.app.clone())
             .or_else(this_app);
+        // With a remote host on screen only the app restarts: this computer's host and its
+        // sessions are left as they are, and the app offers to finish the update when it
+        // shows them again (add-remote-desktop-client D8).
+        let stop_local = !crate::hosts::is_remote();
         let task = cx.background_executor().spawn(async move {
             let paths = HostPaths::standard().ok_or("cannot find the home folder")?;
             let app = app.ok_or("cannot tell where this app is")?;
+            if !stop_local {
+                return update::relaunch_after_exit(&app).map_err(|error| format!("{error:#}"));
+            }
             if let Err(error) = hq_client::stop_host(&paths) {
                 return Err(format!("couldn't stop the host: {error:#}"));
             }

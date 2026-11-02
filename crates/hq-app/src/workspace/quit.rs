@@ -49,6 +49,12 @@ impl Workspace {
         if self.quit.is_some() {
             return;
         }
+        // A remote host is never stopped from here: quit the app only, without asking
+        // (add-remote-desktop-client D8).
+        if crate::hosts::is_remote() {
+            Self::keep_running(window, cx);
+            return;
+        }
         self.quit = Some(QuitState::Asking);
         self.quit_return = window.focused(cx);
         window.focus(&self.quit_focus, cx);

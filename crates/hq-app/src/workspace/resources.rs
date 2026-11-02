@@ -684,11 +684,17 @@ impl Workspace {
             .reading
             .as_ref()
             .map(|reading| Totals::of(reading, lines));
+        // With a remote host on screen, the app runs here and the host there
+        // (add-remote-desktop-client D7).
+        let (app_place, host_place) = match crate::hosts::shown_name() {
+            Some(name) => ("app on this computer".to_owned(), format!("host on {name}")),
+            None => ("app".to_owned(), "host".to_owned()),
+        };
         let headquarter_detail = view.reading.as_ref().map_or_else(
             || "Measuring…".to_owned(),
             |reading| {
                 format!(
-                    "app {} · {}, host {} · {}",
+                    "{app_place} {} · {}, {host_place} {} · {}",
                     cpu_text(reading.app.cpu),
                     memory_text(reading.app.memory),
                     cpu_text(reading.host.cpu),

@@ -423,9 +423,12 @@ pub enum Response {
         code: String,
         expires_in_secs: u64,
     },
-    /// The shown code paired the named phone.
+    /// The shown code paired the named device.
     RemotePairUsed {
         device: String,
+        /// A host of protocol 14 leaves it out: it pairs phones only.
+        #[serde(default)]
+        kind: DeviceKind,
     },
     /// The shown code expired, or was voided after wrong guesses.
     RemotePairExpired {
@@ -1207,6 +1210,7 @@ mod tests {
             },
             Response::RemotePairUsed {
                 device: "Pixel 8".into(),
+                kind: DeviceKind::Phone,
             },
             Response::RemotePairExpired {
                 reason: "expired".into(),

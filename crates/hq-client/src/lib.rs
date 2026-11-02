@@ -689,6 +689,52 @@ pub fn close_shell(host: &impl Connect, session: &str) -> Result<()> {
     )
 }
 
+/// A folder's subfolders on the host's computer, and the host's home folder; an empty
+/// `path` lists the home folder (add-remote-desktop-client D7).
+pub struct Folder {
+    pub home: String,
+    pub path: String,
+    pub folders: Vec<String>,
+}
+
+pub fn list_folder(host: &impl Connect, path: &str) -> Result<Folder> {
+    let mut client = host.connect_or_start()?;
+    match expect_ok(client.request(&Request::ListFolder {
+        path: path.to_owned(),
+    })?)? {
+        Response::Folder {
+            home,
+            path,
+            folders,
+        } => Ok(Folder {
+            home,
+            path,
+            folders,
+        }),
+        other => bail!("unexpected answer to list folder: {other:?}"),
+    }
+}
+
+/// Folders under the host's home folder, handed to `send` in batches until it returns
+/// false or the host has walked them all.
+pub fn find_folders(host: &impl Connect, mut send: impl FnMut(Vec<String>) -> bool) -> Result<()> {
+    let mut client = host.connect_or_start()?;
+    client.send(&Request::FindFolders {})?;
+    loop {
+        match expect_ok(client.next_response()?)? {
+            Response::FoundFolders { folders, done } => {
+                if !folders.is_empty() && !send(folders) {
+                    return Ok(());
+                }
+                if done {
+                    return Ok(());
+                }
+            }
+            other => bail!("unexpected answer to find folders: {other:?}"),
+        }
+    }
+}
+
 /// Turns an error response into an error for the caller.
 pub fn expect_ok(response: Response) -> Result<Response> {
     match response {

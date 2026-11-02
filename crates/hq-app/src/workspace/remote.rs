@@ -13,7 +13,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use hq_client::HostPaths;
-use hq_protocol::{RemoteDevice, Request, Response};
+use hq_protocol::{DeviceKind, RemoteDevice, Request, Response};
 
 use super::{Pane, Workspace, overlay};
 use crate::terminal::view::hsla;
@@ -74,7 +74,7 @@ enum Pairing {
         holder: hq_client::Writer,
         _countdown: Task<()>,
     },
-    Paired(String),
+    Paired(String, DeviceKind),
     Ended(String),
 }
 
@@ -89,6 +89,17 @@ impl Pairing {
 impl Workspace {
     pub(super) fn open_remote_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.remote_window.is_some() {
+            return;
+        }
+        // Remote control belongs to this computer's host (add-remote-desktop-client D8).
+        if crate::hosts::is_remote() {
+            let local = super::hosts::this_computer();
+            self.show_notice(
+                format!("Remote Control pairs devices with this computer's host. Switch to {local} to use it."),
+                false,
+                window,
+                cx,
+            );
             return;
         }
         let refresh = cx.spawn_in(window, async move |this, cx| {
@@ -251,7 +262,7 @@ impl Workspace {
         let outcome = cx.background_executor().spawn(async move {
             loop {
                 match client.next_response() {
-                    Ok(Response::RemotePairUsed { device }) => return Ok(device),
+                    Ok(Response::RemotePairUsed { device, kind }) => return Ok((device, kind)),
                     Ok(Response::RemotePairExpired { reason }) => return Err(reason),
                     Ok(_) => continue,
                     Err(_) => return Err(String::new()),
@@ -268,7 +279,7 @@ impl Workspace {
                     return;
                 }
                 remote.pairing = match ended {
-                    Ok(device) => Pairing::Paired(device),
+                    Ok((device, kind)) => Pairing::Paired(device, kind),
                     // Withdrawn by Cancel or Close: nothing to say.
                     Err(reason) if reason.is_empty() => Pairing::Idle,
                     Err(reason) => Pairing::Ended(reason),
@@ -412,16 +423,17 @@ impl Workspace {
         let pairing = match &remote.pairing {
             Pairing::Idle | Pairing::Ended(_) => {
                 let detail = match &remote.pairing {
-                    Pairing::Ended(reason) => format!("No phone paired: {reason}"),
-                    _ => "Shows a QR code for Headquarter on your phone; it works once, for 2 minutes."
+                    Pairing::Ended(reason) => format!("Nothing paired: {reason}"),
+                    _ => "Shows a code for Headquarter on your phone (QR) or on another computer \
+                          (Connect to a Host); it works once, for 2 minutes."
                         .to_owned(),
                 };
                 card().child(
-                    item().child(lines("Pair a phone".into(), detail)).child(
+                    item().child(lines("Pair a phone or computer".into(), detail)).child(
                         Button::new("remote-pair")
                             .primary()
                             .w(px(BUTTON_WIDTH))
-                            .label("Pair a Phone")
+                            .label("Pair")
                             .on_click(cx.listener(|this, _, window, cx| this.pair_phone(window, cx))),
                     ),
                 )
@@ -454,7 +466,7 @@ impl Workspace {
                                 .child(
                                     div()
                                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .child("Scan with Headquarter on your phone"),
+                                        .child("Scan with Headquarter on your phone, or copy the code into Connect to a Host on another computer"),
                                 )
                                 .child(
                                     div()
@@ -474,25 +486,48 @@ impl Workspace {
                                         .font_family(self.options.font_family.clone())
                                         .child(code.clone()),
                                 )
-                                .child(
-                                    div().child(
-                                        Button::new("remote-cancel")
-                                            .w(px(BUTTON_WIDTH))
-                                            .label("Cancel")
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| this.cancel_pairing(cx)),
-                                            ),
-                                    ),
-                                ),
+                                .child({
+                                    let copy = code.clone();
+                                    div()
+                                        .flex()
+                                        .gap(px(8.))
+                                        .child(
+                                            Button::new("remote-copy-code")
+                                                .w(px(BUTTON_WIDTH))
+                                                .label("Copy Code")
+                                                .on_click(cx.listener(move |this, _, window, cx| {
+                                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                                        copy.clone(),
+                                                    ));
+                                                    this.show_notice(
+                                                        "Code copied. Paste it into Connect to a Host on the other computer.".into(),
+                                                        false,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("remote-cancel")
+                                                .w(px(BUTTON_WIDTH))
+                                                .label("Cancel")
+                                                .on_click(
+                                                    cx.listener(|this, _, _, cx| this.cancel_pairing(cx)),
+                                                ),
+                                        )
+                                }),
                         ),
                 )
             }
-            Pairing::Paired(device) => card().child(
+            Pairing::Paired(device, kind) => card().child(
                 item()
                     .child(lines(
                         format!("✓ Paired {device}"),
-                        "It can open your sessions and type into them, but not start, rename or close them."
-                            .into(),
+                        match kind {
+                            DeviceKind::Phone => "It can open your sessions and type into them, but not start, rename or close them.",
+                            DeviceKind::Desktop => "It can do what this app does with your sessions, but not stop the host or pair devices.",
+                        }
+                        .into(),
                     ))
                     .child(
                         Button::new("remote-paired")
@@ -559,7 +594,7 @@ impl Workspace {
         let mut phones = card();
         if remote.devices.is_empty() {
             phones =
-                phones.child(item().child(div().text_color(muted).child("No phones paired yet.")));
+                phones.child(item().child(div().text_color(muted).child("Nothing paired yet.")));
         }
         for (index, device) in remote.devices.iter().enumerate() {
             let seen = if device.connected {
@@ -580,7 +615,16 @@ impl Workspace {
                         row.border_t_1().border_color(hsla(chrome.sidebar_line))
                     })
                     .child(dot(device.connected))
-                    .child(lines(device.name.clone(), seen))
+                    .child(lines(
+                        device.name.clone(),
+                        format!(
+                            "{} · {seen}",
+                            match device.kind {
+                                DeviceKind::Phone => "Phone",
+                                DeviceKind::Desktop => "Computer",
+                            }
+                        ),
+                    ))
                     .child(
                         Button::new(gpui::SharedString::from(format!("remote-remove-{index}")))
                             .danger()
@@ -609,7 +653,7 @@ impl Workspace {
                         div()
                             .text_size(px(12.5))
                             .text_color(muted)
-                            .child("Control Headquarter from your phone"),
+                            .child("Control Headquarter from your phone or another computer"),
                     ),
             )
             .child(
@@ -628,7 +672,7 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(heading("PAIR A PHONE"))
+                    .child(heading("PAIR A PHONE OR COMPUTER"))
                     .child(pairing),
             )
             .child(
@@ -636,7 +680,7 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(heading("PAIRED PHONES"))
+                    .child(heading("PAIRED DEVICES"))
                     .child(phones),
             )
             .children(

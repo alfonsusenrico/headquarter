@@ -117,6 +117,12 @@ pub fn shown() -> Shown {
     }
 }
 
+/// Whether this computer runs a host the app can show. On Windows it never does: the
+/// app there is a client of remote hosts only (add-windows-client D2).
+pub fn has_local_host() -> bool {
+    cfg!(unix)
+}
+
 /// Whether a paired host on another computer is on screen.
 pub fn is_remote() -> bool {
     shown() != Shown::Local

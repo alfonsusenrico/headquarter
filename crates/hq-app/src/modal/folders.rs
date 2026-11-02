@@ -1,10 +1,108 @@
 //! The folder browser shared by both session windows (redesign-session-modal D6):
 //! folder names only, read when shown and never stored.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 pub use hq_discovery::folders::{MAX_FOUND, subfolders, walk};
+
+/// Where the browser reads folders: this computer, or the remote host on screen, whose
+/// answers arrive later (add-remote-desktop-client D7).
+#[derive(Clone, Default)]
+pub enum Source {
+    #[default]
+    Local,
+    Remote(Rc<RemoteFolders>),
+}
+
+impl std::fmt::Debug for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Source::Local => f.write_str("Local"),
+            Source::Remote(_) => f.write_str("Remote"),
+        }
+    }
+}
+
+impl PartialEq for Source {
+    fn eq(&self, other: &Source) -> bool {
+        match (self, other) {
+            (Source::Local, Source::Local) => true,
+            (Source::Remote(a), Source::Remote(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Source {}
+
+/// A folder's subfolders, or why it could not be read (`None`: it does not exist).
+pub type FolderAnswer = Result<Vec<String>, Option<String>>;
+
+/// A remote host's folders as far as it has answered, and the folders asked for since.
+#[derive(Default)]
+pub struct RemoteFolders {
+    answers: RefCell<HashMap<PathBuf, FolderAnswer>>,
+    wanted: RefCell<Vec<PathBuf>>,
+}
+
+impl RemoteFolders {
+    /// Folders a listing needed that the host has not answered yet; each is asked once.
+    pub fn take_wanted(&self) -> Vec<PathBuf> {
+        std::mem::take(&mut *self.wanted.borrow_mut())
+    }
+
+    pub fn answer(&self, folder: PathBuf, answer: FolderAnswer) {
+        self.answers.borrow_mut().insert(folder, answer);
+    }
+
+    fn ask(&self, folder: &Path) {
+        let mut wanted = self.wanted.borrow_mut();
+        if !wanted.iter().any(|known| known == folder) {
+            wanted.push(folder.to_path_buf());
+        }
+    }
+}
+
+impl Source {
+    fn subfolders(&self, folder: &Path) -> io::Result<Vec<String>> {
+        match self {
+            Source::Local => subfolders(folder),
+            Source::Remote(remote) => {
+                let answers = remote.answers.borrow();
+                match answers.get(folder) {
+                    Some(Ok(names)) => Ok(names.clone()),
+                    Some(Err(None)) => Err(io::ErrorKind::NotFound.into()),
+                    Some(Err(Some(reason))) => Err(io::Error::other(reason.clone())),
+                    None => {
+                        drop(answers);
+                        remote.ask(folder);
+                        Err(io::ErrorKind::WouldBlock.into())
+                    }
+                }
+            }
+        }
+    }
+
+    fn is_dir(&self, path: &Path) -> bool {
+        match self {
+            Source::Local => path.is_dir(),
+            Source::Remote(remote) => {
+                let known = remote.answers.borrow().get(path).map(Result::is_ok);
+                match known {
+                    Some(folder) => folder,
+                    None => {
+                        remote.ask(path);
+                        false
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderRow {
@@ -86,6 +184,11 @@ pub fn up_text(text: &str, home: &Path) -> Option<String> {
 /// subfolders, or, while its last part is half typed, the folders starting with it; a
 /// bare name lists the matching folders from `found`, shortest first.
 pub fn list(text: &str, home: &Path, found: &[PathBuf]) -> Listing {
+    list_in(&Source::Local, text, home, found)
+}
+
+/// [`list`] reading folders from `source`.
+pub fn list_in(source: &Source, text: &str, home: &Path, found: &[PathBuf]) -> Listing {
     let text = text.trim();
     let text = if text.is_empty() { "~/" } else { text };
     if !is_path(text) {
@@ -98,8 +201,8 @@ pub fn list(text: &str, home: &Path, found: &[PathBuf]) -> Listing {
         };
     }
     let path = expand(text, home);
-    if text.ends_with('/') || path.is_dir() {
-        return match subfolders(&path) {
+    if text.ends_with('/') || source.is_dir(&path) {
+        return match source.subfolders(&path) {
             Ok(names) => Listing {
                 rows: std::iter::once(FolderRow::Here(path.clone()))
                     .chain(
@@ -114,6 +217,11 @@ pub fn list(text: &str, home: &Path, found: &[PathBuf]) -> Listing {
                 rows: Vec::new(),
                 problem: Some(format!("No folder {}", shown(&path, home))),
             },
+            // The remote host has not answered yet.
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Listing {
+                rows: vec![FolderRow::Here(path.clone())],
+                problem: Some("Reading the host's folders…".to_owned()),
+            },
             Err(error) => Listing {
                 rows: vec![FolderRow::Here(path.clone())],
                 problem: Some(format!("Cannot read {}: {error}", shown(&path, home))),
@@ -124,7 +232,8 @@ pub fn list(text: &str, home: &Path, found: &[PathBuf]) -> Listing {
         return Listing::default();
     };
     let start = start.to_string_lossy().to_lowercase();
-    let rows = subfolders(parent)
+    let rows = source
+        .subfolders(parent)
         .unwrap_or_default()
         .into_iter()
         .filter(|name| name.to_lowercase().starts_with(&start))
@@ -300,6 +409,36 @@ mod tests {
         let (_root, home) = tree("empty");
         let rows = shown_rows(&list("", &home, &[]), &home);
         assert_eq!(rows, ["here ~", "~/code", "~/Library", "~/work"]);
+    }
+
+    #[test]
+    fn a_remote_hosts_folders_list_once_it_answers() {
+        let remote = Rc::new(RemoteFolders::default());
+        let source = Source::Remote(Rc::clone(&remote));
+        let home = Path::new("/home/me");
+        let waiting = list_in(&source, "~/", home, &[]);
+        assert_eq!(
+            waiting.problem.as_deref(),
+            Some("Reading the host's folders…")
+        );
+        assert_eq!(remote.take_wanted(), [home.to_path_buf()]);
+        assert!(remote.take_wanted().is_empty(), "asked once");
+        remote.answer(home.to_path_buf(), Ok(vec!["code".into(), "notes".into()]));
+        let listed = list_in(&source, "~/", home, &[]);
+        assert_eq!(listed.problem, None);
+        assert_eq!(
+            listed.rows,
+            [
+                FolderRow::Here(home.to_path_buf()),
+                FolderRow::Sub(home.join("code")),
+                FolderRow::Sub(home.join("notes")),
+            ]
+        );
+        remote.answer(home.join("gone"), Err(None));
+        assert_eq!(
+            list_in(&source, "~/gone/", home, &[]).problem.as_deref(),
+            Some("No folder ~/gone")
+        );
     }
 
     #[test]
