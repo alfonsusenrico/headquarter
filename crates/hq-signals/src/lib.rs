@@ -9,6 +9,8 @@ pub mod codex_server;
 pub mod details;
 pub mod event;
 pub mod external;
+// Hooks reach the host over its Unix socket; the host runs on Unix only.
+#[cfg(unix)]
 pub mod forward;
 pub mod helpers;
 pub mod history;

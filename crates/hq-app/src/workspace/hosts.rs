@@ -46,7 +46,11 @@ pub(super) fn this_computer() -> &'static str {
 impl Workspace {
     /// The name of the host on screen.
     pub(super) fn host_name_shown(&self) -> String {
-        hosts::shown_name().unwrap_or_else(|| this_computer().to_owned())
+        match hosts::shown_name() {
+            Some(name) => name,
+            None if hosts::has_local_host() => this_computer().to_owned(),
+            None => "No host yet".to_owned(),
+        }
     }
 
     /// Shows `shown` instead of the host on screen: the terminals close and the sidebar

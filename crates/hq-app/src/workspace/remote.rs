@@ -12,7 +12,7 @@ use gpui::{
     Task, Window, canvas, div, fill, point, px, size,
 };
 use gpui_component::button::{Button, ButtonVariants};
-use hq_client::HostPaths;
+use hq_client::Host;
 use hq_protocol::{DeviceKind, RemoteDevice, Request, Response};
 
 use super::{Pane, Workspace, overlay};
@@ -91,6 +91,17 @@ impl Workspace {
         if self.remote_window.is_some() {
             return;
         }
+        // Remote control belongs to the host it pairs with; this computer may run none
+        // (add-windows-client D2).
+        if !crate::hosts::has_local_host() {
+            self.show_notice(
+                "This computer runs no Headquarter host. Show pairing codes on the host: Remote Control there, or `hq remote pair` on a server.".to_owned(),
+                false,
+                window,
+                cx,
+            );
+            return;
+        }
         // Remote control belongs to this computer's host (add-remote-desktop-client D8).
         if crate::hosts::is_remote() {
             let local = super::hosts::this_computer();
@@ -152,13 +163,12 @@ impl Workspace {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        call: impl FnOnce(&HostPaths) -> anyhow::Result<R> + Send + 'static,
+        call: impl FnOnce(&Host) -> anyhow::Result<R> + Send + 'static,
         done: impl FnOnce(&mut Self, R, &mut Window, &mut Context<Self>) + 'static,
     ) {
         let task = cx.background_executor().spawn(async move {
-            let paths = HostPaths::standard()
-                .ok_or_else(|| anyhow::anyhow!("cannot find the home folder"))?;
-            call(&paths)
+            let host = crate::hosts::local()?;
+            call(&host)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -181,9 +191,9 @@ impl Workspace {
         self.remote_call(
             window,
             cx,
-            |paths| {
-                let status = hq_client::remote(paths, &Request::RemoteStatus {})?;
-                let devices = hq_client::remote(paths, &Request::RemoteDevices {})?;
+            |host| {
+                let status = hq_client::remote(host, &Request::RemoteStatus {})?;
+                let devices = hq_client::remote(host, &Request::RemoteDevices {})?;
                 Ok((status, devices))
             },
             |this, (status, devices), _, cx| {
@@ -219,9 +229,8 @@ impl Workspace {
         remote.pairing = Pairing::Asking;
         cx.notify();
         let task = cx.background_executor().spawn(async move {
-            let paths = HostPaths::standard()
-                .ok_or_else(|| anyhow::anyhow!("cannot find the home folder"))?;
-            hq_client::begin_pairing(&paths)
+            let host = crate::hosts::local()?;
+            hq_client::begin_pairing(&host)
         });
         cx.spawn_in(window, async move |this, cx| {
             let begun = task.await;
@@ -328,7 +337,7 @@ impl Workspace {
         self.remote_call(
             window,
             cx,
-            move |paths| hq_client::remote(paths, &Request::RemoteRemove { device: id }),
+            move |host| hq_client::remote(host, &Request::RemoteRemove { device: id }),
             |this, _, window, cx| this.refresh_remote(window, cx),
         );
     }

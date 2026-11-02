@@ -14,7 +14,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::scroll::Scrollbar;
-use hq_client::HostPaths;
+use hq_client::Connect;
 
 use super::{Pane, Workspace, overlay};
 use crate::terminal::view::hsla;
@@ -216,8 +216,8 @@ impl Workspace {
             if crate::hosts::is_remote() {
                 return None;
             }
-            let paths = HostPaths::standard()?;
-            hq_client::host_version(&paths).ok()
+            let host = crate::hosts::local().ok()?;
+            hq_client::host_version(&host).ok()
         });
         cx.spawn_in(window, async move |this, cx| {
             let Some(host) = task.await.as_deref().and_then(Version::parse) else {
@@ -752,16 +752,16 @@ impl Workspace {
         // shows them again (add-remote-desktop-client D8).
         let stop_local = !crate::hosts::is_remote();
         let task = cx.background_executor().spawn(async move {
-            let paths = HostPaths::standard().ok_or("cannot find the home folder")?;
             let app = app.ok_or("cannot tell where this app is")?;
             if !stop_local {
                 return update::relaunch_after_exit(&app).map_err(|error| format!("{error:#}"));
             }
-            if let Err(error) = hq_client::stop_host(&paths) {
+            let host = crate::hosts::local().map_err(|error| format!("{error:#}"))?;
+            if let Err(error) = hq_client::stop_host(&host) {
                 return Err(format!("couldn't stop the host: {error:#}"));
             }
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            while std::os::unix::net::UnixStream::connect(&paths.control_socket).is_ok() {
+            while host.connect().is_ok() {
                 if std::time::Instant::now() >= deadline {
                     return Err("the host did not stop within 10 seconds".to_owned());
                 }

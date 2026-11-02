@@ -3422,7 +3422,6 @@ name = "hq-client"
 version = "0.1.24"
 dependencies = [
  "anyhow",
- "hq-daemon",
  "hq-protocol",
  "hq-remote",
  "hq-signals",

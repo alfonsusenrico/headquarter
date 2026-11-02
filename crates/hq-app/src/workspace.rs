@@ -497,6 +497,11 @@ impl Workspace {
         }
         workspace.apply_settings(window, cx);
         window.focus(&workspace.sidebar_focus, cx);
+        // Without a host here, the first launch starts at Connect to a Host
+        // (add-windows-client D2).
+        if !crate::hosts::has_local_host() && crate::hosts::known().is_empty() {
+            workspace.open_connect_window(window, cx);
+        }
         workspace
     }
 
@@ -3016,7 +3021,10 @@ impl Workspace {
             }
             Pane::Empty if !self.listed => {
                 let waiting = if crate::hosts::is_remote() {
-                    format!("Connecting to {}…", self.host_name_shown())
+                    match crate::hosts::shown_name() {
+                        Some(name) => format!("Connecting to {name}…"),
+                        None => "Connect to a host to see its sessions.".to_owned(),
+                    }
                 } else {
                     "Starting Headquarter…".to_owned()
                 };

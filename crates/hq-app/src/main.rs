@@ -36,9 +36,11 @@ fn main() {
             menus::install(cx);
             // A build without a platform text system draws no text and says nothing; make
             // that loud (the `font-kit` feature on macOS).
-            if cx.text_system().all_font_names().is_empty() {
+            let fonts = cx.text_system().all_font_names();
+            if fonts.is_empty() {
                 eprintln!("headquarter-app: no fonts available; text will not be drawn");
             }
+            terminal::view::choose_default_font(&fonts);
             // Read once here for the window's background; the workspace reads again.
             let (appearance, _) = settings::read(&mut settings::watcher(), None);
             let bounds = kept_bounds(cx)

@@ -9,7 +9,7 @@ use gpui::{
     Styled, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
-use hq_client::HostPaths;
+use hq_client::Connect;
 
 use super::{Workspace, overlay};
 use crate::terminal::view::hsla;
@@ -62,9 +62,10 @@ impl Workspace {
         // (remote-follows-paired-phones D1), so the host knows, not the settings file.
         self.remote_on = false;
         let status = cx.background_executor().spawn(async move {
-            let paths = HostPaths::standard()?;
-            std::os::unix::net::UnixStream::connect(&paths.control_socket).ok()?;
-            match hq_client::remote(&paths, &hq_protocol::Request::RemoteStatus {}) {
+            let host = crate::hosts::local().ok()?;
+            // Only a running host: asking would start one.
+            host.connect().ok()?;
+            match hq_client::remote(&host, &hq_protocol::Request::RemoteStatus {}) {
                 Ok(hq_protocol::Response::RemoteStatus { running, .. }) => Some(running),
                 _ => None,
             }
@@ -106,13 +107,13 @@ impl Workspace {
         self.quit = Some(QuitState::Stopping);
         cx.notify();
         let task = cx.background_executor().spawn(async move {
-            let paths = HostPaths::standard().ok_or("cannot find the home folder")?;
-            if std::os::unix::net::UnixStream::connect(&paths.control_socket).is_err() {
+            let host = crate::hosts::local().map_err(|error| format!("{error:#}"))?;
+            if host.connect().is_err() {
                 return Ok(());
             }
-            hq_client::stop_host(&paths).map_err(|error| format!("{error:#}"))?;
+            hq_client::stop_host(&host).map_err(|error| format!("{error:#}"))?;
             let deadline = Instant::now() + HOST_STOP_WAIT;
-            while std::os::unix::net::UnixStream::connect(&paths.control_socket).is_ok() {
+            while host.connect().is_ok() {
                 if Instant::now() >= deadline {
                     return Err("the host did not stop within 10 seconds".to_owned());
                 }
