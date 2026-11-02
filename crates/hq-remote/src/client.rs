@@ -442,41 +442,6 @@ async fn handshake(
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_client_key_is_private_and_kept() {
-        let dir = std::env::temp_dir().join(format!("hq-client-key-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let path = dir.join("client.key");
-        let first = client_key(&path).unwrap();
-        #[cfg(unix)]
-        {
-            let mode = std::fs::metadata(&path).unwrap().permissions();
-            assert_eq!(
-                std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777,
-                0o600
-            );
-        }
-        assert_eq!(client_key(&path).unwrap().public(), first.public(), "kept");
-        std::fs::write(&path, b"short").unwrap();
-        assert!(client_key(&path).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_host_address_round_trips_through_a_code() {
-        let key = SecretKey::generate();
-        let code = PairingCode::new(key.public(), None, vec!["127.0.0.1:4000".parse().unwrap()]);
-        let address = HostAddress::from_code(&code);
-        assert_eq!(address.id, key.public().to_string());
-        let addr = address.endpoint_addr().unwrap();
-        assert_eq!(addr.id, key.public());
-    }
-}
-
 fn stream(handle: &Handle, send: SendStream, recv: RecvStream) -> (Reader, Writer) {
     (
         Reader {
@@ -528,5 +493,40 @@ impl Writer {
     /// Ends the stream: the host's client on it goes away, and the reader then ends.
     pub fn finish(&mut self) {
         let _ = self.send.finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_client_key_is_private_and_kept() {
+        let dir = std::env::temp_dir().join(format!("hq-client-key-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("client.key");
+        let first = client_key(&path).unwrap();
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(&path).unwrap().permissions();
+            assert_eq!(
+                std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777,
+                0o600
+            );
+        }
+        assert_eq!(client_key(&path).unwrap().public(), first.public(), "kept");
+        std::fs::write(&path, b"short").unwrap();
+        assert!(client_key(&path).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_host_address_round_trips_through_a_code() {
+        let key = SecretKey::generate();
+        let code = PairingCode::new(key.public(), None, vec!["127.0.0.1:4000".parse().unwrap()]);
+        let address = HostAddress::from_code(&code);
+        assert_eq!(address.id, key.public().to_string());
+        let addr = address.endpoint_addr().unwrap();
+        assert_eq!(addr.id, key.public());
     }
 }
