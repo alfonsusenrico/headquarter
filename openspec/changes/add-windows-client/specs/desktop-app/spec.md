@@ -5,7 +5,7 @@ On Windows the app SHALL be a client of remote hosts only: it SHALL open at Conn
 
 #### Scenario: First launch on Windows
 - **WHEN** the owner opens the app on Windows for the first time
-- **THEN** it shows Connect to a Host, and after a valid code it shows that host's sessions
+- **THEN** setup asks only how the app should look (no agents step), then Connect to a Host opens, and after a valid code the app shows that host's sessions
 
 #### Scenario: No local host
 - **WHEN** the owner opens the host switcher on Windows
