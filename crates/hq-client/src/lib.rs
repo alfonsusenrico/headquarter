@@ -13,9 +13,12 @@ use std::path::Path;
 #[cfg(unix)]
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::{Result, anyhow, bail};
 use hq_protocol::{
     AgentUsage, ErrorCode, Footprint, Frame, GroupColor, GroupInfo, PROTOCOL_VERSION, RemoveWay,
     Request, Response, SessionFootprint, SessionInfo, host_protocol_in_refusal, read_frame,
@@ -802,7 +805,8 @@ fn start_host() -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+// Both tests talk over a Unix socket pair.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use hq_protocol::{External, Origin};
@@ -839,7 +843,6 @@ mod tests {
     /// Answers like the host, with the outside scan linking the row to a process in
     /// another terminal right after the list is answered. Like the host, it tells only
     /// subscribed connections about the change.
-    #[cfg(unix)]
     fn host_linking_after_the_list(stream: UnixStream) {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut writer = stream;
@@ -874,7 +877,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_change_while_the_feed_opens_is_not_lost() {
         let (near, far) = UnixStream::pair().unwrap();
