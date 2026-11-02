@@ -685,7 +685,11 @@ impl Setup {
                 div()
                     .text_size(px(13.))
                     .text_color(hsla(chrome.muted))
-                    .child("Change it any time with Themes (⌘G)."),
+                    .child(if cfg!(target_os = "macos") {
+                        "Change it any time with Themes (⌘G)."
+                    } else {
+                        "Change it any time with Themes (Ctrl-Shift-G)."
+                    }),
             )
             .into_any_element()
     }
