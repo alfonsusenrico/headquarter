@@ -119,10 +119,20 @@ pub fn shown() -> Shown {
     }
 }
 
-/// Whether this computer runs a host the app can show. On Windows it never does: the
-/// app there is a client of remote hosts only (add-windows-client D2).
+/// Whether this computer runs a host the app can show: its `hq` is installed here
+/// (split-host-and-app-install D3). On Windows it never is: the app there is a client of
+/// remote hosts only (add-windows-client D2). Read once; installing changes it only
+/// across a restart, which the updater does.
 pub fn has_local_host() -> bool {
-    cfg!(unix)
+    #[cfg(unix)]
+    {
+        static INSTALLED: OnceLock<bool> = OnceLock::new();
+        *INSTALLED.get_or_init(|| hq_client::host_binary().is_some())
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
 }
 
 /// Whether no host is on screen at all: a computer without a host of its own that has
@@ -208,9 +218,12 @@ pub fn current() -> Result<Host> {
     Ok(Host::Remote(link))
 }
 
-/// This computer's host.
+/// This computer's host, when it is installed here.
 #[cfg(unix)]
 pub fn local() -> Result<Host> {
+    if !has_local_host() {
+        return Err(anyhow!(NO_HOST_YET));
+    }
     HostPaths::standard()
         .map(Host::Local)
         .ok_or_else(|| anyhow!("cannot find the home folder"))
@@ -224,7 +237,6 @@ pub fn local() -> Result<Host> {
 }
 
 /// Said where the sessions would be when no host is on screen yet.
-#[cfg(not(unix))]
 pub const NO_HOST_YET: &str = "Connect to a host to see its sessions.";
 
 /// Remembers where a paired host was last reached, after its gateway named its relay.

@@ -29,6 +29,12 @@ use std::time::Duration;
 use gpui::{AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, px, size};
 
 fn main() {
+    // The installer reads an app-only download's version this way
+    // (split-host-and-app-install D2).
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("headquarter-app {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     app_log::init();
     let quit_after = quit_after_from_args();
     gpui_platform::application()

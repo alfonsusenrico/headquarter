@@ -39,7 +39,8 @@ case ${1:-} in
 esac
 EOF
 cp "$root/pack/hq-cli-$target/hq" "$root/pack/hq-cli-$target/headquarter"
-printf '#!/bin/sh\necho app\n' >"$root/pack/hq-app-$target/headquarter-app"
+printf '#!/bin/sh\ncase ${1:-} in --version) echo "headquarter-app 9.8.7" ;; *) echo app ;; esac\n' \
+  >"$root/pack/hq-app-$target/headquarter-app"
 chmod 755 "$root/pack/hq-cli-$target/hq" "$root/pack/hq-cli-$target/headquarter" \
   "$root/pack/hq-app-$target/headquarter-app"
 cp "$repo/assets/icon/Headquarter.icns" "$root/pack/hq-app-$target/"
@@ -49,6 +50,10 @@ for package in hq-cli hq-app; do
   tar -czf "$release/$archive" -C "$root/pack" "$package-$target"
   (cd "$release" && sha256 "$archive" >"$archive.sha256")
 done
+
+# Service files are written, never started: nothing here may reach this computer's own
+# launchd or systemd.
+export HQ_SERVICE=files
 
 run() {
   HOME=$1 HQ_INSTALL_FROM=$2 PATH=/usr/bin:/bin:/usr/sbin:/sbin \
@@ -74,7 +79,8 @@ check "no progress lines unless asked" '! grep -q "^progress " "$home/out"'
 check "no notes unless asked" '! grep -q "^note " "$home/out"'
 if [ "$(uname -s)" = Darwin ]; then
   app=$home/Applications/Headquarter.app
-  check "bundle assembled" '[ -x "$app/Contents/MacOS/headquarter-app" ] && [ -x "$app/Contents/MacOS/hq" ] && [ -f "$app/Contents/Resources/Headquarter.icns" ]'
+  check "bundle assembled" '[ -x "$app/Contents/MacOS/headquarter-app" ] && [ -f "$app/Contents/Resources/Headquarter.icns" ]'
+  check "bundle carries no hq" '[ ! -e "$app/Contents/MacOS/hq" ]'
   check "bundle version" 'grep -q "<string>9.8.7</string>" "$app/Contents/Info.plist"'
   check "bundle signed" 'codesign --verify --deep --strict "$app" 2>/dev/null'
   keychain=$home/.local/share/headquarter/signing.keychain-db
@@ -89,7 +95,9 @@ else
   check "icons" '[ -f "$home/.local/share/icons/hicolor/256x256/apps/headquarter.png" ]'
   check "menu entry names the window class" 'grep -q "^StartupWMClass=headquarter$" "$home/.local/share/applications/headquarter.desktop"'
 fi
-check "manifest lists only home paths" '! grep -v "^$home/" "$home/.local/share/headquarter/install-manifest"'
+check "manifest lists only home paths" '! grep -v -e "^$home/" -e "^parts=" "$home/.local/share/headquarter/install-manifest"'
+check "manifest records both parts" '[ "$(head -n 1 "$home/.local/share/headquarter/install-manifest")" = parts=host,app ]'
+check "no service for a full install" '[ ! -e "$home/Library/LaunchAgents" ] && [ ! -e "$home/.config/systemd" ]'
 
 # A second run updates in place, as the app's updater runs it, with progress lines.
 check "reinstall succeeds" 'run_with_progress "$home" "$release"'
@@ -103,7 +111,7 @@ fi
 
 # Uninstall.
 echo session-data >"$home/.local/share/headquarter/state.db"
-manifest=$(cat "$home/.local/share/headquarter/install-manifest")
+manifest=$(grep -v "^parts=" "$home/.local/share/headquarter/install-manifest")
 check "uninstall succeeds" 'run "$home" "$release" --uninstall'
 check "host stopped first" '[ -f "$home/hq-stopped" ]'
 for path in $manifest; do
@@ -112,6 +120,42 @@ done
 check "settings kept" '[ -f "$home/.config/headquarter/config.toml" ]'
 check "data kept" '[ -f "$home/.local/share/headquarter/state.db" ]'
 check "folders named" 'grep -q "settings and sessions stay in" "$home/out"'
+
+# Host only, as on a server: no app, a service file, the parts kept on a rerun, then a
+# change to app only and back to both.
+server=$root/server
+mkdir -p "$server"
+server_manifest=$server/.local/share/headquarter/install-manifest
+if [ "$(uname -s)" = Darwin ]; then
+  service=$server/Library/LaunchAgents/io.github.alfonsusenrico.headquarter.host.plist
+  server_app=$server/Applications/Headquarter.app
+else
+  service=$server/.config/systemd/user/headquarter-host.service
+  server_app=$server/.local/bin/headquarter-app
+fi
+check "host-only install succeeds" 'run "$server" "$release" --host-only'
+check "host only: hq installed" '[ -x "$server/.local/bin/hq" ]'
+check "host only: no app" '[ ! -e "$server_app" ]'
+check "host only: says so" 'grep -q "Installed the Headquarter 9.8.7 host." "$server/out"'
+check "host only: names pairing" 'grep -q "hq remote pair" "$server/out"'
+check "host only: parts recorded" '[ "$(head -n 1 "$server_manifest")" = parts=host ]'
+check "host only: service runs hq daemon" 'grep -q "$server/.local/bin/hq" "$service" && grep -q daemon "$service"'
+check "host only: service has the home folder" 'grep -q "HOME" "$service"'
+check "host only: service recorded" 'grep -qxF "$service" "$server_manifest"'
+check "host only: no signing keychain" '[ ! -e "$server/.local/share/headquarter/signing.keychain-db" ]'
+check "rerun keeps host only" 'run "$server" "$release" && [ "$(head -n 1 "$server_manifest")" = parts=host ] && [ ! -e "$server_app" ]'
+check "rerun says how to switch the running host" 'grep -q "To switch now, run: hq stop" "$server/out"'
+rm -f "$server/hq-stopped"
+check "app-only install succeeds" 'run "$server" "$release" --app-only'
+check "app only: version read from the app" 'grep -q "Installed the Headquarter 9.8.7 app." "$server/out"'
+check "app only: host stopped first" '[ -f "$server/hq-stopped" ]'
+check "app only: hq removed" '[ ! -e "$server/.local/bin/hq" ] && [ ! -e "$server/.local/bin/headquarter" ]'
+check "app only: service removed" '[ ! -e "$service" ]'
+check "app only: app installed" '[ -e "$server_app" ]'
+check "app only: parts recorded" '[ "$(head -n 1 "$server_manifest")" = parts=app ]'
+check "full again" 'run "$server" "$release" --full && [ -x "$server/.local/bin/hq" ] && [ -e "$server_app" ] && [ ! -e "$service" ]'
+check "full again: parts recorded" '[ "$(head -n 1 "$server_manifest")" = parts=host,app ]'
+check "unknown option refused" '! run "$server" "$release" --both && grep -q "use --host-only, --app-only, --full or --uninstall" "$server/out"'
 
 # A checksum mismatch installs nothing.
 bad=$root/bad
