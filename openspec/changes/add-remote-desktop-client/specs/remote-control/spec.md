@@ -43,3 +43,10 @@ The system SHALL list a host folder's subfolders for the desktop app, leaving hi
 #### Scenario: Phone asks for a folder
 - **WHEN** a paired phone asks for a folder listing
 - **THEN** the host refuses it and the phone stays connected
+
+### Requirement: A device's own use of a session
+The system SHALL name the paired device using a session to the host's other clients, and SHALL leave that name out of what it sends to the device itself.
+
+#### Scenario: Desktop opens a server session
+- **WHEN** a paired desktop opens a session on the server
+- **THEN** the server's own app marks the session as in use on that desktop, and the desktop's sidebar shows no such mark for it

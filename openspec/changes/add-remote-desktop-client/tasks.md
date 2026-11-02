@@ -20,16 +20,17 @@ Done: host test `the_client_works_over_a_remote_link_and_dials_again` (pair, fee
 
 ## 3. App
 
-- [ ] 3.1 Client key and `hosts.json` (D5). Evidence: unit tests (mode 600, unknown fields kept).
-- [ ] 3.2 Connect to a Host window and the host switcher (D6). Evidence: on screen against a sandboxed host.
-- [ ] 3.3 Folder browser through `ListFolder`; setup only for a local host; Usage names hosts (D7). Evidence: unit tests; on screen.
-- [ ] 3.4 Local-only quit, update, Remote Control window, file drops (D8). Evidence: on screen.
-- [ ] 3.5 Protocol 15 and the mismatch message (D9). Evidence: unit test of the message.
+- [x] 3.1 Client key and `hosts.json` (D5). Evidence: unit tests (mode 600, unknown fields kept).
+- [x] 3.2 Connect to a Host window and the host switcher (D6). Evidence: on screen against a sandboxed host.
+- [x] 3.3 Folder browser through `ListFolder`; setup only for a local host; Usage names hosts (D7). Evidence: unit tests; on screen.
+- [x] 3.4 Local-only quit, update, Remote Control window, file drops (D8). Evidence: on screen (quit, Remote Control); update and file drops by code path only, see `verification.md`.
+- [x] 3.5 Protocol 15 and the mismatch message (D9). Evidence: unit test of the message.
 
 Expected result: on this Mac, the app shows a sandboxed second host as a remote host, starts, types into and closes sessions there, survives a network drop, and quits without stopping it.
+Done: on screen 2026-11-02 against sandboxed hosts (`verification.md`). Found and fixed there: a desktop saw its own session as in use elsewhere (host test extended); the pane said "Starting Headquarter…" for a remote host; each dial bound a new endpoint with the same key (relay conflict) and dropped failed ones uncleanly; final link errors were never recognised inside `io::Error`, so a removed computer retried forever (unit tests); first-run setup could start with a remote host on screen (unit test).
 
 ## 4. Verification and delivery
 
-- [ ] 4.1 `./scripts/check` passes; on screen with a sandboxed host paired as remote; keystroke round trip measured direct and relayed. `verification.md` written.
+- [x] 4.1 `./scripts/check` passes; on screen with a sandboxed host paired as remote; keystroke round trip measured direct and relayed. `verification.md` written.
 - [ ] 4.2 The owner checks it.
 - [ ] 4.3 After the owner accepts: archive, push `feat/remote-desktop-client`, open the PR, report its URL.

@@ -38,6 +38,14 @@ While a remote host is unreachable, the app SHALL say it is reconnecting, keep t
 - **WHEN** the network drops for 20 seconds with the server on screen
 - **THEN** the sidebar says "Reconnecting to <host>…", and when the network returns the sessions and the open terminal come back without the owner acting
 
+#### Scenario: Removed on the host
+- **WHEN** the owner removes this computer on the host while that host is on screen
+- **THEN** the app stops retrying and says the host no longer knows this computer and to pair it again with Connect to a Host
+
+#### Scenario: Opening with the host away
+- **WHEN** the app opens with a remote host on screen that cannot be reached yet
+- **THEN** the pane says "Connecting to <host>…" rather than that Headquarter is starting
+
 ### Requirement: A remote host is never stopped from the app
 Quitting or updating the app with a remote host on screen SHALL act on this computer only: quit without the stop question, and update without stopping the remote host.
 

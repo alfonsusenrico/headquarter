@@ -44,13 +44,23 @@ backoff is the caller's: the app's session feed retries 1 s doubling to 30 s. `h
 reader and a shared `Writer` (with `shutdown`), so callers keep their blocking code. The phone
 keeps `hq-mobile/src/link.rs` for now (recorded as debt: two links; consolidate later).
 
+A link binds one endpoint and keeps it across redials, closing it when the link closes or
+drops: a second endpoint with the same key takes the relay's place from the first ("another
+endpoint connected with the same endpoint id"), and a dropped endpoint aborts uncleanly. It
+binds again only when the host's relay changed (found on screen, 2026-11-02).
+
+The host names the paired device using a session to its other clients, never to that device
+itself, so a desktop does not show its own session as in use elsewhere (found on screen,
+2026-11-02).
+
 ## D5. Client key and known hosts
 
 The app keeps `client.key` (iroh secret, mode 600) and `hosts.json` (each host's name, endpoint
 id, relay, addresses and paired time, and which host is on screen; no secrets beyond the key)
 in its data folder beside `app-state.json` (`hq_signals::paths::data_dir()`; on Windows
 `%APPDATA%\Headquarter` in `add-windows-client`). The host's own files there (`remote.key`, the
-index) are separate.
+index) are separate. The key works on one link at a time: showing a host closes the other
+hosts' links, and pairing closes every link before it dials.
 
 ## D6. Connect to a Host and the switcher
 
