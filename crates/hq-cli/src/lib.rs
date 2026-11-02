@@ -99,7 +99,8 @@ enum Command {
     Close { session: String },
     /// Hang up a running session's agent at once; it stays in the sidebar.
     Kill { session: String },
-    /// Control Headquarter from your phone: on, off, status, pair, devices, remove.
+    /// Control Headquarter from your phone or another computer: on, off, status, pair, devices,
+    /// remove.
     Remote {
         #[command(subcommand)]
         action: remote::RemoteCommand,
