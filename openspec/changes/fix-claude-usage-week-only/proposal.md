@@ -1,6 +1,6 @@
 # Claude usage without a five-hour window
 
-Status: plan, waiting for the owner's approval.
+Status: approved by the owner 2026-11-02 ("approve both", with add-agent-update-check).
 
 ## Why
 

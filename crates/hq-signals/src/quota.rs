@@ -315,11 +315,12 @@ fn answer(message: &Value, method: &str) -> Result<Value, String> {
 }
 
 /// The windows an agent always has, in minutes, for agents that leave a window out of
-/// a report: Claude Code drops a window from its status line input once the window
-/// resets, until it is used again.
+/// a report: Claude Code drops its week from its status line input once it resets, until
+/// it is used again. Its five-hour window is not standing: 2.1.316 reports none at all
+/// (fix-claude-usage-week-only D2).
 pub fn standing_windows(agent: Agent) -> &'static [u64] {
     match agent {
-        Agent::Claude => &[FIVE_HOURS_MINS, WEEK_MINS],
+        Agent::Claude => &[WEEK_MINS],
         Agent::Codex | Agent::Agy => &[],
     }
 }
