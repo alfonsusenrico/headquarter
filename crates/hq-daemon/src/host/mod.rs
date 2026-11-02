@@ -351,6 +351,8 @@ struct Subscriber {
     follows: Option<String>,
     /// Whether the client's window can be seen; true until it says otherwise.
     visible: bool,
+    /// The paired device behind the connection, as the remote gateway named it.
+    device: Option<String>,
 }
 
 struct ClientGuard<'a>(&'a AtomicUsize);
@@ -480,7 +482,7 @@ impl Host {
                             // Right after the host starts, the list would miss the
                             // owner's past conversations; wait for the first import.
                             self.wait_for_first_import(history::FIRST_IMPORT_WAIT);
-                            send(self.list().unwrap_or_else(|error| *error));
+                            send(self.list(device.as_deref()).unwrap_or_else(|error| *error));
                         }
                         Request::New {
                             agent,
@@ -663,6 +665,7 @@ impl Host {
                                 usage,
                                 follows: None,
                                 visible: true,
+                                device: device.clone(),
                             });
                             self.wake_outside();
                             send(Response::Done);
@@ -741,10 +744,13 @@ impl Host {
 
     // ---- requests --------------------------------------------------------------
 
-    fn list(&self) -> OpResult<Response> {
+    /// Every session, as the client on `device` sees them.
+    fn list(&self, device: Option<&str>) -> OpResult<Response> {
         let rows = lock(&self.store).list().map_err(storage_error)?;
-        let mut sessions: Vec<SessionInfo> =
-            rows.into_iter().map(|row| self.describe(row)).collect();
+        let mut sessions: Vec<SessionInfo> = rows
+            .into_iter()
+            .map(|row| seen_from(self.describe(row), device))
+            .collect();
         sessions.extend(lock(&self.outside).unlinked.iter().cloned());
         Ok(Response::Sessions {
             sessions,
@@ -1903,9 +1909,24 @@ impl Host {
     /// Sends a session's state to every subscriber; for entries the index does not
     /// keep, such as outside agents with no known conversation.
     fn send_change(&self, session: SessionInfo) {
-        let frame = Frame::response(&Response::SessionChanged { session });
-        lock(&self.subscribers)
-            .retain(|subscriber| subscriber.tx.send(Outgoing::Frame(frame.clone())).is_ok());
+        let frame = Frame::response(&Response::SessionChanged {
+            session: session.clone(),
+        });
+        let mut own_device: Option<Frame> = None;
+        lock(&self.subscribers).retain(|subscriber| {
+            let frame = if session.phone.is_some() && subscriber.device == session.phone {
+                own_device
+                    .get_or_insert_with(|| {
+                        Frame::response(&Response::SessionChanged {
+                            session: seen_from(session.clone(), subscriber.device.as_deref()),
+                        })
+                    })
+                    .clone()
+            } else {
+                frame.clone()
+            };
+            subscriber.tx.send(Outgoing::Frame(frame)).is_ok()
+        });
     }
 
     // ---- hooks, time, signals, shutdown ---------------------------------------
@@ -2143,4 +2164,13 @@ fn canonical_folder(cwd: &str) -> OpResult<String> {
 fn start_source(raw: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(raw).ok()?;
     value.get("source")?.as_str().map(str::to_owned)
+}
+
+/// A session as the client on `device` sees it: the device in use for it is named only to
+/// the others, so a desktop or phone never shows itself as having the session elsewhere.
+fn seen_from(mut session: SessionInfo, device: Option<&str>) -> SessionInfo {
+    if device.is_some() && session.phone.as_deref() == device {
+        session.phone = None;
+    }
+    session
 }

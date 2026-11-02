@@ -3727,6 +3727,27 @@ impl Phone {
             .unwrap()
     }
 
+    /// The next response on `stream`, skipping in-use notices; `None` once closed.
+    fn next_on(
+        &mut self,
+        stream: &mut (iroh::endpoint::SendStream, iroh::endpoint::RecvStream),
+    ) -> Option<Response> {
+        self.runtime.block_on(async {
+            loop {
+                let frame = tokio::time::timeout(WAIT, hq_remote::read_frame(&mut stream.1))
+                    .await
+                    .expect("a frame in time")
+                    .ok()??;
+                if let Frame::Control(bytes) = frame {
+                    match Response::parse(&bytes).unwrap() {
+                        Response::InUse { .. } | Response::RemoteWelcome { .. } => continue,
+                        response => return Some(response),
+                    }
+                }
+            }
+        })
+    }
+
     /// Sends `request` on a stream of its own and reads its answer; `None` once closed.
     fn on_stream(
         &mut self,
@@ -4153,6 +4174,51 @@ fn a_paired_desktop_works_on_several_streams_within_its_allow_list() {
         ),
         "still connected, and the host still runs"
     );
+
+    // With the session open on the desktop, the computer's clients see it is in use on the
+    // desktop, and the desktop's own feed does not show itself as having it elsewhere.
+    let mut follower = desktop.open_stream();
+    for request in [&hello, &Request::Subscribe { usage: false }] {
+        assert!(desktop.on_stream(&mut follower, request).is_some());
+    }
+    let mut terminal = desktop.open_stream();
+    assert!(matches!(
+        desktop.on_stream(&mut terminal, &hello),
+        Some(Response::Welcome { .. })
+    ));
+    assert!(matches!(
+        desktop.on_stream(
+            &mut terminal,
+            &Request::Attach {
+                session: session.id.clone(),
+                cols: 100,
+                rows: 30,
+            }
+        ),
+        Some(Response::Attached { .. })
+    ));
+    let deadline = Instant::now() + WAIT;
+    while env.session(&session.id).phone.as_deref() != Some("Studio PC") {
+        assert!(Instant::now() < deadline, "the computer names the desktop");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    loop {
+        match desktop.next_on(&mut follower) {
+            Some(Response::SessionChanged { session: changed }) if changed.id == session.id => {
+                assert_eq!(changed.phone, None, "its own change names no device");
+                break;
+            }
+            Some(_) => continue,
+            None => panic!("the desktop's feed closed"),
+        }
+    }
+    match desktop.on_stream(&mut feed, &Request::List {}) {
+        Some(Response::Sessions { sessions, .. }) => {
+            let listed = sessions.iter().find(|listed| listed.id == session.id);
+            assert_eq!(listed.unwrap().phone, None, "nor does its list");
+        }
+        other => panic!("unexpected list answer {other:?}"),
+    }
 
     // The first stream ending leaves the others working.
     desktop.request(&Request::Hello {
