@@ -302,6 +302,7 @@ mod tests {
     use super::*;
     use crate::agents::known;
     use crate::platform::Platform;
+    use std::os::unix::fs::PermissionsExt;
 
     struct Fixture {
         root: PathBuf,
