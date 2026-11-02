@@ -2,9 +2,10 @@
 
 ## 1. Spike
 
-- [ ] 1.1 Throwaway branch: GPUI window, text input and terminal view built on `windows-latest` (D8). Evidence: the run's log; stop and report if it fails.
+- [x] 1.1 Throwaway branch: GPUI window, text input and terminal view built on `windows-latest` (D8). Evidence: the run's log; stop and report if it fails.
 
 Expected result: GPUI 0.3.9 builds for Windows with our view code.
+Done: run 41457873032 (2026-11-02): built, window opened and quit, Cascadia Mono and Consolas present, alacritty grid rendered (`research/evidence/windows-client/2026-11-02-spike.md`).
 
 ## 2. Platform gates
 
