@@ -3014,15 +3014,22 @@ impl Workspace {
                     None => div().size_full().child(agent).into_any_element(),
                 }
             }
-            Pane::Empty if !self.listed => centred
-                .child(crate::loading::agents_checking_in(
-                    "workspace-starting",
-                    &self.marks,
-                    STARTING_MARK,
-                    chrome,
-                    "Starting Headquarter…",
-                ))
-                .into_any_element(),
+            Pane::Empty if !self.listed => {
+                let waiting = if crate::hosts::is_remote() {
+                    format!("Connecting to {}…", self.host_name_shown())
+                } else {
+                    "Starting Headquarter…".to_owned()
+                };
+                centred
+                    .child(crate::loading::agents_checking_in(
+                        "workspace-starting",
+                        &self.marks,
+                        STARTING_MARK,
+                        chrome,
+                        waiting,
+                    ))
+                    .into_any_element()
+            }
             Pane::Empty => centred
                 .child(note(if self.items(cx).is_empty() {
                     "Add sessions with + to keep them in view here.".to_owned()
@@ -3467,7 +3474,7 @@ fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
 
 /// What a failure to reach a remote host means for the owner.
 fn link_failure(error: &anyhow::Error, host: &str) -> Option<String> {
-    match error.downcast_ref::<hq_client::LinkError>()? {
+    match link_error(error)? {
         hq_client::LinkError::NotKnown => Some(format!(
             "{host} no longer knows this computer. Pair it again with Connect to a Host."
         )),
@@ -3476,6 +3483,18 @@ fn link_failure(error: &anyhow::Error, host: &str) -> Option<String> {
         )),
         _ => None,
     }
+}
+
+/// The link's own error behind `error`: client calls carry it inside an `io::Error`.
+fn link_error(error: &anyhow::Error) -> Option<&hq_client::LinkError> {
+    error.chain().find_map(|cause| {
+        cause.downcast_ref::<hq_client::LinkError>().or_else(|| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .and_then(std::io::Error::get_ref)
+                .and_then(|inner| inner.downcast_ref::<hq_client::LinkError>())
+        })
+    })
 }
 
 fn follow_host(host: &hq_client::Host, tx: &UnboundedSender<ListEvent>) -> Followed {
@@ -3569,4 +3588,47 @@ fn refusal(error: anyhow::Error) -> (String, bool) {
         .downcast_ref::<hq_client::Refused>()
         .is_some_and(|refused| refused.code == hq_protocol::ErrorCode::RunningInBackground);
     (format!("{error:#}"), background)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hq_client::LinkError;
+
+    /// As a client call returns it: the link's error inside an `io::Error`, with context.
+    fn from_a_call(error: LinkError) -> anyhow::Error {
+        anyhow::Error::from(std::io::Error::from(error)).context("cannot follow the sessions")
+    }
+
+    #[test]
+    fn a_host_on_another_release_says_which_side_to_update() {
+        let message = link_failure(
+            &from_a_call(LinkError::Mismatch {
+                host_protocol: 14,
+                host_version: "0.1.24".into(),
+            }),
+            "server",
+        )
+        .expect("a final message");
+        assert!(
+            message.contains("Headquarter 0.1.24 (protocol 14)"),
+            "{message}"
+        );
+        assert!(
+            message.contains(&format!("protocol {}", hq_protocol::PROTOCOL_VERSION)),
+            "{message}"
+        );
+        assert!(message.contains("Update the older side"), "{message}");
+    }
+
+    #[test]
+    fn a_host_that_removed_this_computer_asks_to_pair_again_and_a_drop_retries() {
+        let removed = link_failure(&from_a_call(LinkError::NotKnown), "server");
+        assert_eq!(
+            removed.as_deref(),
+            Some("server no longer knows this computer. Pair it again with Connect to a Host.")
+        );
+        let dropped = from_a_call(LinkError::Unreachable("timed out".into()));
+        assert_eq!(link_failure(&dropped, "server"), None, "reconnects instead");
+    }
 }
