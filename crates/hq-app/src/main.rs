@@ -1,6 +1,9 @@
 //! Headquarter desktop app: a client of the Headquarter host showing sessions beside
 //! each agent's own terminal interface. See `openspec/specs/desktop-app/`.
 
+// A window app on Windows: without this, starting it opens a console window too.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod app_log;
 mod app_state;
 mod header;
@@ -61,7 +64,9 @@ fn main() {
             let show_setup = setup::should_show(
                 settings::path().is_some_and(|path| path.exists()),
                 setup::asked_from_args(),
-                hosts::is_remote(),
+                // Setup reads this computer's agents only beside its own host; without
+                // one (Windows) setup is the look alone and runs as usual.
+                hosts::has_local_host() && hosts::is_remote(),
             );
             let opened = cx.open_window(options, |window, cx| {
                 let view = cx.new(|cx| shell::Shell::new(show_setup, window, cx));

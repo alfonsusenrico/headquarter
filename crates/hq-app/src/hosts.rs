@@ -125,6 +125,12 @@ pub fn has_local_host() -> bool {
     cfg!(unix)
 }
 
+/// Whether no host is on screen at all: a computer without a host of its own that has
+/// paired with none yet (add-windows-client D2).
+pub fn none_on_screen() -> bool {
+    !has_local_host() && shown_name().is_none()
+}
+
 /// Whether the host on screen is not this computer's: a paired host on another
 /// computer, or none yet on a computer without a host (add-windows-client D2).
 pub fn is_remote() -> bool {
