@@ -1,6 +1,6 @@
 # Host and app install separately
 
-Status: plan, waiting for the owner's approval. Builds on `add-remote-desktop-client` and
+Status: approved by the owner 2026-11-02 ("approve all three"). Builds on `add-remote-desktop-client` and
 `add-windows-client`; the `v0.2.0-alpha.1` pre-release follows all three.
 
 ## Why
