@@ -34,19 +34,23 @@ Rejected: one QUIC connection per app connection (a handshake and relay path per
 
 ## D4. The client link
 
-`hq-remote` gains `client`: a blocking `Link` that owns a small tokio runtime thread, the
-client's endpoint and one connection to a host. `Link::open()` returns a blocking
-reader and writer bridged to a new stream. It reconnects with backoff (1 s doubling to 30 s)
-and reports its state. `hq-client` gets a `Transport` enum (local socket, remote link); `Client`
-holds boxed reader and writer, so callers keep their blocking code. The phone keeps
-`hq-mobile/src/link.rs` for now (recorded as debt: two links; consolidate later).
+`hq-remote` gains `client`: a blocking `Link` that owns a small tokio runtime, the client's
+key and one connection to a host. The first stream is a control stream: it carries the `Pair`
+or the `Hello`, the gateway's welcome and the host's, and stays open while the link lives.
+`Link::open()` returns a blocking reader and writer on a new stream, dialling again first when
+the connection is gone; a host that removed this computer answers `NotKnown`. Retrying with
+backoff is the caller's: the app's session feed retries 1 s doubling to 30 s. `hq-client` gets a
+`Host` (local paths or a link) and a `Connect` trait both implement; `Client` holds a `Stream`
+reader and a shared `Writer` (with `shutdown`), so callers keep their blocking code. The phone
+keeps `hq-mobile/src/link.rs` for now (recorded as debt: two links; consolidate later).
 
 ## D5. Client key and known hosts
 
-The app keeps `client.key` (iroh secret, mode 600) and `hosts.json` (name, endpoint id, relay,
-addresses, paired-at; no secrets beyond the key) in its own data folder
-(`~/.local/share/headquarter-app/`; `%APPDATA%\Headquarter` in `add-windows-client`), apart from
-the host's data. `app-state.json` remembers the host last shown.
+The app keeps `client.key` (iroh secret, mode 600) and `hosts.json` (each host's name, endpoint
+id, relay, addresses and paired time, and which host is on screen; no secrets beyond the key)
+in its data folder beside `app-state.json` (`hq_signals::paths::data_dir()`; on Windows
+`%APPDATA%\Headquarter` in `add-windows-client`). The host's own files there (`remote.key`, the
+index) are separate.
 
 ## D6. Connect to a Host and the switcher
 

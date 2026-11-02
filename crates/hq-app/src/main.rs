@@ -4,6 +4,7 @@
 mod app_log;
 mod app_state;
 mod header;
+mod hosts;
 mod loading;
 mod marks;
 mod menus;

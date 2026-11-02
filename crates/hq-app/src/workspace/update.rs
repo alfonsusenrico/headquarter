@@ -212,6 +212,10 @@ impl Workspace {
     /// Notices a host older than this app, left by an update made elsewhere (D7).
     pub(super) fn check_host_version(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let task = cx.background_executor().spawn(async move {
+            // A remote host updates on its own computer (add-remote-desktop-client D8).
+            if crate::hosts::is_remote() {
+                return None;
+            }
             let paths = HostPaths::standard()?;
             hq_client::host_version(&paths).ok()
         });

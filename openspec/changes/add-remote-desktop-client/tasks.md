@@ -12,10 +12,11 @@ Done: host tests `a_paired_desktop_works_on_several_streams_within_its_allow_lis
 
 ## 2. Client link
 
-- [ ] 2.1 `hq_remote::client::Link` with reconnect (D4). Evidence: tests against a test host with `HQ_REMOTE_RELAYS=none` (open, drop, reconnect, host restart).
-- [ ] 2.2 `hq-client` transports (D4). Evidence: existing client tests pass on the local socket; new ones over a link.
+- [x] 2.1 `hq_remote::client::Link` with reconnect (D4). Evidence: tests against a test host with `HQ_REMOTE_RELAYS=none` (open, drop, reconnect, host restart).
+- [x] 2.2 `hq-client` transports (D4). Evidence: existing client tests pass on the local socket; new ones over a link.
 
 Expected result: `hq-client` calls work the same over a local socket and a remote link.
+Done: host test `the_client_works_over_a_remote_link_and_dials_again` (pair, feed, create, rename, attach and type, dial again after a drop, removal); `hq-remote` unit tests for the key and the address; every existing client test passes on the local socket.
 
 ## 3. App
 

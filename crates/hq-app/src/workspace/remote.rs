@@ -3,7 +3,6 @@
 //! remote control, how the computer is reached, Pair a Phone with the code as an image QR
 //! code, and the paired phones with Remove.
 
-use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
@@ -72,7 +71,7 @@ enum Pairing {
         width: usize,
         until: Instant,
         /// The connection that holds the code; closing it withdraws the code.
-        holder: UnixStream,
+        holder: hq_client::Writer,
         _countdown: Task<()>,
     },
     Paired(String),
@@ -82,7 +81,7 @@ enum Pairing {
 impl Pairing {
     fn withdraw(&self) {
         if let Pairing::Showing { holder, .. } = self {
-            let _ = holder.shutdown(std::net::Shutdown::Both);
+            holder.shutdown();
         }
     }
 }

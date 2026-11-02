@@ -17,7 +17,6 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::popover::Popover;
 use gpui_component::scroll::Scrollbar;
-use hq_client::HostPaths;
 use hq_protocol::sidebar::{UNTITLED, age, display_title, untitled_id};
 use hq_protocol::{Origin, RemoveWay, SessionInfo, removal_ways};
 use hq_signals::event::Agent;
@@ -1086,9 +1085,8 @@ impl OpenSessions {
 }
 
 fn send_removal(id: &str, way: RemoveWay) -> anyhow::Result<()> {
-    let paths =
-        HostPaths::standard().ok_or_else(|| anyhow::anyhow!("cannot find the home folder"))?;
-    hq_client::remove_conversation(&paths, id, way)
+    let host = crate::hosts::current()?;
+    hq_client::remove_conversation(&host, id, way)
 }
 
 /// A removal still in its undo window when the window closes is sent then: closing is

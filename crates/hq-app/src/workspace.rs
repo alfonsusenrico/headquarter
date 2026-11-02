@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::vte::ansi::Rgb;
-use anyhow::anyhow;
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::prelude::FluentBuilder;
@@ -22,7 +21,7 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{Disableable, Icon, IconName, Sizable};
-use hq_client::{Change, FeedControl, HostPaths, SessionFeed};
+use hq_client::{Change, FeedControl, SessionFeed};
 use hq_config::{AgentMarks, Appearance, SettingsWatcher};
 use hq_protocol::sidebar::Beside;
 use hq_protocol::{AgentUsage, GroupInfo, SessionInfo, usage};
@@ -903,13 +902,12 @@ impl Workspace {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        call: impl FnOnce(&HostPaths) -> anyhow::Result<R> + Send + 'static,
+        call: impl FnOnce(&hq_client::Host) -> anyhow::Result<R> + Send + 'static,
         done: impl FnOnce(&mut Self, R, &mut Window, &mut Context<Self>) + 'static,
     ) {
         let task = cx.background_executor().spawn(async move {
-            let paths =
-                HostPaths::standard().ok_or_else(|| anyhow!("cannot find the home folder"))?;
-            call(&paths)
+            let host = crate::hosts::current()?;
+            call(&host)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -1793,9 +1791,8 @@ impl Workspace {
     fn continue_session(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let ids = vec![id.clone()];
         let task = cx.background_executor().spawn(async move {
-            let paths =
-                HostPaths::standard().ok_or_else(|| anyhow!("cannot find the home folder"))?;
-            hq_client::add_to_sidebar(&paths, &ids)
+            let host = crate::hosts::current()?;
+            hq_client::add_to_sidebar(&host, &ids)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -1836,9 +1833,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let task = cx.background_executor().spawn(async move {
-            let paths =
-                HostPaths::standard().ok_or_else(|| anyhow!("cannot find the home folder"))?;
-            hq_client::create_session(&paths, agent, &folder, None)
+            let host = crate::hosts::current()?;
+            hq_client::create_session(&host, agent, &folder, None)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -3308,10 +3304,11 @@ fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
     let fail = |message: String| {
         let _ = tx.unbounded_send(ListEvent::Failed(message));
     };
-    let Some(paths) = HostPaths::standard() else {
-        return fail("cannot find the home folder".to_owned());
+    let host = match crate::hosts::current() {
+        Ok(host) => host,
+        Err(error) => return fail(format!("{error:#}")),
     };
-    let (mut feed, catalog) = match SessionFeed::open(&paths, true) {
+    let (mut feed, catalog) = match SessionFeed::open(&host, true) {
         Ok(opened) => opened,
         Err(error) => return fail(format!("cannot reach the Headquarter host: {error:#}")),
     };

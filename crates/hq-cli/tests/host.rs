@@ -4181,6 +4181,85 @@ fn a_paired_desktop_works_on_several_streams_within_its_allow_list() {
     assert_eq!(desktop.on_stream(&mut action, &Request::List {}), None);
 }
 
+/// `hq-client` over a remote link, as the desktop app uses it for a paired host
+/// (add-remote-desktop-client D4).
+#[test]
+fn the_client_works_over_a_remote_link_and_dials_again() {
+    let mut env = TestEnv::new("link");
+    env.stub("agy", INTERACTIVE_STUB);
+    env.start_daemon();
+    let (_shower, code) = env.remote_on_and_pair();
+    let code = hq_remote::PairingCode::parse(&code).unwrap();
+    let key = hq_remote::client::ClientKey::generate();
+    let (link, welcome) = hq_client::Link::pair(key, &code, "Studio PC").unwrap();
+    assert!(!welcome.host.is_empty());
+    let host = hq_client::Host::Remote(link.clone());
+
+    let (mut feed, _catalog) = hq_client::SessionFeed::open(&host, false).unwrap();
+    let session = hq_client::create_session(&host, Agent::Agy, &env.work(), None).unwrap();
+    loop {
+        match feed.next_change().unwrap() {
+            Some(hq_client::Change::Session(info)) if info.id == session.id => break,
+            Some(_) => continue,
+            None => panic!("the feed closed"),
+        }
+    }
+    hq_client::rename(&host, &session.id, "from the PC").unwrap();
+    let mut attached = hq_client::attach(&host, &session.id, 80, 24).unwrap();
+    let mut seen = String::new();
+    while !seen.contains("stub-ready") {
+        match read_frame(&mut attached.reader).unwrap() {
+            Some(Frame::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+            Some(_) => {}
+            None => panic!("closed before the agent was ready: {seen:?}"),
+        }
+    }
+    write_frame(
+        &mut attached.writer,
+        &Frame::Input(b"over-the-link\n".to_vec()),
+    )
+    .unwrap();
+    while !seen.contains("got:over-the-link") {
+        match read_frame(&mut attached.reader).unwrap() {
+            Some(Frame::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+            Some(_) => {}
+            None => panic!("closed before the echo: {seen:?}"),
+        }
+    }
+    drop(attached);
+    drop(feed);
+
+    // A dropped connection is dialled again on the next call.
+    link.close();
+    assert!(!link.connected());
+    assert!(hq_client::usage(&host).is_ok());
+    assert!(link.connected());
+
+    // Removed on the host: the link says the host no longer knows this computer.
+    assert!(matches!(
+        env.connect().request(&Request::RemoteRemove {
+            device: "studio pc".into()
+        }),
+        Response::Done
+    ));
+    let deadline = Instant::now() + WAIT;
+    let error = loop {
+        match hq_client::usage(&host) {
+            Err(error) => break error,
+            Ok(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Ok(_) => panic!("still answered after removal"),
+        }
+    };
+    let link_error = error.downcast_ref::<hq_client::LinkError>();
+    assert!(
+        matches!(
+            link_error,
+            Some(hq_client::LinkError::NotKnown | hq_client::LinkError::Unreachable(_))
+        ),
+        "{error:#}"
+    );
+}
+
 #[test]
 fn a_desktop_has_at_most_64_streams() {
     let mut env = TestEnv::new("streams");
