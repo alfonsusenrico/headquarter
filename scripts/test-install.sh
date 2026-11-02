@@ -99,8 +99,17 @@ check "manifest lists only home paths" '! grep -v -e "^$home/" -e "^parts=" "$ho
 check "manifest records both parts" '[ "$(head -n 1 "$home/.local/share/headquarter/install-manifest")" = parts=host,app ]'
 check "no service for a full install" '[ ! -e "$home/Library/LaunchAgents" ] && [ ! -e "$home/.config/systemd" ]'
 
+# As a 0.1.24 install left it: no parts recorded, and on macOS an hq inside the bundle.
+sed -i.old '/^parts=/d' "$home/.local/share/headquarter/install-manifest"
+rm -f "$home/.local/share/headquarter/install-manifest.old"
+if [ "$(uname -s)" = Darwin ]; then cp "$home/.local/bin/hq" "$app/Contents/MacOS/hq"; fi
+
 # A second run updates in place, as the app's updater runs it, with progress lines.
 check "reinstall succeeds" 'run_with_progress "$home" "$release"'
+check "an install from before parts stays full" '[ "$(head -n 1 "$home/.local/share/headquarter/install-manifest")" = parts=host,app ] && [ -x "$home/.local/bin/hq" ]'
+if [ "$(uname -s)" = Darwin ]; then
+  check "the old bundle's hq is gone" '[ ! -e "$app/Contents/MacOS/hq" ]'
+fi
 check "progress lines in order" '[ "$(grep "^progress " "$home/out" | tr "\n" " ")" = "progress download progress verify progress install progress done 9.8.7 " ]'
 check "notes: downloads, checks, installs" '[ "$(grep -c "^note " "$home/out")" = 6 ] && [ "$(grep "^note " "$home/out" | head -n 1)" = "note Downloading hq-cli-$target.tar.gz" ]'
 check "notes name files from the home folder as ~" 'grep -qx "note ok Installed ~/.local/bin/hq and ~/.local/bin/headquarter" "$home/out"'

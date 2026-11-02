@@ -442,9 +442,10 @@ fn stop(paths: &HostPaths, yes: bool) -> Result<ExitCode> {
             return Ok(ExitCode::SUCCESS);
         }
     }
+    let holder = lock_holder(paths);
     expect_ok(client.request(&Request::Stop {})?)?;
-    wait_until_stopped(paths)?;
-    println!("Stopped the host and {running} sessions.");
+    let ended = wait_until_stopped(paths, holder)?;
+    println!("Stopped the host and {running} sessions.{}", ended.said());
     Ok(ExitCode::SUCCESS)
 }
 
@@ -468,20 +469,53 @@ fn stop_other_version(paths: &HostPaths, protocol: u32, yes: bool) -> Result<Exi
             return Ok(ExitCode::SUCCESS);
         }
     }
+    let holder = lock_holder(paths);
     hq_client::stop_other_version(paths, protocol)?;
-    wait_until_stopped(paths)?;
-    println!("Stopped the host from the other version (protocol {protocol}) and its sessions.");
+    let ended = wait_until_stopped(paths, holder)?;
+    println!(
+        "Stopped the host from the other version (protocol {protocol}) and its sessions.{}",
+        ended.said()
+    );
     Ok(ExitCode::SUCCESS)
 }
 
-/// The host answers before its agents have exited; report only once it is gone.
-fn wait_until_stopped(paths: &HostPaths) -> Result<()> {
+/// How a stopped host ended.
+enum Ended {
+    Gone,
+    /// Its service started a new host at once, on the installed `hq`.
+    StartedAgain,
+}
+
+impl Ended {
+    fn said(&self) -> &'static str {
+        match self {
+            Ended::Gone => "",
+            Ended::StartedAgain => " Its service started it again, on the installed version.",
+        }
+    }
+}
+
+/// The process id the running host wrote into its lock file.
+fn lock_holder(paths: &HostPaths) -> Option<u32> {
+    std::fs::read_to_string(&paths.lock)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// The host answers before its agents have exited; report only once it is gone, or once
+/// another host holds the lock: a service (`--host-only`) starts one again at once.
+fn wait_until_stopped(paths: &HostPaths, holder: Option<u32>) -> Result<Ended> {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while host_holds_lock(paths) {
+        if holder.is_some() && lock_holder(paths) != holder {
+            return Ok(Ended::StartedAgain);
+        }
         if std::time::Instant::now() >= deadline {
             bail!("the host did not stop within 10 seconds");
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    Ok(())
+    Ok(Ended::Gone)
 }

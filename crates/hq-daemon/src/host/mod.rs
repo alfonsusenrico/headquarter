@@ -113,6 +113,15 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         .open(&paths.lock)
         .map_err(|error| HostError::Io("lock file", error))?;
     take_lock(&lock, &paths.control_socket)?;
+    // The lock names its holder, so `hq stop` can tell a host that stopped from one a
+    // service started again at once (split-host-and-app-install D4).
+    {
+        use std::io::Write;
+        let mut named = &lock;
+        let _ = lock
+            .set_len(0)
+            .and_then(|()| write!(named, "{}", std::process::id()));
+    }
 
     // Leave the launching terminal's session so closing that terminal cannot end us.
     let _ = rustix::process::setsid();
