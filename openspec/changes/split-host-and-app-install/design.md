@@ -23,14 +23,18 @@ everything and options to drop parts (ships a host to Windows that cannot run th
 - `--host-only`: `hq` and `headquarter`, and the host service (D4). No app, no desktop entry, no
   macOS signing certificate.
 - `--app-only`: the app only (macOS bundle or Linux binary and menu entry).
+- `--full`: both again after one of the above (added while building, 2026-11-02: without it a
+  rerun keeps the recorded parts, so nothing could return to both).
 - The install record (`install-manifest`) gains `parts=host,app`. A rerun without an option keeps
-  the recorded parts; an option changes them and removes the part no longer wanted. `--uninstall`
-  removes what is recorded.
+  the recorded parts; an option changes them and removes the part no longer wanted: whatever the
+  old record lists and the new one does not is removed (a service stopped first, the host
+  stopped before its files go). `--uninstall` removes what is recorded.
 
 ## D3. Finding this computer's host
 
-The app looks for the host in this order: `HQ_HOST_BIN` (tests), the `hq` named in the install
-record, `~/.local/bin/hq`. Found, "this computer" is in the host switcher and the app starts it
+The app looks for the host in this order: `HQ_HOST_BIN` (tests), the `hq` beside the app
+(development builds in `target/`; added while building so a dev app never starts the installed
+host), the `hq` named in the install record, `~/.local/bin/hq`. Found, "this computer" is in the host switcher and the app starts it
 when it is not running (as today). Not found, the app never starts a host; the first launch
 opens Connect to a Host. `hq` itself still starts the host from its own executable.
 
@@ -43,6 +47,10 @@ opens Connect to a Host. `hq` itself still starts the host from its own executab
   WSL without it), it prints how to start `hq daemon` instead.
 - macOS: a LaunchAgent `io.github.alfonsusenrico.headquarter.host` (`RunAtLoad`, `KeepAlive`),
   which runs while the owner is logged in.
+- Both carry `HOME`, and `HQ_DATA_DIR` and `HQ_CONFIG_DIR` when the installer ran with them, so
+  the service uses the folders the install did. `HQ_SERVICE=files` writes the file without
+  starting it, for the installer test, which must never reach the machine's own launchd or
+  systemd.
 - `hq stop` with `Restart=always` restarts the host on the new binary, which is how a host-only
   update takes effect; stopping for good is `systemctl --user stop headquarter-host` (README).
 - The host already refuses a second instance (single-instance lock), so a client starting `hq`
