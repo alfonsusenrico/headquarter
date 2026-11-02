@@ -448,7 +448,15 @@ mod tests {
         let claude = usage(Agent::Claude, vec![week.clone()], Some(NOW - 60));
         assert_eq!(
             window_rows(&claude),
-            vec![WindowRow::ResetBefore(300), WindowRow::Reading(&week)]
+            vec![WindowRow::Reading(&week)],
+            "no five-hour row when Claude reports none"
+        );
+        let session = window(300, 40.0, NOW + 3_600);
+        let claude = usage(Agent::Claude, vec![session.clone()], Some(NOW - 60));
+        assert_eq!(
+            window_rows(&claude),
+            vec![WindowRow::Reading(&session), WindowRow::ResetBefore(10_080)],
+            "the week still stands"
         );
         assert_eq!(length_name(300), "5h");
         assert_eq!(window_name(&week), "week");

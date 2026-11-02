@@ -1,8 +1,10 @@
 //! Claude Code's plan limits as its own `/usage` screen shows them, read from the
 //! screen's text (`refresh-usage-on-activity` design D2). The layout is an unstable
 //! external contract: blocks are found by their headings, unknown lines are skipped, and
-//! a screen without the session and all-models week blocks is an error rather than a
-//! guess. Observed with Claude Code 2.1.304 to 2.1.306.
+//! a screen without any all-models block is an error rather than a guess. Observed with
+//! Claude Code 2.1.304 to 2.1.306; 2.1.316 shows no "Current session" (five-hour) block,
+//! only the weeks, after the session's own cost and token totals
+//! (fix-claude-usage-week-only).
 //!
 //! ```text
 //! Current session
@@ -55,12 +57,7 @@ pub fn parse_usage_screen<Tz: TimeZone>(
             model,
         });
     }
-    let has = |minutes: u64| {
-        windows
-            .iter()
-            .any(|window| window.duration_mins == Some(minutes) && window.model.is_none())
-    };
-    if !has(FIVE_HOURS_MINS) || !has(WEEK_MINS) {
+    if !windows.iter().any(|window| window.model.is_none()) {
         return Err("Claude Code's /usage screen did not show its limits".to_owned());
     }
     Ok(windows)
@@ -257,10 +254,55 @@ Esc to cancel";
         assert_eq!(reset_time("12pm", &now()), Some(at(21, 12, 0)));
     }
 
+    /// Claude Code 2.1.316's Usage tab, as observed 2026-11-02 (text only, no five-hour block).
+    const SCREEN_2_1_316: &str = "Settings Status Config Usage Stats
+Session
+Total cost: $0.0000
+Usage: 0 input, 0 output, 0 cache read, 0 cache write
+Current week (all models)
+███ 6% used
+Resets Nov 7 at 3pm (Asia/Jakarta)
+What's contributing to your usage?
+Approximate · sessions on this machine only
+Current week (Fable)
+ 0% used
+Resets Nov 7 at 3pm (Asia/Jakarta)
+Usage credits
+Usage credits are off · /usage-credits to turn them on
+Esc to cancel";
+
+    #[test]
+    fn a_screen_with_only_the_weeks_reads() {
+        let windows = parse_usage_screen(&lines(SCREEN_2_1_316), &now()).unwrap();
+        let read: Vec<(Option<u64>, f64, Option<&str>)> = windows
+            .iter()
+            .map(|window| {
+                (
+                    window.duration_mins,
+                    window.used_percent,
+                    window.model.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            read,
+            [
+                (Some(WEEK_MINS), 6.0, None),
+                (Some(WEEK_MINS), 0.0, Some("Fable"))
+            ]
+        );
+        assert!(windows.iter().all(|window| window.resets_at.is_some()));
+    }
+
     #[test]
     fn missing_blocks_or_garbage_are_errors() {
         let only_session = "Current session\n██ 15%used\nResets 11:30am";
-        assert!(parse_usage_screen(&lines(only_session), &now()).is_err());
+        assert!(
+            parse_usage_screen(&lines(only_session), &now()).is_ok(),
+            "one all-models window is enough"
+        );
+        let only_a_model = "Current week (Fable)\n██ 3%used";
+        assert!(parse_usage_screen(&lines(only_a_model), &now()).is_err());
         assert!(parse_usage_screen(&lines("Loading…"), &now()).is_err());
         assert_eq!(reset_time("soon", &now()), None);
         assert_eq!(reset_time("Smarch 3 at 3pm", &now()), None);
