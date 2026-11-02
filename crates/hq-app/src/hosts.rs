@@ -147,14 +147,33 @@ pub fn shown_name() -> Option<String> {
         .map(|host| host.name.clone())
 }
 
-/// Puts `shown` on screen and remembers it.
+/// Puts `shown` on screen and remembers it. The other hosts' links close off the main
+/// thread: this computer's key works on one link at a time (D5).
 pub fn show(shown: Shown) {
-    let mut state = state();
-    state.file.shown = match shown {
-        Shown::Local => None,
-        Shown::Remote(id) => Some(id),
+    let others = {
+        let mut state = state();
+        state.file.shown = match shown {
+            Shown::Local => None,
+            Shown::Remote(id) => Some(id),
+        };
+        save(&state.file);
+        let kept = state.file.shown.clone();
+        take_links(&mut state, kept.as_deref())
     };
-    save(&state.file);
+    if !others.is_empty() {
+        std::thread::spawn(move || others.iter().for_each(Link::close));
+    }
+}
+
+/// Takes every link out but `kept`'s.
+fn take_links(state: &mut State, kept: Option<&str>) -> Vec<Link> {
+    let ids: Vec<String> = state
+        .links
+        .keys()
+        .filter(|id| Some(id.as_str()) != kept)
+        .cloned()
+        .collect();
+    ids.iter().filter_map(|id| state.links.remove(id)).collect()
 }
 
 /// What clients connect to now: the paired host on screen, or this computer's.
@@ -250,6 +269,9 @@ pub fn pair(code: &str) -> Result<KnownHost, PairError> {
     let key = hq_remote::client::client_key(&key_path).map_err(|error| {
         PairError::Unreachable(format!("cannot read this computer's key: {error}"))
     })?;
+    // Pairing dials with this computer's key: no other link may hold it meanwhile.
+    let open = take_links(&mut state(), None);
+    open.iter().for_each(Link::close);
     let (link, welcome) =
         Link::pair(key, &code, &computer_name()).map_err(|error| match error {
             LinkError::Refused(reason) => PairError::Refused(refusal(&reason)),

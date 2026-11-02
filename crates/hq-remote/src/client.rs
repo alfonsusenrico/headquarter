@@ -161,26 +161,67 @@ struct Inner {
     runtime: Runtime,
     key: SecretKey,
     address: Mutex<HostAddress>,
+    /// One endpoint per link, kept across redials: a second endpoint with the same key
+    /// would take the relay's place from the first.
+    endpoint: Mutex<Option<Bound>>,
     live: Mutex<Option<Live>>,
     welcome: Mutex<Option<Welcome>>,
 }
 
-struct Live {
+struct Bound {
     endpoint: Endpoint,
+    relays: Relays,
+}
+
+struct Live {
     connection: Connection,
     /// The control stream's sending half, held so the gateway keeps the stream.
     _control: SendStream,
 }
 
-impl Drop for Inner {
-    fn drop(&mut self) {
+impl Inner {
+    /// Closes the connection and the endpoint, so this computer's key is free again.
+    fn shut(&self) {
         if let Some(live) = lock(&self.live).take() {
             live.connection.close(0u32.into(), b"bye");
-            let endpoint = live.endpoint;
+        }
+        if let Some(bound) = lock(&self.endpoint).take() {
             self.runtime.block_on(async {
-                let _ = tokio::time::timeout(Duration::from_secs(1), endpoint.close()).await;
+                let _ = tokio::time::timeout(Duration::from_secs(1), bound.endpoint.close()).await;
             });
         }
+    }
+
+    /// The link's endpoint, bound with `relays` when there is none yet or the host's
+    /// relay changed.
+    fn endpoint(&self, relays: Relays) -> Result<Endpoint, LinkError> {
+        let mut bound = lock(&self.endpoint);
+        if let Some(current) = bound.as_ref()
+            && current.relays == relays
+            && !current.endpoint.is_closed()
+        {
+            return Ok(current.endpoint.clone());
+        }
+        if let Some(old) = bound.take() {
+            self.runtime.block_on(async {
+                let _ = tokio::time::timeout(Duration::from_secs(1), old.endpoint.close()).await;
+            });
+        }
+        let endpoint = self
+            .runtime
+            .block_on(crate::bind(self.key.clone(), &relays, &[]))
+            .map_err(LinkError::Unreachable)?;
+        *bound = Some(Bound {
+            endpoint: endpoint.clone(),
+            relays,
+        });
+        Ok(endpoint)
+    }
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        self.shut();
     }
 }
 
@@ -206,6 +247,7 @@ impl Link {
                 runtime: runtime()?,
                 key,
                 address: Mutex::new(address),
+                endpoint: Mutex::new(None),
                 live: Mutex::new(None),
                 welcome: Mutex::new(None),
             }),
@@ -255,7 +297,9 @@ impl Link {
             Ok((send, recv)) => Ok(stream(&handle, send, recv)),
             Err(_) => {
                 // The connection broke since it was checked: dial once more.
-                lock(&self.inner.live).take();
+                if let Some(old) = lock(&self.inner.live).take() {
+                    old.connection.close(0u32.into(), b"bye");
+                }
                 let connection = self.connection()?;
                 let (send, recv) = handle
                     .block_on(connection.open_bi())
@@ -265,11 +309,9 @@ impl Link {
         }
     }
 
-    /// Ends the connection; the next `open` dials again.
+    /// Ends the connection and lets go of the endpoint; the next `open` dials again.
     pub fn close(&self) {
-        if let Some(live) = lock(&self.inner.live).take() {
-            live.connection.close(0u32.into(), b"bye");
-        }
+        self.inner.shut();
     }
 
     /// The live connection, or a new one after the `Hello` handshake.
@@ -298,12 +340,13 @@ impl Link {
         let addr = address
             .endpoint_addr()
             .ok_or_else(|| LinkError::Unreachable("the host's key is not valid".into()))?;
-        let relays = address.relays();
-        let key = self.inner.key.clone();
-        let (live, welcome) = self
-            .inner
-            .runtime
-            .block_on(handshake(key, relays, addr, first))?;
+        let endpoint = self.inner.endpoint(address.relays())?;
+        let (connection, control, welcome) =
+            self.inner.runtime.block_on(greet(&endpoint, addr, first))?;
+        let live = Live {
+            connection,
+            _control: control,
+        };
         if let Some(relay) = &welcome.relay {
             lock(&self.inner.address).relay = Some(relay.clone());
         }
@@ -345,14 +388,12 @@ async fn read_response(recv: &mut RecvStream) -> Result<Response, LinkError> {
     }
 }
 
-async fn handshake(
-    key: SecretKey,
-    relays: Relays,
+/// Dials the host and greets it; the connection and its control stream once it answers.
+async fn greet(
+    endpoint: &Endpoint,
     addr: EndpointAddr,
     first: Request,
-) -> Result<(Live, Welcome), LinkError> {
-    let unreachable = |error: String| LinkError::Unreachable(error);
-    let endpoint = crate::bind(key, &relays, &[]).await.map_err(unreachable)?;
+) -> Result<(Connection, SendStream, Welcome), LinkError> {
     let connection = tokio::time::timeout(DIAL_WAIT, endpoint.connect(addr, ALPN))
         .await
         .map_err(|_| LinkError::Unreachable("the host did not answer".into()))?
@@ -432,14 +473,7 @@ async fn handshake(
         let mut sink = [0u8; 1024];
         while let Ok(Some(_)) = recv.read(&mut sink).await {}
     });
-    Ok((
-        Live {
-            endpoint,
-            connection,
-            _control: send,
-        },
-        welcome,
-    ))
+    Ok((connection, send, welcome))
 }
 
 fn stream(handle: &Handle, send: SendStream, recv: RecvStream) -> (Reader, Writer) {
