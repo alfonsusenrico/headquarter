@@ -1,6 +1,6 @@
 # The desktop app on Windows, as a client
 
-Status: plan, waiting for the owner's approval. Builds on `add-remote-desktop-client`.
+Status: approved by the owner 2026-11-02 ("approve all three"). Builds on `add-remote-desktop-client`.
 
 ## Why
 
