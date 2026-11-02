@@ -24,12 +24,15 @@ the behaviour.
   history every 60 s (`HQ_HISTORY_INTERVAL_SECS` shortens it in tests), `host/outside.rs` links outside agents every 5 s,
   `host/close.rs` closes a session with the agent's own keys, and `host/usage.rs`
   reads usage only while a client shows it (`HQ_USAGE_INTERVAL_SECS` shortens the 5-minute Codex interval in tests).
-  `host/remote.rs` is remote control's gateway: running only while a phone is paired or a code is shown, an iroh endpoint
-  on its own thread that passes each paired phone to `agentd.sock` as an ordinary
-  client through an allow-list (add-remote-gateway).
+  `host/remote.rs` is remote control's gateway: running only while a device is paired or a code is shown, an iroh endpoint
+  on its own thread that passes each paired phone or desktop to `agentd.sock` as an ordinary
+  client through an allow-list for its kind; a desktop may open up to 64 streams
+  (add-remote-gateway, add-remote-desktop-client). `host/folders.rs` lists and finds the
+  host's folders for a remote desktop's folder browser.
 - `crates/hq-remote`: remote control's connection, shared by the host's gateway and the
   phone's core: binding the iroh endpoint (relays), pairing codes, and `hq-protocol`
-  frames over QUIC.
+  frames over QUIC. `client` is the desktop's blocking `Link` to a paired host: one
+  endpoint kept across redials, a control stream, and a new stream per host client.
 - `crates/hq-mobile`: the phone's core for the Android app, exposed to Kotlin with UniFFI:
   pairing, the computers it knows, the connection to the computer on screen, home as
   `hq_protocol::sidebar` arranges it, and open terminals (`alacritty_terminal`). Calls block,
@@ -40,7 +43,9 @@ the behaviour.
   `ui/` holds the screens and `ui/Theme.kt` the desktop's tokens. The core's libraries and
   binding are generated (`scripts/android-core`) and not committed.
 - `crates/hq-client`: the host connection shared by the CLI and the app; it starts the
-  host (`hq` beside the running executable) when none is running.
+  host (`hq` beside the running executable) when none is running. A `Host` is this
+  computer's (its socket) or a paired remote one (a `Link`); the app's `hosts.rs` keeps the
+  paired hosts (`hosts.json`) and this computer's key (`client.key`, mode 600).
 - `crates/hq-cli`: the `hq` and `headquarter` executables. They are thin entry points
   over `hq_cli::main`.
 - `crates/hq-app`: the desktop app `headquarter-app`, a GPUI client of the same
