@@ -5,15 +5,20 @@
 
 use std::collections::VecDeque;
 use std::io::{self, BufReader, Read, Write};
+#[cfg(unix)]
 use std::net::Shutdown;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::Path;
+#[cfg(unix)]
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
-pub use hq_daemon::paths::HostPaths;
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::{Result, anyhow, bail};
 use hq_protocol::{
     AgentUsage, ErrorCode, Footprint, Frame, GroupColor, GroupInfo, PROTOCOL_VERSION, RemoveWay,
     Request, Response, SessionFootprint, SessionInfo, host_protocol_in_refusal, read_frame,
@@ -21,21 +26,36 @@ use hq_protocol::{
 };
 use hq_signals::details::SessionDetails;
 use hq_signals::event::Agent;
+pub use hq_signals::paths::HostPaths;
 
 /// How long a client waits for a host it just started to accept connections. It covers
 /// a host that first waits for a stopping one to exit (fix-host-start-after-stop); the
 /// wait ends as soon as the host answers.
+#[cfg(unix)]
 const START_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// The host a client talks to: this computer's, through its socket, or a paired host on
-/// another computer, through a remote link.
+/// another computer, through a remote link. The host runs on Unix only, so elsewhere a
+/// client has remote hosts only (add-windows-client D1).
 #[derive(Clone)]
 pub enum Host {
+    #[cfg(unix)]
     Local(HostPaths),
     Remote(Link),
 }
 
 pub use hq_remote::client::{HostAddress, Link, LinkError, Welcome};
+
+impl Host {
+    /// The remote link, for a paired host on another computer.
+    pub fn link(&self) -> Option<&Link> {
+        match self {
+            #[cfg(unix)]
+            Host::Local(_) => None,
+            Host::Remote(link) => Some(link),
+        }
+    }
+}
 
 /// Something a client can be connected to.
 pub trait Connect {
@@ -45,6 +65,7 @@ pub trait Connect {
     fn connect_or_start(&self) -> Result<Client>;
 }
 
+#[cfg(unix)]
 impl Connect for HostPaths {
     fn connect(&self) -> Result<Client> {
         Client::connect(self)
@@ -58,6 +79,7 @@ impl Connect for HostPaths {
 impl Connect for Host {
     fn connect(&self) -> Result<Client> {
         match self {
+            #[cfg(unix)]
             Host::Local(paths) => Client::connect(paths),
             Host::Remote(link) => Client::over_link(link),
         }
@@ -66,6 +88,7 @@ impl Connect for Host {
     /// A remote host is never started from here; it runs on its own computer.
     fn connect_or_start(&self) -> Result<Client> {
         match self {
+            #[cfg(unix)]
             Host::Local(paths) => Client::connect_or_start(paths),
             Host::Remote(link) => Client::over_link(link),
         }
@@ -74,6 +97,7 @@ impl Connect for Host {
 
 /// The receiving side of a connection.
 pub enum Stream {
+    #[cfg(unix)]
     Local(UnixStream),
     Remote(hq_remote::client::Reader),
 }
@@ -81,6 +105,7 @@ pub enum Stream {
 impl Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
+            #[cfg(unix)]
             Stream::Local(stream) => stream.read(buf),
             Stream::Remote(reader) => reader.read(buf),
         }
@@ -88,6 +113,7 @@ impl Read for Stream {
 }
 
 enum WriterKind {
+    #[cfg(unix)]
     Local(UnixStream),
     Remote(hq_remote::client::Writer),
 }
@@ -111,6 +137,7 @@ impl Writer {
     /// Ends the connection both ways, so a reader blocked on it returns.
     pub fn shutdown(&self) {
         match &mut *self.lock() {
+            #[cfg(unix)]
             WriterKind::Local(stream) => {
                 let _ = stream.shutdown(Shutdown::Both);
             }
@@ -122,6 +149,7 @@ impl Writer {
 impl Write for Writer {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match &mut *self.lock() {
+            #[cfg(unix)]
             WriterKind::Local(stream) => stream.write(buf),
             WriterKind::Remote(writer) => writer.write(buf),
         }
@@ -129,6 +157,7 @@ impl Write for Writer {
 
     fn flush(&mut self) -> io::Result<()> {
         match &mut *self.lock() {
+            #[cfg(unix)]
             WriterKind::Local(stream) => stream.flush(),
             WriterKind::Remote(writer) => writer.flush(),
         }
@@ -157,6 +186,7 @@ impl Client {
         }
     }
 
+    #[cfg(unix)]
     pub fn connect_or_start(paths: &HostPaths) -> Result<Client> {
         match Client::greet(paths, PROTOCOL_VERSION) {
             Ok(Greeting::Welcome(client)) => return Ok(client),
@@ -178,6 +208,7 @@ impl Client {
     }
 
     /// Connects to a running host without starting one.
+    #[cfg(unix)]
     pub fn connect(paths: &HostPaths) -> Result<Client> {
         match Client::greet(paths, PROTOCOL_VERSION)? {
             Greeting::Welcome(client) => Ok(client),
@@ -186,6 +217,7 @@ impl Client {
     }
 
     /// Connects and says `Hello` in `protocol`; an error means no host answered.
+    #[cfg(unix)]
     pub fn greet(paths: &HostPaths, protocol: u32) -> Result<Greeting> {
         let stream = UnixStream::connect(&paths.control_socket)
             .with_context(|| format!("connect to {}", paths.control_socket.display()))?;
@@ -253,6 +285,7 @@ pub enum Greeting {
 
 /// Stops a host that speaks protocol `protocol`, with the `Hello` and `Stop` every
 /// version understands. Its sessions end with it.
+#[cfg(unix)]
 pub fn stop_other_version(paths: &HostPaths, protocol: u32) -> Result<()> {
     let mut client = match Client::greet(paths, protocol)? {
         Greeting::Welcome(client) => client,
@@ -761,6 +794,7 @@ impl std::error::Error for Refused {}
 
 /// Starts the host as `<hq> daemon`, where `<hq>` is this executable when it is `hq`
 /// (or `headquarter`), or the `hq` beside it otherwise (the desktop app).
+#[cfg(unix)]
 fn start_host() -> Result<()> {
     let exe = std::env::current_exe().context("locate this executable")?;
     let name = exe
@@ -782,7 +816,8 @@ fn start_host() -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+// Both tests talk over a Unix socket pair.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use hq_protocol::{External, Origin};

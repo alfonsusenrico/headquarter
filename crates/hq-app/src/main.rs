@@ -1,6 +1,9 @@
 //! Headquarter desktop app: a client of the Headquarter host showing sessions beside
 //! each agent's own terminal interface. See `openspec/specs/desktop-app/`.
 
+// A window app on Windows: without this, starting it opens a console window too.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod app_log;
 mod app_state;
 mod header;
@@ -36,9 +39,11 @@ fn main() {
             menus::install(cx);
             // A build without a platform text system draws no text and says nothing; make
             // that loud (the `font-kit` feature on macOS).
-            if cx.text_system().all_font_names().is_empty() {
+            let fonts = cx.text_system().all_font_names();
+            if fonts.is_empty() {
                 eprintln!("headquarter-app: no fonts available; text will not be drawn");
             }
+            terminal::view::choose_default_font(&fonts);
             // Read once here for the window's background; the workspace reads again.
             let (appearance, _) = settings::read(&mut settings::watcher(), None);
             let bounds = kept_bounds(cx)
@@ -59,7 +64,9 @@ fn main() {
             let show_setup = setup::should_show(
                 settings::path().is_some_and(|path| path.exists()),
                 setup::asked_from_args(),
-                hosts::is_remote(),
+                // Setup reads this computer's agents only beside its own host; without
+                // one (Windows) setup is the look alone and runs as usual.
+                hosts::has_local_host() && hosts::is_remote(),
             );
             let opened = cx.open_window(options, |window, cx| {
                 let view = cx.new(|cx| shell::Shell::new(show_setup, window, cx));

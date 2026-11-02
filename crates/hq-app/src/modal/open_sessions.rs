@@ -1455,6 +1455,8 @@ mod tests {
         assert_eq!(day_heading(day(10, 13), today), "13 October");
     }
 
+    // This computer's folders: browsed only beside a local host, which runs on Unix.
+    #[cfg(unix)]
     #[test]
     fn folder_suggestions_complete_a_half_typed_path() {
         let root = std::env::temp_dir().join(format!("hq-open-{}", std::process::id()));

@@ -74,11 +74,38 @@ impl Default for PaneOptions {
     }
 }
 
+/// The terminal font when the settings name none: the platform's, chosen once fonts are
+/// known (`choose_default_font`).
 pub fn default_font() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Menlo"
+    DEFAULT_FONT
+        .get()
+        .copied()
+        .unwrap_or(if cfg!(target_os = "macos") {
+            "Menlo"
+        } else if cfg!(windows) {
+            "Cascadia Mono"
+        } else {
+            "DejaVu Sans Mono"
+        })
+}
+
+static DEFAULT_FONT: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// Picks the default font from those installed. Windows 11 ships Cascadia Mono; older
+/// Windows 10 may have only Consolas (add-windows-client D3).
+pub fn choose_default_font(installed: &[String]) {
+    if cfg!(windows) {
+        let _ = DEFAULT_FONT.set(windows_font(installed));
+    }
+}
+
+fn windows_font(installed: &[String]) -> &'static str {
+    if installed.iter().any(|name| name == "Cascadia Mono")
+        || !installed.iter().any(|name| name == "Consolas")
+    {
+        "Cascadia Mono"
     } else {
-        "DejaVu Sans Mono"
+        "Consolas"
     }
 }
 
@@ -1275,6 +1302,25 @@ impl EntityInputHandler for TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_falls_back_to_consolas_only_without_cascadia() {
+        let names = |list: &[&str]| {
+            list.iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            windows_font(&names(&["Cascadia Mono", "Consolas"])),
+            "Cascadia Mono"
+        );
+        assert_eq!(windows_font(&names(&["Consolas", "Arial"])), "Consolas");
+        assert_eq!(
+            windows_font(&names(&["Arial"])),
+            "Cascadia Mono",
+            "neither: keep the first choice"
+        );
+    }
 
     #[test]
     fn dragging_past_an_edge_scrolls_faster_further_out() {

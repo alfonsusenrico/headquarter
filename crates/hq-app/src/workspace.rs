@@ -497,6 +497,11 @@ impl Workspace {
         }
         workspace.apply_settings(window, cx);
         window.focus(&workspace.sidebar_focus, cx);
+        // Without a host here, the first launch starts at Connect to a Host
+        // (add-windows-client D2).
+        if !crate::hosts::has_local_host() && crate::hosts::known().is_empty() {
+            workspace.open_connect_window(window, cx);
+        }
         workspace
     }
 
@@ -2487,6 +2492,27 @@ impl Workspace {
 
     fn render_empty_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let chrome = self.theme.chrome;
+        let (text, button) = if crate::hosts::none_on_screen() {
+            (
+                "Connect to a host to see its sessions and start new ones.",
+                Button::new("empty-connect")
+                    .primary()
+                    .label("Connect to a Host…")
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_connect_window(window, cx)),
+                    ),
+            )
+        } else {
+            (
+                "Add the sessions you want to keep in view. Sessions you start here join on their own.",
+                Button::new("empty-add")
+                    .primary()
+                    .label("Add sessions")
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.show_open_sessions(window, cx)),
+                    ),
+            )
+        };
         div()
             .flex_1()
             .flex()
@@ -2498,13 +2524,8 @@ impl Workspace {
             .text_center()
             .text_size(px(14.))
             .text_color(hsla(chrome.muted))
-            .child("Add the sessions you want to keep in view. Sessions you start here join on their own.")
-            .child(
-                Button::new("empty-add")
-                    .primary()
-                    .label("Add sessions")
-                    .on_click(cx.listener(|this, _, window, cx| this.show_open_sessions(window, cx))),
-            )
+            .child(text)
+            .child(button)
     }
 
     /// Opens or closes one agent's details; a second click on the open ring closes them.
@@ -2925,7 +2946,11 @@ impl Workspace {
         let mut soft = hsla(chrome.selected);
         soft.a = 0.6;
         let strong = hsla(chrome.selected);
-        let shortcut = if shortcuts::MAC { "⌘O" } else { "Ctrl⇧O" };
+        let shortcut = if shortcuts::MAC {
+            "⌘O"
+        } else {
+            "Ctrl+Shift+O"
+        };
         div()
             .flex_none()
             .pb(px(14.))
@@ -3016,7 +3041,10 @@ impl Workspace {
             }
             Pane::Empty if !self.listed => {
                 let waiting = if crate::hosts::is_remote() {
-                    format!("Connecting to {}…", self.host_name_shown())
+                    match crate::hosts::shown_name() {
+                        Some(name) => format!("Connecting to {name}…"),
+                        None => "Connect to a host to see its sessions.".to_owned(),
+                    }
                 } else {
                     "Starting Headquarter…".to_owned()
                 };
@@ -3031,7 +3059,9 @@ impl Workspace {
                     .into_any_element()
             }
             Pane::Empty => centred
-                .child(note(if self.items(cx).is_empty() {
+                .child(note(if crate::hosts::none_on_screen() {
+                    "Connect to a host to see its sessions.".to_owned()
+                } else if self.items(cx).is_empty() {
                     "Add sessions with + to keep them in view here.".to_owned()
                 } else {
                     "Choose a session in the sidebar.".to_owned()
@@ -3445,7 +3475,7 @@ fn watch_sessions(tx: &UnboundedSender<ListEvent>) {
             Ok(host) => host,
             Err(error) => return fail(format!("{error:#}")),
         };
-        let remote = matches!(host, hq_client::Host::Remote(_));
+        let remote = host.link().is_some();
         let reason = match follow_host(&host, tx) {
             Followed::Gone => return,
             Followed::Final(message) => return fail(message),
@@ -3508,7 +3538,7 @@ fn follow_host(host: &hq_client::Host, tx: &UnboundedSender<ListEvent>) -> Follo
             return Followed::Failed(format!("cannot reach the Headquarter host: {error:#}"));
         }
     };
-    if let hq_client::Host::Remote(link) = host {
+    if let Some(link) = host.link() {
         crate::hosts::remember_address(link);
         if let Ok(folder) = hq_client::list_folder(host, "")
             && tx.unbounded_send(ListEvent::Home(folder.home)).is_err()

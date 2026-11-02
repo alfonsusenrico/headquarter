@@ -241,9 +241,16 @@ impl Setup {
         let alacritty = setup::alacritty_path(config_home.as_deref(), home.as_deref())
             .map(|path| setup::read_alacritty(&path, home.as_deref()));
         let current = existing.as_ref().map(|(_, settings)| settings.clone());
-        let found = cx
-            .background_executor()
-            .spawn(async move { discover(current.as_ref()) });
+        // Agents run beside the host, so a computer without one is not searched; its setup
+        // is the look only (add-windows-client D2).
+        let has_agents_step = crate::hosts::has_local_host();
+        let found = cx.background_executor().spawn(async move {
+            if has_agents_step {
+                discover(current.as_ref())
+            } else {
+                Vec::new()
+            }
+        });
         let discovery = cx.spawn(async move |this, cx| {
             let reports = found.await;
             let _ = this.update(cx, |setup, cx| {
@@ -271,7 +278,11 @@ impl Setup {
             .position(|row| row.choice == current && row.available)
             .unwrap_or(0);
         let mut setup = Setup {
-            step: Step::Agents,
+            step: if has_agents_step {
+                Step::Agents
+            } else {
+                Step::Look
+            },
             file,
             existing,
             rows: None,
@@ -471,7 +482,7 @@ impl Setup {
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
-        if self.step == Step::Look {
+        if self.step == Step::Look && crate::hosts::has_local_host() {
             self.step = Step::Agents;
             cx.notify();
         }
@@ -674,7 +685,11 @@ impl Setup {
                 div()
                     .text_size(px(13.))
                     .text_color(hsla(chrome.muted))
-                    .child("Change it any time with Themes (⌘G)."),
+                    .child(if cfg!(target_os = "macos") {
+                        "Change it any time with Themes (⌘G)."
+                    } else {
+                        "Change it any time with Themes (Ctrl-Shift-G)."
+                    }),
             )
             .into_any_element()
     }
@@ -749,11 +764,14 @@ impl Render for Setup {
             Step::Look => ("How should it look?", self.render_look(cx)),
             Step::Done => ("Ready", self.render_done()),
         };
+        // Without the agents step (no host here) the look is the first of two.
+        let skipped = usize::from(!crate::hosts::has_local_host());
         let step_number = match self.step {
             Step::Agents => 1,
             Step::Look => 2,
             Step::Done => 3,
-        };
+        } - skipped;
+        let steps = 3 - skipped;
         let continue_label = match self.step {
             Step::Agents => "Continue",
             Step::Look => "Save settings",
@@ -787,7 +805,7 @@ impl Render for Setup {
                         div()
                             .text_size(px(12.5))
                             .text_color(hsla(chrome.muted))
-                            .child(format!("Headquarter setup · step {step_number} of 3")),
+                            .child(format!("Headquarter setup · step {step_number} of {steps}")),
                     )
                     .child(
                         div()
@@ -801,7 +819,7 @@ impl Render for Setup {
                             .flex()
                             .gap(px(8.))
                             .pt(px(8.))
-                            .children((self.step == Step::Look).then(|| {
+                            .children((self.step == Step::Look && skipped == 0).then(|| {
                                 Button::new("setup-back")
                                     .label("Back")
                                     .on_click(cx.listener(|this, _, _, cx| this.back(cx)))

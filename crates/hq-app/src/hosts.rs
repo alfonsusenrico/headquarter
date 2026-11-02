@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use anyhow::{Context, Result, anyhow};
-use hq_client::{Host, HostAddress, HostPaths, Link, LinkError};
+#[cfg(unix)]
+use hq_client::HostPaths;
+use hq_client::{Host, HostAddress, Link, LinkError};
 use hq_remote::PairingCode;
 use serde::{Deserialize, Serialize};
 
@@ -123,9 +125,16 @@ pub fn has_local_host() -> bool {
     cfg!(unix)
 }
 
-/// Whether a paired host on another computer is on screen.
+/// Whether no host is on screen at all: a computer without a host of its own that has
+/// paired with none yet (add-windows-client D2).
+pub fn none_on_screen() -> bool {
+    !has_local_host() && shown_name().is_none()
+}
+
+/// Whether the host on screen is not this computer's: a paired host on another
+/// computer, or none yet on a computer without a host (add-windows-client D2).
 pub fn is_remote() -> bool {
-    shown() != Shown::Local
+    shown() != Shown::Local || !has_local_host()
 }
 
 /// The paired hosts, most recently paired first.
@@ -200,11 +209,23 @@ pub fn current() -> Result<Host> {
 }
 
 /// This computer's host.
+#[cfg(unix)]
 pub fn local() -> Result<Host> {
     HostPaths::standard()
         .map(Host::Local)
         .ok_or_else(|| anyhow!("cannot find the home folder"))
 }
+
+/// This computer runs no host here: the app shows paired hosts only, and never offers
+/// this computer's (add-windows-client D2).
+#[cfg(not(unix))]
+pub fn local() -> Result<Host> {
+    Err(anyhow!(NO_HOST_YET))
+}
+
+/// Said where the sessions would be when no host is on screen yet.
+#[cfg(not(unix))]
+pub const NO_HOST_YET: &str = "Connect to a host to see its sessions.";
 
 /// Remembers where a paired host was last reached, after its gateway named its relay.
 pub fn remember_address(link: &Link) {
@@ -319,7 +340,17 @@ pub fn forget(id: &str) {
         link.close();
     }
     if state.file.shown.as_deref() == Some(id) {
-        state.file.shown = None;
+        // Without a host here, the most recently paired one left takes its place.
+        state.file.shown = if has_local_host() {
+            None
+        } else {
+            state
+                .file
+                .hosts
+                .iter()
+                .max_by_key(|host| host.paired_at)
+                .map(|host| host.id.clone())
+        };
     }
     save(&state.file);
 }

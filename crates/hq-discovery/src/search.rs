@@ -3,7 +3,6 @@
 
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -213,9 +212,18 @@ fn found(path: PathBuf, source: Source) -> Found {
 }
 
 /// A regular file (or a symlink to one) with an execute bit.
+#[cfg(unix)]
 pub fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path)
         .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
+/// A regular file. Windows has no execute bit; the app there never searches for agents
+/// (add-windows-client D1).
+#[cfg(not(unix))]
+pub fn is_executable(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
 }
 
 /// The `bin` folder of the newest Node version installed by nvm.
@@ -294,6 +302,7 @@ mod tests {
     use super::*;
     use crate::agents::known;
     use crate::platform::Platform;
+    use std::os::unix::fs::PermissionsExt;
 
     struct Fixture {
         root: PathBuf,

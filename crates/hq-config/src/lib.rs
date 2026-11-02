@@ -191,6 +191,13 @@ pub fn settings_path() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("HQ_CONFIG_DIR").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(dir).join("config.toml"));
     }
+    // Beside the app's other files in `%APPDATA%\Headquarter` (add-windows-client D2;
+    // the same folder as `hq_signals::paths::windows_dir`).
+    if cfg!(windows) {
+        return std::env::var_os("APPDATA")
+            .filter(|value| !value.is_empty())
+            .map(|dir| PathBuf::from(dir).join("Headquarter").join("config.toml"));
+    }
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

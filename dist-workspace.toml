@@ -7,9 +7,12 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.32.0"
 ci = "github"
-targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
+# Windows builds the desktop app only, a client of remote hosts (add-windows-client D7);
+# each package names its own targets.
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # gzip, not xz: minimal Linux systems (Debian slim, Alpine) have no xz.
 unix-archive = ".tar.gz"
+windows-archive = ".zip"
 # Our own installer replaces dist's per-package ones (D1); it ships beside the archives.
 installers = []
 # Releases run only on version tags (D5); nothing runs on pull requests.

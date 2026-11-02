@@ -92,7 +92,8 @@ pub fn latest() -> Result<Version> {
     let output = curl(&[
         "-fsSI",
         "-o",
-        "/dev/null",
+        // Windows' own curl.exe (Windows 10 and later) writes nowhere through `NUL`.
+        if cfg!(windows) { "NUL" } else { "/dev/null" },
         "-w",
         "%{redirect_url}",
         &format!("{}/releases/latest", page_base()),
@@ -217,6 +218,11 @@ pub struct Installed {
 
 /// This copy, when the installer's manifest lists it.
 pub fn installed_copy() -> Option<Installed> {
+    // The installer is a Unix shell script: on Windows a newer release links to its page
+    // (add-windows-client D5).
+    if !cfg!(unix) {
+        return None;
+    }
     let home = hq_signals::paths::home()?;
     // The installer always writes here, whatever `HQ_DATA_DIR` says.
     let manifest =
@@ -405,6 +411,7 @@ fn run_installer(folder: &Path, version: Version, installed: &Installed) -> Resu
         .stdin(Stdio::null())
         .stdout(output)
         .stderr(errors);
+    #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let child = command.spawn().context("cannot start the installer")?;
     Ok(Run {
@@ -504,6 +511,7 @@ pub fn relaunch_after_exit(app: &Path) -> Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     command
         .spawn()
