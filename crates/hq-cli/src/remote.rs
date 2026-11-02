@@ -1,6 +1,6 @@
-//! `hq remote` (add-remote-gateway D9): pair a phone with a QR code, list and remove paired
-//! phones. Remote control runs while a phone is paired, with no switch
-//! (remote-follows-paired-phones D3).
+//! `hq remote` (add-remote-gateway D9): pair a phone or another computer's app with a
+//! code, list and remove paired devices. Remote control runs while a device is paired,
+//! with no switch (remote-follows-paired-phones D3, add-remote-desktop-client D1).
 
 use std::process::ExitCode;
 
@@ -14,14 +14,15 @@ use hq_protocol::{RemoteDevice, Request, Response};
 pub enum RemoteCommand {
     /// Show whether remote control runs and how the computer is reached.
     Status,
-    /// Show a QR code that pairs one phone; it works once, for 2 minutes.
+    /// Show a code that pairs one phone (QR) or one computer's app (pasted into Connect to
+    /// a Host); it works once, for 2 minutes.
     Pair,
-    /// List paired phones.
+    /// List paired phones and computers.
     Devices {
         #[arg(long)]
         json: bool,
     },
-    /// Remove a paired phone by name or id; it is disconnected at once, and remote control
+    /// Remove a paired device by name or id; it is disconnected at once, and remote control
     /// stops with the last one.
     Remove { device: String },
 }
@@ -86,9 +87,12 @@ fn pair(paths: &HostPaths) -> Result<ExitCode> {
                 .build()
         ),
     }
-    println!("Scan the QR code with Headquarter on your phone, or enter the code:\n{code}\n");
     println!(
-        "Waiting for a phone; the code works once, for {} minutes.",
+        "Scan the QR code with Headquarter on your phone, or paste the code into Connect to a \
+         Host in the Headquarter app on another computer:\n{code}\n"
+    );
+    println!(
+        "Waiting for a device; the code works once, for {} minutes.",
         expires_in_secs.div_ceil(60)
     );
     loop {
@@ -127,10 +131,10 @@ fn status_text(status: &Response) -> String {
     let mut text = String::new();
     match (enabled, running) {
         (_, true) => text.push_str("Remote control is on.\n"),
-        (true, false) => text.push_str("A phone is paired but remote control is not running.\n"),
+        (true, false) => text.push_str("A device is paired but remote control is not running.\n"),
         (false, false) => {
             text.push_str(
-                "Remote control is off: no phone is paired. `hq remote pair` pairs one.\n",
+                "Remote control is off: no device is paired. `hq remote pair` pairs one.\n",
             );
         }
     }
@@ -140,7 +144,7 @@ fn status_text(status: &Response) -> String {
     if *running {
         match relay {
             Some(relay) => text.push_str(&format!("Reachable through {relay}\n")),
-            None => text.push_str("Not connected to a relay yet; phones on this network only.\n"),
+            None => text.push_str("Not connected to a relay yet; devices on this network only.\n"),
         }
         if let Some(endpoint) = endpoint {
             text.push_str(&format!("Computer key: {endpoint}\n"));
@@ -151,7 +155,7 @@ fn status_text(status: &Response) -> String {
 
 fn devices_text(devices: &[RemoteDevice], now_ms: u64) -> String {
     if devices.is_empty() {
-        return "No paired phones. `hq remote pair` pairs one.\n".to_owned();
+        return "No paired devices. `hq remote pair` pairs a phone or a computer.\n".to_owned();
     }
     let width = devices
         .iter()
@@ -169,13 +173,19 @@ fn devices_text(devices: &[RemoteDevice], now_ms: u64) -> String {
             (false, None) => "never connected".to_owned(),
         };
         let id: String = device.id.chars().take(10).collect();
-        text.push_str(&format!("  {:width$}  {seen:<16}  {id}\n", device.name));
+        text.push_str(&format!(
+            "  {:width$}  {:<7}  {seen:<16}  {id}\n",
+            device.name,
+            device.kind.as_str()
+        ));
     }
     text
 }
 
 #[cfg(test)]
 mod tests {
+    use hq_protocol::DeviceKind;
+
     use super::*;
 
     #[test]
@@ -191,6 +201,7 @@ mod tests {
             RemoteDevice {
                 id: "abcdef0123456789".into(),
                 name: "Pixel 8".into(),
+                kind: DeviceKind::Phone,
                 paired_at: 0,
                 last_seen_at: Some(0),
                 connected: true,
@@ -198,14 +209,18 @@ mod tests {
             RemoteDevice {
                 id: "0011223344556677".into(),
                 name: "Old tablet".into(),
+                kind: DeviceKind::Desktop,
                 paired_at: 0,
                 last_seen_at: Some(1_000),
                 connected: false,
             },
         ];
         let text = devices_text(&devices, 3 * 3_600_000);
-        assert!(text.contains("Pixel 8     connected now"), "{text}");
-        assert!(text.contains("Old tablet  seen 2h ago"), "{text}");
+        assert!(
+            text.contains("Pixel 8     phone    connected now"),
+            "{text}"
+        );
+        assert!(text.contains("Old tablet  desktop  seen 2h ago"), "{text}");
         assert!(text.contains("abcdef0123"), "{text}");
         assert!(devices_text(&[], 0).contains("hq remote pair"));
     }

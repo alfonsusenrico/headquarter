@@ -62,9 +62,13 @@ the host's data. `app-state.json` remembers the host last shown.
 
 ## D7. Answers from the host
 
-- New request `ListFolder { path }` → `Folder { path, home, folders }`: directory names only,
-  hidden ones left out as the browser does today. The browser uses it for every host, local
-  too, so there is one code path. Phones may not send it.
+- New request `ListFolder { path }` → `Folder { home, path, folders }`: directory names only,
+  hidden ones left out as the browser does today (an empty path is the home folder, so the
+  answer also names it). `FindFolders {}` walks the host's home folder for finding a folder by
+  name and answers in `FoundFolders` batches on the same connection, the last one `done`. The
+  listing and the walk move from the app to `hq_discovery::folders`, so the app reads its own
+  computer directly and the host answers remote clients with the same code. Phones may send
+  neither.
 - First-run setup runs only for this computer's host; a remote host's agents are its own. The
   app's look settings stay local to the app's computer.
 - The Usage window's total names where each part runs ("Headquarter on <host>").

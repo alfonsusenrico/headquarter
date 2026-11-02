@@ -8,11 +8,12 @@ use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use hq_protocol::{ErrorCode, Frame, RemoteDevice, Request, Response};
+use hq_protocol::{DeviceKind, ErrorCode, Frame, RemoteDevice, Request, Response};
 use hq_remote::{ALPN, PAIRING_VALID_SECS, PairingCode, Relays};
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, SecretKey};
@@ -27,6 +28,8 @@ const GUESS_WINDOW: Duration = Duration::from_secs(60);
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
 /// How long `RemotePair` waits for the relay, so the code carries its URL.
 const RELAY_WAIT: Duration = Duration::from_secs(5);
+/// Streams a paired desktop may have open on one connection (add-remote-desktop-client D3).
+const MAX_STREAMS: usize = 64;
 
 /// How long a code works: [`PAIRING_VALID_SECS`], or `HQ_REMOTE_PAIR_SECS` in tests.
 fn pairing_valid() -> Duration {
@@ -90,9 +93,11 @@ impl Remote {
     }
 }
 
-/// What a paired phone may ask for (D5). Exhaustive on purpose: a new request must be
-/// decided here.
-fn allowed(request: &Request) -> bool {
+/// What a paired device may ask for: a phone (D5) or a desktop app
+/// (add-remote-desktop-client D2). Exhaustive on purpose: a new request must be decided
+/// here for both.
+fn allowed(kind: DeviceKind, request: &Request) -> bool {
+    let desktop = kind == DeviceKind::Desktop;
     match request {
         Request::Hello { .. }
         | Request::List {}
@@ -108,6 +113,7 @@ fn allowed(request: &Request) -> bool {
         | Request::Usage {}
         | Request::FollowDetails { .. }
         | Request::Visible { .. } => true,
+        // What the desktop app does on its own computer, a paired desktop may do too.
         Request::New { .. }
         | Request::Rename { .. }
         | Request::Kill { .. }
@@ -124,10 +130,13 @@ fn allowed(request: &Request) -> bool {
         | Request::SetGroup { .. }
         | Request::CloseShell { .. }
         | Request::RefreshUsage {}
-        // The Usage window is desktop only (add-usage-window D5).
         | Request::Resources {}
-        | Request::Stop {}
-        // The gateway names the phone itself; a phone cannot name its own connection
+        | Request::ListFolder { .. }
+        | Request::FindFolders {} => desktop,
+        // Never from another computer: a lost laptop cannot stop the host or let more
+        // devices in (owner, 2026-11-02).
+        Request::Stop {}
+        // The gateway names the device itself; a device cannot name its own connection
         // (fix-terminal-in-use-elsewhere D2).
         | Request::Device { .. }
         | Request::Pair { .. }
@@ -136,7 +145,7 @@ fn allowed(request: &Request) -> bool {
         | Request::RemotePair {}
         | Request::RemoteDevices {}
         | Request::RemoteRemove { .. } => false,
-        // The gateway answers it itself, for the calling phone only (`proxy`).
+        // The gateway answers it itself, for the calling device only (`proxy`).
         Request::Unpair {} => false,
     }
 }
@@ -197,8 +206,8 @@ fn host_name() -> String {
     }
 }
 
-/// A phone's name as it may be shown: trimmed, at most 64 characters, never empty.
-fn device_name(name: &str) -> String {
+/// A device's name as it may be shown: trimmed, at most 64 characters, never empty.
+fn device_name(name: &str, kind: DeviceKind) -> String {
     let name: String = name
         .trim()
         .chars()
@@ -206,7 +215,10 @@ fn device_name(name: &str) -> String {
         .take(64)
         .collect();
     if name.is_empty() {
-        "Phone".to_owned()
+        match kind {
+            DeviceKind::Phone => "Phone".to_owned(),
+            DeviceKind::Desktop => "Computer".to_owned(),
+        }
     } else {
         name
     }
@@ -464,6 +476,7 @@ impl Host {
                 .into_iter()
                 .map(|row| RemoteDevice {
                     connected: connected.contains(&row.endpoint_id),
+                    kind: DeviceKind::from_stored(&row.kind),
                     id: row.endpoint_id,
                     name: row.name,
                     paired_at: row.paired_at,
@@ -495,13 +508,16 @@ impl Host {
             [] => {
                 return Response::error(
                     ErrorCode::NotFound,
-                    format!("no paired phone `{reference}`; `hq remote devices` lists them"),
+                    format!("no paired device `{reference}`; `hq remote devices` lists them"),
                 );
             }
             several => {
                 return Response::error(
                     ErrorCode::Ambiguous,
-                    format!("`{reference}` matches {} phones; use its id", several.len()),
+                    format!(
+                        "`{reference}` matches {} devices; use its id",
+                        several.len()
+                    ),
                 );
             }
         };
@@ -537,7 +553,7 @@ async fn accept_loop(
                 let endpoint = endpoint.clone();
                 tokio::spawn(async move {
                     if let Ok(connection) = incoming.await {
-                        serve_phone(host, shared, &endpoint, connection).await;
+                        serve_device(host, shared, &endpoint, connection).await;
                     }
                 });
             }
@@ -549,14 +565,16 @@ async fn accept_loop(
     endpoint.close().await;
 }
 
-/// One phone's connection: pairing if needed, the welcome, then the proxy.
-async fn serve_phone(
+/// One device's connection: pairing if needed, the welcome, then the proxy. A desktop
+/// opens more streams on the same connection, each proxied the same way, and keeps the
+/// connection until it closes it (add-remote-desktop-client D3).
+async fn serve_device(
     host: Arc<Host>,
     shared: Arc<Shared>,
     endpoint: &Endpoint,
     connection: Connection,
 ) {
-    let phone = connection.remote_id().to_string();
+    let device = connection.remote_id().to_string();
     let Ok(Ok((mut send, mut recv))) =
         tokio::time::timeout(FIRST_FRAME_WAIT, connection.accept_bi()).await
     else {
@@ -567,17 +585,17 @@ async fn serve_phone(
         Ok(Ok(Some(frame))) => frame,
         _ => return,
     };
-    let known = lock(&host.store).device(&phone).ok().flatten();
-    // A phone this computer already knows may pair again with a shown code (it lost its
+    let known = lock(&host.store).device(&device).ok().flatten();
+    // A device this computer already knows may pair again with a shown code (it lost its
     // list, or scanned the code from its switcher): it keeps its record, renamed.
     let pairing = matches!(
         &first,
         Frame::Control(bytes) if matches!(Request::parse(bytes), Ok(Request::Pair { .. }))
     );
-    let (name, first) = match known {
-        Some(device) if !pairing => (device.name, Some(first)),
-        _ => match pair(&host, &shared, &phone, &first) {
-            Ok(name) => {
+    let (name, kind, first) = match known {
+        Some(row) if !pairing => (row.name, DeviceKind::from_stored(&row.kind), Some(first)),
+        _ => match pair(&host, &shared, &device, &first) {
+            Ok((name, kind)) => {
                 let paired = Response::Paired { host: host_name() };
                 if hq_remote::write_frame(&mut send, &Frame::response(&paired))
                     .await
@@ -585,12 +603,12 @@ async fn serve_phone(
                 {
                     return;
                 }
-                (name, None)
+                (name, kind, None)
             }
             Err(refusal) => {
                 let _ = hq_remote::write_frame(&mut send, &Frame::response(&refusal)).await;
                 let _ = send.finish();
-                // Closing drops what the phone has not received yet: let the refusal
+                // Closing drops what the device has not received yet: let the refusal
                 // arrive first, briefly.
                 let _ = tokio::time::timeout(FIRST_FRAME_WAIT / 5, send.stopped()).await;
                 connection.close(2u32.into(), b"not paired");
@@ -610,35 +628,63 @@ async fn serve_phone(
     {
         return;
     }
-    lock(&shared.connections).insert(phone.clone(), connection.clone());
-    let _ = lock(&host.store).touch_device(&phone, hq_signals::now_ms());
+    lock(&shared.connections).insert(device.clone(), connection.clone());
+    let _ = lock(&host.store).touch_device(&device, hq_signals::now_ms());
     let path = path_kind(&connection);
-    host.log
-        .line(&format!("remote connected device={name} path={path}"));
-    if let Ending::Unpaired = proxy(&host, &phone, &name, first, send, recv).await {
-        lock(&shared.connections).remove(&phone);
-        // Closing at once would drop the answer on its way to the phone (D4 of
-        // add-remote-gateway). The phone closes once it has it.
-        let _ = tokio::time::timeout(FIRST_FRAME_WAIT / 5, connection.closed()).await;
-        connection.close(0u32.into(), b"unpaired");
-        host.log.line(&format!("remote unpaired device={name}"));
-        host.follow_phones_later();
+    host.log.line(&format!(
+        "remote connected device={name} kind={} path={path}",
+        kind.as_str()
+    ));
+    let streams = Arc::new(AtomicUsize::new(1));
+    let more = (kind == DeviceKind::Desktop).then(|| {
+        tokio::spawn(more_streams(
+            Arc::clone(&host),
+            connection.clone(),
+            Stream {
+                device: device.clone(),
+                name: name.clone(),
+                kind,
+            },
+            Arc::clone(&streams),
+        ))
+    });
+    let stream = Stream {
+        device: device.clone(),
+        name: name.clone(),
+        kind,
+    };
+    let ending = proxy(&host, &stream, first, send, recv).await;
+    streams.fetch_sub(1, Ordering::SeqCst);
+    if let Ending::Unpaired = ending {
+        if let Some(more) = more {
+            more.abort();
+        }
+        lock(&shared.connections).remove(&device);
+        unpaired(&host, &connection, &name).await;
         return;
+    }
+    if kind == DeviceKind::Desktop {
+        // The desktop's first stream ended; its other streams go on until it closes the
+        // connection, or the device is removed or unpaired.
+        connection.closed().await;
+    }
+    if let Some(more) = more {
+        more.abort();
     }
     let still_ours = {
         let mut connections = lock(&shared.connections);
         let ours = connections
-            .get(&phone)
+            .get(&device)
             .is_some_and(|known| known.stable_id() == connection.stable_id());
         if ours {
-            connections.remove(&phone);
+            connections.remove(&device);
         }
         ours
     };
     if still_ours {
-        let _ = lock(&host.store).touch_device(&phone, hq_signals::now_ms());
+        let _ = lock(&host.store).touch_device(&device, hq_signals::now_ms());
     }
-    // Why QUIC ended it (idle timeout, closed by the phone, lost path), when it did; the
+    // Why QUIC ended it (idle timeout, closed by the device, lost path), when it did; the
     // reason carries no frames or keys.
     let reason = match connection.close_reason() {
         Some(error) => error.to_string(),
@@ -650,20 +696,79 @@ async fn serve_phone(
     ));
 }
 
-/// Checks a phone's first frame against the shown code; records the phone when it
-/// matches (D4).
+/// The paired device behind a proxied stream.
+#[derive(Clone)]
+struct Stream {
+    /// Its endpoint id.
+    device: String,
+    name: String,
+    kind: DeviceKind,
+}
+
+/// A desktop's further streams, each proxied to its own host connection, at most
+/// [`MAX_STREAMS`] at once.
+async fn more_streams(
+    host: Arc<Host>,
+    connection: Connection,
+    stream: Stream,
+    streams: Arc<AtomicUsize>,
+) {
+    while let Ok((mut send, recv)) = connection.accept_bi().await {
+        if streams.load(Ordering::SeqCst) >= MAX_STREAMS {
+            host.log.line(&format!(
+                "remote refused stream device={} streams={MAX_STREAMS}",
+                stream.name
+            ));
+            let refusal = Response::error(
+                ErrorCode::NotAllowed,
+                format!("at most {MAX_STREAMS} streams on one connection"),
+            );
+            let _ = hq_remote::write_frame(&mut send, &Frame::response(&refusal)).await;
+            let _ = send.finish();
+            continue;
+        }
+        streams.fetch_add(1, Ordering::SeqCst);
+        let host = Arc::clone(&host);
+        let connection = connection.clone();
+        let stream = stream.clone();
+        let streams = Arc::clone(&streams);
+        tokio::spawn(async move {
+            let ending = proxy(&host, &stream, None, send, recv).await;
+            streams.fetch_sub(1, Ordering::SeqCst);
+            if let Ending::Unpaired = ending {
+                if let Some(running) = lock(&host.remote.state).running.as_ref() {
+                    lock(&running.shared.connections).remove(&stream.device);
+                }
+                unpaired(&host, &connection, &stream.name).await;
+            }
+        });
+    }
+}
+
+/// The device removed its own pairing: let the answer reach it, then close.
+async fn unpaired(host: &Arc<Host>, connection: &Connection, name: &str) {
+    // Closing at once would drop the answer on its way to the device (D4 of
+    // add-remote-gateway). The device closes once it has it.
+    let _ = tokio::time::timeout(FIRST_FRAME_WAIT / 5, connection.closed()).await;
+    connection.close(0u32.into(), b"unpaired");
+    host.log.line(&format!("remote unpaired device={name}"));
+    host.follow_phones_later();
+}
+
+/// Checks a device's first frame against the shown code; records the device and its kind
+/// when it matches (D4).
 fn pair(
     host: &Arc<Host>,
     shared: &Shared,
-    phone: &str,
+    device: &str,
     first: &Frame,
-) -> Result<String, Box<Response>> {
+) -> Result<(String, DeviceKind), Box<Response>> {
     let refused = |message: &str| Box::new(Response::error(ErrorCode::NotAllowed, message));
     let Frame::Control(bytes) = first else {
-        return Err(refused("this phone is not paired"));
+        return Err(refused("this device is not paired"));
     };
-    let Ok(Request::Pair { secret, name }) = Request::parse(bytes) else {
-        return Err(refused("this phone is not paired"));
+    let Ok(Request::Pair { secret, name, kind }) = Request::parse(bytes) else {
+        return Err(refused("this device is not paired"));
     };
     let mut pairing = lock(&shared.pairing);
     let valid = pairing.as_ref().is_some_and(|pending| {
@@ -675,8 +780,10 @@ fn pair(
         host.log.line("remote pairing failed");
         return Err(refused("the pairing code is not valid; show a new one"));
     }
-    let name = device_name(&name);
-    if let Err(error) = lock(&host.store).add_device(phone, &name, hq_signals::now_ms()) {
+    let name = device_name(&name, kind);
+    if let Err(error) =
+        lock(&host.store).add_device(device, &name, kind.as_str(), hq_signals::now_ms())
+    {
         return Err(Box::new(Response::error(
             ErrorCode::Storage,
             error.to_string(),
@@ -687,8 +794,11 @@ fn pair(
             device: name.clone(),
         });
     }
-    host.log.line(&format!("remote paired device={name}"));
-    Ok(name)
+    host.log.line(&format!(
+        "remote paired device={name} kind={}",
+        kind.as_str()
+    ));
+    Ok((name, kind))
 }
 
 /// Five wrong codes within a minute void the code being shown.
@@ -724,12 +834,11 @@ fn path_kind(connection: &Connection) -> &'static str {
     }
 }
 
-/// Passes frames between the phone and the host's socket, refusing what a phone may not
-/// ask for (D1, D5).
+/// Passes frames between a device's stream and the host's socket, refusing what that kind
+/// of device may not ask for (D1, D5; add-remote-desktop-client D2).
 async fn proxy(
     host: &Host,
-    phone: &str,
-    name: &str,
+    stream: &Stream,
     first: Option<Frame>,
     mut send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
@@ -738,9 +847,9 @@ async fn proxy(
         return Ending::Closed;
     };
     let (mut from_host, mut to_host) = local.into_split();
-    let (to_phone, mut for_phone) = tokio::sync::mpsc::channel::<Frame>(64);
+    let (to_device, mut for_device) = tokio::sync::mpsc::channel::<Frame>(64);
     let writer = tokio::spawn(async move {
-        while let Some(frame) = for_phone.recv().await {
+        while let Some(frame) = for_device.recv().await {
             if hq_remote::write_frame(&mut send, &frame).await.is_err() {
                 break;
             }
@@ -748,10 +857,10 @@ async fn proxy(
         let _ = send.finish();
     });
     let from_host_task = {
-        let to_phone = to_phone.clone();
+        let to_device = to_device.clone();
         tokio::spawn(async move {
             while let Ok(Some(frame)) = hq_remote::read_frame(&mut from_host).await {
-                if to_phone.send(frame).await.is_err() {
+                if to_device.send(frame).await.is_err() {
                     break;
                 }
             }
@@ -776,28 +885,28 @@ async fn proxy(
             Frame::Output(_) => break,
             Frame::Control(bytes) => match Request::parse(bytes) {
                 Ok(Request::Unpair {}) => {
-                    let answer = match lock(&host.store).remove_device(phone) {
+                    let answer = match lock(&host.store).remove_device(&stream.device) {
                         Ok(_) => {
                             ending = Ending::Unpaired;
                             Response::Unpaired
                         }
                         Err(error) => Response::error(ErrorCode::Storage, error.to_string()),
                     };
-                    let _ = to_phone.send(Frame::response(&answer)).await;
+                    let _ = to_device.send(Frame::response(&answer)).await;
                     if let Ending::Unpaired = ending {
                         break;
                     }
                     false
                 }
-                Ok(request) if allowed(&request) => true,
+                Ok(request) if allowed(stream.kind, &request) => true,
                 Ok(request) => {
                     let kind = kind(&request);
                     host.log.line(&format!("remote refused request={kind}"));
                     let refusal = Response::error(
                         ErrorCode::NotAllowed,
-                        format!("`{kind}` is not allowed from a phone"),
+                        format!("`{kind}` is not allowed from a {}", stream.kind.as_str()),
                     );
-                    if to_phone.send(Frame::response(&refusal)).await.is_err() {
+                    if to_device.send(Frame::response(&refusal)).await.is_err() {
                         break;
                     }
                     false
@@ -811,7 +920,7 @@ async fn proxy(
         }
         if greeting {
             let named = Frame::request(&Request::Device {
-                name: name.to_owned(),
+                name: stream.name.clone(),
             });
             if hq_remote::write_frame(&mut to_host, &named).await.is_err() {
                 break;
@@ -820,7 +929,7 @@ async fn proxy(
     }
     drop(to_host);
     from_host_task.abort();
-    drop(to_phone);
+    drop(to_device);
     let _ = writer.await;
     ending
 }
@@ -831,7 +940,7 @@ mod tests {
 
     #[test]
     fn the_allow_list_follows_the_owner() {
-        let open = [
+        let both = [
             Request::List {},
             Request::Focus {},
             Request::Resume {
@@ -839,32 +948,54 @@ mod tests {
                 term: None,
             },
         ];
-        for request in &open {
-            assert!(allowed(request), "{request:?}");
+        for request in &both {
+            assert!(allowed(DeviceKind::Phone, request), "{request:?}");
+            assert!(allowed(DeviceKind::Desktop, request), "{request:?}");
         }
-        let closed = [
-            Request::Stop {},
-            Request::RemotePair {},
+        let desktop_only = [
             Request::CloseShell {
                 session: "s".into(),
             },
             Request::RefreshUsage {},
             Request::Resources {},
+            Request::Rename {
+                session: "s".into(),
+                name: "n".into(),
+            },
+            Request::ListFolder {
+                path: String::new(),
+            },
+            Request::FindFolders {},
+        ];
+        for request in &desktop_only {
+            assert!(!allowed(DeviceKind::Phone, request), "{request:?}");
+            assert!(allowed(DeviceKind::Desktop, request), "{request:?}");
+        }
+        let neither = [
+            Request::Stop {},
+            Request::RemotePair {},
+            Request::RemoteDevices {},
+            Request::RemoteRemove { device: "d".into() },
+            Request::RemoteSet { enabled: false },
+            Request::RemoteStatus {},
             Request::Device {
                 name: "MacBook".into(),
             },
+            Request::Unpair {},
         ];
-        for request in &closed {
-            assert!(!allowed(request), "{request:?}");
+        for request in &neither {
+            assert!(!allowed(DeviceKind::Phone, request), "{request:?}");
+            assert!(!allowed(DeviceKind::Desktop, request), "{request:?}");
         }
         assert_eq!(kind(&Request::Stop {}), "stop");
     }
 
     #[test]
     fn names_are_tidy() {
-        assert_eq!(device_name("  Pixel 8\n"), "Pixel 8");
-        assert_eq!(device_name(""), "Phone");
-        assert_eq!(device_name(&"x".repeat(100)).len(), 64);
+        assert_eq!(device_name("  Pixel 8\n", DeviceKind::Phone), "Pixel 8");
+        assert_eq!(device_name("", DeviceKind::Phone), "Phone");
+        assert_eq!(device_name("", DeviceKind::Desktop), "Computer");
+        assert_eq!(device_name(&"x".repeat(100), DeviceKind::Phone).len(), 64);
     }
 
     #[test]

@@ -2,12 +2,13 @@
 
 ## 1. Host
 
-- [ ] 1.1 Device kind in `Pair`, store migration, kind in devices lists (D1). Evidence: store migration test; host test pairing a phone without `kind` and a desktop with it.
-- [ ] 1.2 Desktop allow-list (D2). Evidence: host tests sending every refused request from a desktop and from a phone; allowed ones pass.
-- [ ] 1.3 Several streams per connection, the 64 cap, removal closing all streams (D3). Evidence: host tests.
-- [ ] 1.4 `ListFolder` (D7). Evidence: host tests (home, hidden left out, missing folder, refused from a phone).
+- [x] 1.1 Device kind in `Pair`, store migration, kind in devices lists (D1). Evidence: store migration test; host test pairing a phone without `kind` and a desktop with it.
+- [x] 1.2 Desktop allow-list (D2). Evidence: host tests sending every refused request from a desktop and from a phone; allowed ones pass.
+- [x] 1.3 Several streams per connection, the 64 cap, removal closing all streams (D3). Evidence: host tests.
+- [x] 1.4 `ListFolder` (D7). Evidence: host tests (home, hidden left out, missing folder, refused from a phone).
 
 Expected result: a test client paired as a desktop runs a full app session over the gateway.
+Done: host tests `a_paired_desktop_works_on_several_streams_within_its_allow_list`, `a_desktop_has_at_most_64_streams`, `a_desktop_lists_the_hosts_folders_and_a_phone_may_not`; unit tests for the allow-list, device kind and stored kind.
 
 ## 2. Client link
 

@@ -4,6 +4,7 @@
 mod claude_usage;
 mod close;
 mod details;
+mod folders;
 mod history;
 mod outside;
 mod remote;
@@ -702,11 +703,11 @@ impl Host {
                         Request::Device { name } => device = Some(name),
                         Request::Pair { .. } => send(Response::error(
                             ErrorCode::BadRequest,
-                            "pairing is for phones, through remote control",
+                            "pairing is for other devices, through remote control",
                         )),
                         Request::Unpair {} => send(Response::error(
                             ErrorCode::BadRequest,
-                            "unpairing is for phones, through remote control",
+                            "unpairing is for other devices, through remote control",
                         )),
                         Request::RemoteStatus {} => send(self.remote_status(self.has_phones())),
                         Request::RemoteSet { .. } => send(self.remote_set()),
@@ -715,6 +716,8 @@ impl Host {
                         }
                         Request::RemoteDevices {} => send(self.remote_devices()),
                         Request::RemoteRemove { device } => send(self.remote_remove(&device)),
+                        Request::ListFolder { path } => send(folders::list(&path)),
+                        Request::FindFolders {} => folders::find(tx.clone()),
                     }
                 }
             }

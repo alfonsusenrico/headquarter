@@ -3,6 +3,7 @@
 //! known agents. See `openspec/specs/agent-discovery/`.
 
 pub mod agents;
+pub mod folders;
 pub mod platform;
 pub mod search;
 pub mod shell;

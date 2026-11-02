@@ -12,8 +12,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use hq_protocol::{
-    ErrorCode, Frame, Holder, PROTOCOL_VERSION, Request, Response, SessionInfo, read_frame,
-    write_frame,
+    DeviceKind, ErrorCode, Frame, Holder, PROTOCOL_VERSION, Request, Response, SessionInfo,
+    read_frame, write_frame,
 };
 use hq_signals::event::Agent;
 use hq_signals::forward::ForwardedPayload;
@@ -3706,9 +3706,52 @@ struct Phone {
     welcome: Option<Response>,
     /// `InUse` notices, set aside so they are never taken for an answer.
     in_use: VecDeque<Holder>,
+    /// What it pairs as: a phone, or a desktop app (add-remote-desktop-client).
+    kind: DeviceKind,
 }
 
 impl Phone {
+    /// A desktop app on another computer, pairing as one.
+    fn desktop() -> Phone {
+        let mut desktop = Phone::new();
+        desktop.kind = DeviceKind::Desktop;
+        desktop
+    }
+
+    /// Opens another stream on the current connection, as a desktop app does for each
+    /// terminal and action.
+    fn open_stream(&mut self) -> (iroh::endpoint::SendStream, iroh::endpoint::RecvStream) {
+        let connection = self.connection.as_ref().unwrap().clone();
+        self.runtime
+            .block_on(async { connection.open_bi().await })
+            .unwrap()
+    }
+
+    /// Sends `request` on a stream of its own and reads its answer; `None` once closed.
+    fn on_stream(
+        &mut self,
+        stream: &mut (iroh::endpoint::SendStream, iroh::endpoint::RecvStream),
+        request: &Request,
+    ) -> Option<Response> {
+        self.runtime.block_on(async {
+            hq_remote::write_frame(&mut stream.0, &Frame::request(request))
+                .await
+                .ok()?;
+            loop {
+                let frame = tokio::time::timeout(WAIT, hq_remote::read_frame(&mut stream.1))
+                    .await
+                    .expect("a frame in time")
+                    .ok()??;
+                if let Frame::Control(bytes) = frame {
+                    match Response::parse(&bytes).unwrap() {
+                        Response::InUse { .. } | Response::RemoteWelcome { .. } => continue,
+                        response => return Some(response),
+                    }
+                }
+            }
+        })
+    }
+
     fn new() -> Phone {
         Phone::with_key(iroh::SecretKey::generate())
     }
@@ -3730,6 +3773,7 @@ impl Phone {
             recv: None,
             welcome: None,
             in_use: VecDeque::new(),
+            kind: DeviceKind::Phone,
         }
     }
 
@@ -3832,6 +3876,7 @@ impl Phone {
         self.request(&Request::Pair {
             secret,
             name: name.to_owned(),
+            kind: self.kind,
         });
         self.next_response()
     }
@@ -4022,6 +4067,256 @@ fn a_paired_phone_follows_types_and_is_held_to_the_allow_list() {
         other => panic!("a removed phone got {other:?}"),
     }
     assert_eq!(again.next(), None, "and is closed");
+}
+
+/// A paired desktop does what the local app does, except stop the host or let more devices
+/// in, on several streams of one connection (add-remote-desktop-client D1-D3).
+#[test]
+fn a_paired_desktop_works_on_several_streams_within_its_allow_list() {
+    let mut env = TestEnv::new("desktop");
+    env.stub("agy", INTERACTIVE_STUB);
+    env.start_daemon();
+    let (mut shower, code) = env.remote_on_and_pair();
+    let mut desktop = Phone::desktop();
+    assert!(matches!(
+        desktop.pair(&code, "Studio PC"),
+        Some(Response::Paired { .. })
+    ));
+    assert!(matches!(
+        shower.next_response(),
+        Response::RemotePairUsed { device } if device == "Studio PC"
+    ));
+    match env.connect().request(&Request::RemoteDevices {}) {
+        Response::RemoteDevices { devices } => {
+            assert_eq!(devices.len(), 1);
+            assert_eq!(devices[0].kind, DeviceKind::Desktop);
+        }
+        other => panic!("unexpected devices answer {other:?}"),
+    }
+
+    let hello = Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    };
+    let mut feed = desktop.open_stream();
+    let mut action = desktop.open_stream();
+    for stream in [&mut feed, &mut action] {
+        assert!(matches!(
+            desktop.on_stream(stream, &hello),
+            Some(Response::Welcome { .. })
+        ));
+    }
+    let cwd = env.work().to_string_lossy().into_owned();
+    let created = desktop.on_stream(
+        &mut action,
+        &Request::New {
+            agent: Agent::Agy,
+            cwd,
+            args: vec![],
+            term: None,
+            name: None,
+            group: None,
+        },
+    );
+    let Some(Response::Created { session }) = created else {
+        panic!("a desktop starts sessions: {created:?}");
+    };
+    match desktop.on_stream(&mut feed, &Request::List {}) {
+        Some(Response::Sessions { sessions, .. }) => {
+            assert!(sessions.iter().any(|listed| listed.id == session.id));
+        }
+        other => panic!("unexpected list answer {other:?}"),
+    }
+    assert!(matches!(
+        desktop.on_stream(
+            &mut action,
+            &Request::Rename {
+                session: session.id.clone(),
+                name: "renamed from the PC".into(),
+            }
+        ),
+        Some(Response::Done)
+    ));
+    for refused in [
+        Request::Stop {},
+        Request::RemotePair {},
+        Request::RemoteDevices {},
+    ] {
+        match desktop.on_stream(&mut action, &refused) {
+            Some(Response::Error { code, .. }) => assert_eq!(code, ErrorCode::NotAllowed),
+            other => panic!("{refused:?} from a desktop got {other:?}"),
+        }
+    }
+    assert!(
+        matches!(
+            desktop.on_stream(&mut feed, &Request::List {}),
+            Some(Response::Sessions { .. })
+        ),
+        "still connected, and the host still runs"
+    );
+
+    // The first stream ending leaves the others working.
+    desktop.request(&Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    });
+    assert!(matches!(
+        desktop.next_response(),
+        Some(Response::Welcome { .. })
+    ));
+    let first = desktop.send.as_mut().unwrap();
+    first.finish().unwrap();
+    while desktop.next().is_some() {}
+    assert!(matches!(
+        desktop.on_stream(&mut feed, &Request::List {}),
+        Some(Response::Sessions { .. })
+    ));
+
+    // Removing the desktop closes every stream.
+    assert!(matches!(
+        env.connect().request(&Request::RemoteRemove {
+            device: "studio pc".into()
+        }),
+        Response::Done
+    ));
+    assert_eq!(desktop.on_stream(&mut feed, &Request::List {}), None);
+    assert_eq!(desktop.on_stream(&mut action, &Request::List {}), None);
+}
+
+#[test]
+fn a_desktop_has_at_most_64_streams() {
+    let mut env = TestEnv::new("streams");
+    env.start_daemon();
+    let (_shower, code) = env.remote_on_and_pair();
+    let mut desktop = Phone::desktop();
+    assert!(matches!(
+        desktop.pair(&code, "Studio PC"),
+        Some(Response::Paired { .. })
+    ));
+    let hello = Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    };
+    // The pairing stream is the first of 64.
+    let mut open = Vec::new();
+    for _ in 1..64 {
+        let mut stream = desktop.open_stream();
+        assert!(matches!(
+            desktop.on_stream(&mut stream, &hello),
+            Some(Response::Welcome { .. })
+        ));
+        open.push(stream);
+    }
+    let mut one_more = desktop.open_stream();
+    match desktop.on_stream(&mut one_more, &hello) {
+        Some(Response::Error { code, .. }) => assert_eq!(code, ErrorCode::NotAllowed),
+        other => panic!("the 65th stream got {other:?}"),
+    }
+    assert!(matches!(
+        desktop.on_stream(&mut open[0], &Request::List {}),
+        Some(Response::Sessions { .. })
+    ));
+}
+
+#[test]
+fn a_desktop_lists_the_hosts_folders_and_a_phone_may_not() {
+    let mut env = TestEnv::new("folders");
+    env.start_daemon();
+    let home = env.root.join("home");
+    for folder in ["projects/web", "projects/api", ".hidden"] {
+        std::fs::create_dir_all(home.join(folder)).unwrap();
+    }
+    let (_shower, code) = env.remote_on_and_pair();
+    let mut desktop = Phone::desktop();
+    assert!(matches!(
+        desktop.pair(&code, "Studio PC"),
+        Some(Response::Paired { .. })
+    ));
+    let mut stream = desktop.open_stream();
+    desktop.on_stream(
+        &mut stream,
+        &Request::Hello {
+            protocol: PROTOCOL_VERSION,
+        },
+    );
+    match desktop.on_stream(
+        &mut stream,
+        &Request::ListFolder {
+            path: String::new(),
+        },
+    ) {
+        Some(Response::Folder {
+            home: listed_home,
+            folders,
+            ..
+        }) => {
+            assert_eq!(Path::new(&listed_home), home);
+            assert!(folders.contains(&"projects".to_owned()), "{folders:?}");
+            assert!(
+                !folders.iter().any(|name| name.starts_with('.')),
+                "{folders:?}"
+            );
+        }
+        other => panic!("unexpected folder answer {other:?}"),
+    }
+    match desktop.on_stream(
+        &mut stream,
+        &Request::ListFolder {
+            path: "~/projects".into(),
+        },
+    ) {
+        Some(Response::Folder { folders, .. }) => assert_eq!(folders, ["api", "web"]),
+        other => panic!("unexpected folder answer {other:?}"),
+    }
+    match desktop.on_stream(
+        &mut stream,
+        &Request::ListFolder {
+            path: "~/missing".into(),
+        },
+    ) {
+        Some(Response::Error { code, .. }) => assert_eq!(code, ErrorCode::FolderNotFound),
+        other => panic!("a missing folder got {other:?}"),
+    }
+    let mut found = Vec::new();
+    let mut answer = desktop.on_stream(&mut stream, &Request::FindFolders {});
+    loop {
+        match answer {
+            Some(Response::FoundFolders { folders, done }) => {
+                found.extend(folders);
+                if done {
+                    break;
+                }
+            }
+            other => panic!("unexpected find answer {other:?}"),
+        }
+        answer = desktop.runtime.block_on(async {
+            let frame = tokio::time::timeout(WAIT, hq_remote::read_frame(&mut stream.1))
+                .await
+                .unwrap()
+                .unwrap()?;
+            match frame {
+                Frame::Control(bytes) => Some(Response::parse(&bytes).unwrap()),
+                _ => None,
+            }
+        });
+    }
+    let web = home.join("projects/web").display().to_string();
+    assert!(found.contains(&web), "{found:?}");
+
+    let (_shower, code) = env.remote_on_and_pair();
+    let mut phone = Phone::new();
+    assert!(matches!(
+        phone.pair(&code, "Test Phone"),
+        Some(Response::Paired { .. })
+    ));
+    phone.request(&Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    });
+    phone.next_response();
+    phone.request(&Request::ListFolder {
+        path: String::new(),
+    });
+    match phone.next_response() {
+        Some(Response::Error { code, .. }) => assert_eq!(code, ErrorCode::NotAllowed),
+        other => panic!("a phone got {other:?}"),
+    }
 }
 
 #[test]
@@ -4577,7 +4872,7 @@ fn hq_remote_pairs_lists_and_removes() {
     env.start_daemon();
     let off = env.hq(&["remote", "status"]);
     assert!(
-        String::from_utf8_lossy(&off.stdout).contains("no phone is paired"),
+        String::from_utf8_lossy(&off.stdout).contains("no device is paired"),
         "{off:?}"
     );
     let gone = env.hq(&["remote", "on"]);
@@ -4619,7 +4914,7 @@ fn hq_remote_pairs_lists_and_removes() {
     let removed = env.hq(&["remote", "remove", "pixel test"]);
     assert!(removed.status.success(), "{removed:?}");
     let devices = env.hq(&["remote", "devices"]);
-    assert!(String::from_utf8_lossy(&devices.stdout).contains("No paired phones"));
+    assert!(String::from_utf8_lossy(&devices.stdout).contains("No paired devices"));
     let off = env.hq(&["remote", "status"]);
     assert!(String::from_utf8_lossy(&off.stdout).contains("Remote control is off"));
     let settings =
