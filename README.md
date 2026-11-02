@@ -108,6 +108,7 @@ settings and sessions in
 **Supported:**
 - macOS 13 or later, on Apple silicon and Intel.
 - Linux on x86-64 and arm64, WSL included.
+- Windows 10 and 11 on x86-64: the desktop app only, as a client of a host elsewhere (alpha, below).
 
 **About signing:** the macOS app is not signed with an Apple Developer ID yet, only with
 the certificate made on your Mac. Installed with the line above, it opens without a
@@ -137,6 +138,22 @@ on the release page. The app connects only while it is on screen and keeps no se
 on the phone. Remote control runs only while a phone is paired: remove the last one and the
 computer stops listening. When a newer release is out it says so, and installing the new APK over it keeps
 your paired computers.
+
+### On Windows (alpha)
+
+The desktop app runs on Windows as a client: it shows and drives the sessions of a
+Headquarter host on your Mac, a Linux machine or a server, and the agents keep running there.
+Windows runs no host of its own.
+
+1. From the [releases page](https://github.com/alfonsusenrico/headquarter/releases), download
+   `hq-app-x86_64-pc-windows-msvc.zip`, unzip it and run `headquarter-app.exe`.
+2. The app is not signed yet, so Windows SmartScreen says it protected your PC. Choose
+   **More info**, then **Run anyway**. It asks once.
+3. On the host, show a pairing code (Remote Control… on a Mac, or `hq remote pair` on a
+   server) and paste it into Connect to a Host, which the app opens on its first launch.
+
+The app keeps its settings, key and paired hosts in `%APPDATA%\Headquarter`. When a newer
+release is out it says so, with a link to download it.
 
 ## How light is it
 

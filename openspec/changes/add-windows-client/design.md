@@ -10,12 +10,17 @@ on `hq-daemon` only for `HostPaths`. Paths come from `HOME` and XDG.
 
 ## D1. Platform gates
 
-- `HostPaths` moves to `hq-config` (a leaf crate both sides use); `hq-client` drops its
-  `hq-daemon` dependency.
+- `HostPaths` moves to `hq_signals::paths`, beside `data_dir()` it is built from (not
+  `hq-config`, which knows nothing of the data folder; changed while building, 2026-11-02);
+  `hq-daemon` re-exports it and `hq-client` drops its `hq-daemon` dependency.
 - The local-socket transport, the host start, hook forwarding and the local-host parts of quit
   and update compile on `cfg(unix)` only. On Windows `hq-client` has the remote link only.
 - Discovery's executable check uses the platform's rule (`cfg(unix)` mode bits; on Windows the
   app does not search for agents).
+- In the app, every call on this computer's host goes through `hosts::local()`, which on
+  Windows answers that this computer runs no host; `hosts::is_remote()` is true there
+  whatever is shown, so quit, update, Remote Control and agent discovery take their remote
+  paths and never reach it.
 Rejected: stub modules that compile everywhere and fail at run time (errors found late).
 
 ## D2. Remote only

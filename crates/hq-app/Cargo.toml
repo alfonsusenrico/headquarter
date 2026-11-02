@@ -15,6 +15,8 @@ path = "src/main.rs"
 [package.metadata.dist]
 dist = true
 default-features = false
+# Unsigned on Windows for now (add-windows-client D7).
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 include = ["../../assets/icon/Headquarter.icns", "../../assets/icon/png", "themes/NOTICE.md"]
 
 [features]

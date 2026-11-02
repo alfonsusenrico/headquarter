@@ -27,7 +27,8 @@ Headquarter (`headquarter`, alias `hq`) is the owner's desktop terminal for codi
 CLIs (Claude Code, Codex, Antigravity `agy`, and others it discovers). It hosts many
 agent sessions, keeps them in a sidebar in groups the owner makes, flags each session's
 status (working, needs you, idle not read yet, idle, not running), and shows each provider's
-usage quota. Targets macOS and Linux.
+usage quota. Targets macOS and Linux; the desktop app also runs on Windows as a client of
+remote hosts (no host there).
 
 - **It owns:** the sessions it launches (PTYs, injected per-launch hooks), its
   session index, groups, unread flags, and quota snapshots.
@@ -127,9 +128,11 @@ Where a standard does not fit, and what this project does instead:
   checks. Logs carry events only. Releases are immutable tags that roll back by fixing
   forward (`## Release`). The index lives on the user's machine and its backups.
 - Checks: `./scripts/check` is the project's CI, run locally before every push (owner,
-  2026-10-21), not a hosted runner. The only hosted workflow, `release.yml` from `dist`,
-  runs on version tags (add-release-installer D5). Not covered locally: a Linux build,
-  and a secret scan of the history (review diffs for secrets).
+  2026-10-21). One hosted check: `windows.yml` builds, lints and tests the app's client
+  crates on Windows for every pull request, since nothing local builds for Windows
+  (add-windows-client D6, owner 2026-11-02); a red run blocks the merge like a red local
+  check. `release.yml` from `dist` runs on version tags (add-release-installer D5). Not
+  covered: a Linux build, and a secret scan of the history (review diffs for secrets).
 - Dependencies: `deny.toml` checks `unmaintained` for workspace crates' direct
   dependencies only, because GPUI's deep tree carries unmaintained crates we cannot
   replace (add-terminal-pane, 2026-10-20).

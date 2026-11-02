@@ -9,6 +9,8 @@ repository.workspace = true
 # Released: `hq` and `headquarter` (publish = false would hide them from dist).
 [package.metadata.dist]
 dist = true
+# The host needs Unix terminals; Windows gets the desktop app only (add-windows-client).
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }

@@ -92,7 +92,8 @@ pub fn latest() -> Result<Version> {
     let output = curl(&[
         "-fsSI",
         "-o",
-        "/dev/null",
+        // Windows' own curl.exe (Windows 10 and later) writes nowhere through `NUL`.
+        if cfg!(windows) { "NUL" } else { "/dev/null" },
         "-w",
         "%{redirect_url}",
         &format!("{}/releases/latest", page_base()),
