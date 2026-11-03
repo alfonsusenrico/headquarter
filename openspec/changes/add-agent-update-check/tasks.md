@@ -10,5 +10,5 @@
 ## 2. Verification and delivery
 
 - [x] 2.1 `./scripts/check` passes; on screen. `verification.md` written.
-- [ ] 2.2 The owner checks it.
+- [x] 2.2 The owner checks it (accepted 2026-11-03).
 - [ ] 2.3 After the owner accepts: archive, push `feat/agent-update-check`, open the PR, report its URL.
