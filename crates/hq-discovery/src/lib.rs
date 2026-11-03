@@ -10,4 +10,4 @@ pub mod shell;
 
 pub use agents::{KNOWN_AGENTS, KnownAgent, MarkSource, known};
 pub use platform::Platform;
-pub use search::{AgentReport, SearchContext, add_versions, search};
+pub use search::{AgentReport, SearchContext, add_versions, probe_version, search};

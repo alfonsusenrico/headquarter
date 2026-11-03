@@ -186,9 +186,90 @@ impl Workspace {
     }
 }
 
+/// What a failed check of an agent's new version means for the owner
+/// (add-agent-update-check D3).
+pub(super) fn failed_check_text(check: &hq_protocol::AgentCheck) -> String {
+    use hq_protocol::CheckResult::Failed;
+    let name = hq_discovery::known(check.agent.id()).map_or(check.agent.id(), |known| known.name);
+    let what = match (check.usage == Failed, check.status == Failed) {
+        (true, true) => {
+            "Headquarter can't read its usage, and its status reports are missing, so status \
+             falls back to output activity."
+        }
+        (true, false) => "Headquarter can't read its usage.",
+        _ => "its status reports are missing, so status falls back to output activity.",
+    };
+    format!("{name} {}: {what}", check.version)
+}
+
+impl Workspace {
+    /// Tells the owner about failed checks of agents' new versions, each agent and
+    /// version once, remembered in the app's state (add-agent-update-check D3).
+    pub(super) fn tell_failed_checks(
+        &mut self,
+        agents: &[hq_protocol::AgentUsage],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let failed: Vec<&hq_protocol::AgentCheck> = agents
+            .iter()
+            .filter_map(|usage| usage.check.as_ref())
+            .filter(|check| check.failed())
+            .collect();
+        if failed.is_empty() {
+            return;
+        }
+        let Some(path) = crate::app_state::path() else {
+            return;
+        };
+        let mut told = crate::app_state::load_checks_told(&path);
+        let mut texts = Vec::new();
+        for check in failed {
+            let key = format!("{} {}", check.agent.id(), check.version);
+            if !told.contains(&key) {
+                told.push(key);
+                texts.push(failed_check_text(check));
+            }
+        }
+        if texts.is_empty() {
+            return;
+        }
+        if let Err(error) = crate::app_state::save_checks_told(&path, &told) {
+            eprintln!("headquarter-app: cannot save the app's state: {error}");
+        }
+        self.show_notice(texts.join("\n"), true, window, cx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_check_names_the_agent_its_version_and_what_broke() {
+        use hq_protocol::{AgentCheck, CheckResult};
+        use hq_signals::event::Agent;
+        let check = |usage, status| AgentCheck {
+            agent: Agent::Claude,
+            version: "2.1.316".into(),
+            status,
+            usage,
+        };
+        assert_eq!(
+            failed_check_text(&check(CheckResult::Failed, CheckResult::Ok)),
+            "Claude Code 2.1.316: Headquarter can't read its usage."
+        );
+        assert_eq!(
+            failed_check_text(&check(CheckResult::NotChecked, CheckResult::Failed)),
+            "Claude Code 2.1.316: its status reports are missing, so status falls back to \
+             output activity."
+        );
+        assert!(
+            failed_check_text(&check(CheckResult::Failed, CheckResult::Failed)).starts_with(
+                "Claude Code 2.1.316: Headquarter can't read its usage, and its status"
+            )
+        );
+    }
 
     #[test]
     fn an_informational_notice_leaves_after_five_seconds_unless_pointed_at() {

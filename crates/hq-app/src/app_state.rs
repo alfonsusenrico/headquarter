@@ -235,6 +235,19 @@ pub fn save_not_asked(path: &Path, sessions: &[String]) -> std::io::Result<()> {
     save_entry(path, "not_asked", json!(sessions))
 }
 
+/// The agents' versions whose failed check the owner was told about, as "<agent>
+/// <version>", so each is told once (add-agent-update-check D3).
+pub fn load_checks_told(path: &Path) -> Vec<String> {
+    read(path)
+        .and_then(|state| state.get("checks_told").cloned())
+        .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_checks_told(path: &Path, told: &[String]) -> std::io::Result<()> {
+    save_entry(path, "checks_told", json!(told))
+}
+
 fn read(path: &Path) -> Option<Value> {
     serde_json::from_slice::<Value>(&std::fs::read(path).ok()?).ok()
 }

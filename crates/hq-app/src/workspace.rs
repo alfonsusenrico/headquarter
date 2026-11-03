@@ -853,7 +853,10 @@ impl Workspace {
                     self.check_host_version(window, cx);
                 }
             }
-            ListEvent::Usage(usage) => self.usage = usage,
+            ListEvent::Usage(usage) => {
+                self.tell_failed_checks(&usage, window, cx);
+                self.usage = usage;
+            }
             ListEvent::Changed(session) => self.upsert(session, window, cx),
             ListEvent::Groups(groups) => self.groups = groups,
             ListEvent::Control(mut control) => {

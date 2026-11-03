@@ -262,6 +262,7 @@ hq attach landing-hero        # attach by name or id prefix; detach with Ctrl-\ 
 hq resume claude-1            # resume an inactive session's conversation
 hq usage                      # each agent's usage and reset times
 hq agents                     # the agent CLIs found on this machine
+hq agents --check             # check each agent still works with Headquarter (no prompt sent)
 hq stop                       # end every session and the background host
 ```
 

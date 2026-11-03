@@ -5236,3 +5236,124 @@ fn resources_cover_what_a_session_started_and_only_running_sessions() {
     wait_until("ended", || !env.session(&session.id).live);
     assert_eq!(footprint(&env), None, "a stopped session has no entry");
 }
+
+/// A stand-in agy at `version`: reports itself idle as it starts and answers `/usage`
+/// with `usage`.
+fn versioned_agy(version: &str, usage: &str) -> String {
+    format!(
+        r#"case "$1" in
+  --version) echo "{version}" ;;
+  -p) echo '{usage}' ;;
+  *) printf '\033]7501;state=idle:app=antigravity\007'; sleep 30 ;;
+esac
+"#
+    )
+}
+
+const AGY_USAGE_ANSWER: &str = r#"{"conversation_id":"","status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-5h","window":"5h","remaining_fraction":0.58,"reset_time":"2100-01-01T00:00:00Z"}]}]}}}"#;
+
+fn start_checking_daemon(env: &mut TestEnv) {
+    let mut daemon = env.command();
+    daemon.env("HQ_AGENT_CHECK_SECS", "1");
+    env.daemons.push(
+        daemon
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = env.host_dir().join("agentd.sock");
+    wait_until("host socket", || UnixStream::connect(&socket).is_ok());
+}
+
+/// add-agent-update-check: a new version is checked once without a prompt, a failed check
+/// reaches the app with the agent's usage, and a restart neither checks it again nor
+/// forgets the failure.
+#[test]
+fn a_new_agent_version_is_checked_once_and_a_failure_is_reported() {
+    let mut env = TestEnv::new("agentcheck");
+    env.stub("codex", "exit 1");
+    env.stub("claude", "exit 1");
+    env.stub("agy", &versioned_agy("1.0.0", AGY_USAGE_ANSWER));
+    start_checking_daemon(&mut env);
+    let mut watcher = env.connect();
+    assert!(matches!(
+        watcher.request(&Request::Subscribe { usage: true }),
+        Response::Done
+    ));
+    let passed = "agent check agent=agy version=1.0.0 status=ok usage=ok";
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !env.log().contains(passed) {
+        assert!(
+            Instant::now() < deadline,
+            "no check of 1.0.0: {}",
+            env.log()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    env.stub("agy", &versioned_agy("2.0.0", "not json"));
+    let failed = hq_protocol::AgentCheck {
+        agent: Agent::Agy,
+        version: "2.0.0".into(),
+        status: hq_protocol::CheckResult::Ok,
+        usage: hq_protocol::CheckResult::Failed,
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        assert!(Instant::now() < deadline, "no failed check: {}", env.log());
+        if let Response::UsageChanged { agents } = watcher.next_response()
+            && agents
+                .iter()
+                .any(|usage| usage.check.as_ref() == Some(&failed))
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        env.log().matches("agent check agent=agy version=").count(),
+        2,
+        "each version once: {}",
+        env.log()
+    );
+
+    // A restart keeps the failure and does not check the same version again.
+    drop(watcher);
+    assert!(matches!(
+        env.connect().request(&Request::Stop {}),
+        Response::Done
+    ));
+    let mut host = env.daemons.pop().unwrap();
+    assert!(host.wait().unwrap().success());
+    start_checking_daemon(&mut env);
+    let agy = match env.connect().request(&Request::Usage {}) {
+        Response::Usage { agents } => agents
+            .into_iter()
+            .find(|usage| usage.agent == Agent::Agy)
+            .expect("agy is listed"),
+        other => panic!("unexpected answer {other:?}"),
+    };
+    assert_eq!(agy.check, Some(failed.clone()));
+    std::thread::sleep(Duration::from_secs(4));
+    assert_eq!(
+        env.log().matches("agent check agent=agy version=").count(),
+        2,
+        "2.0.0 is not checked again after a restart: {}",
+        env.log()
+    );
+
+    // On demand: checked now, printed, and a failure exits with 1.
+    let output = env.hq(&["agents", "--check"]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("agy     2.0.0  status at start: ok           usage: FAILED"),
+        "{text}"
+    );
+    assert!(
+        !env.log().contains("not json"),
+        "nothing the agent showed is logged"
+    );
+}

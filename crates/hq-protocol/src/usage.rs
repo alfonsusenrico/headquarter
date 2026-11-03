@@ -307,6 +307,7 @@ mod tests {
             read_at,
             problem: None,
             account: None,
+            check: None,
         }
     }
 

@@ -28,7 +28,10 @@ the behaviour.
   on its own thread that passes each paired phone or desktop to `agentd.sock` as an ordinary
   client through an allow-list for its kind; a desktop may open up to 64 streams
   (add-remote-gateway, add-remote-desktop-client). `host/folders.rs` lists and finds the
-  host's folders for a remote desktop's folder browser.
+  host's folders for a remote desktop's folder browser. `host/agent_check.rs` notices an agent's
+  new version (every minute; `HQ_AGENT_CHECK_SECS` shortens it in tests) and checks it once without
+  a prompt: a status report as it starts and a usage read, kept in `agent-checks.json`
+  (add-agent-update-check).
 - `crates/hq-remote`: remote control's connection, shared by the host's gateway and the
   phone's core: binding the iroh endpoint (relays), pairing codes, and `hq-protocol`
   frames over QUIC. `client` is the desktop's blocking `Link` to a paired host: one

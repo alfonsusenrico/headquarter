@@ -27,6 +27,8 @@ const DEFAULT_IDLE_EXIT: Duration = Duration::from_secs(10 * 60);
 const DEFAULT_USAGE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// Spec: activity outside Headquarter shows within a minute.
 const DEFAULT_HISTORY_INTERVAL: Duration = Duration::from_secs(60);
+/// How often the host looks for agents' new versions (add-agent-update-check D1).
+const DEFAULT_AGENT_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Parser)]
 #[command(
@@ -83,6 +85,10 @@ enum Command {
     Agents {
         #[arg(long)]
         json: bool,
+        /// Check each agent turned on now, without a prompt: that it reports its status as
+        /// it starts and that its usage reads. Exits with 1 when a check fails.
+        #[arg(long)]
+        check: bool,
     },
     /// Attach to a running session (detach with Ctrl-\ then d).
     Attach { session: String },
@@ -159,7 +165,7 @@ fn run(command: Command) -> Result<ExitCode> {
             )));
         }
         Command::Daemon => return daemon(),
-        Command::Agents { json } => {
+        Command::Agents { json, check: false } => {
             let discovered = agents::discover();
             if json {
                 println!("{}", agents::render_json(&discovered));
@@ -252,13 +258,34 @@ fn run(command: Command) -> Result<ExitCode> {
         }
         Command::Stop { yes } => stop(&paths, yes),
         Command::Remote { action } => remote::run(&paths, action),
+        Command::Agents { json, check: true } => check_agents(&paths, json),
         Command::Daemon
-        | Command::Agents { .. }
+        | Command::Agents { check: false, .. }
         | Command::HookForward { .. }
         | Command::HookStatusline { .. } => {
             unreachable!("handled above")
         }
     }
+}
+
+/// `hq agents --check`: the host checks each agent turned on now (add-agent-update-check
+/// D4); a failed check exits with 1.
+fn check_agents(paths: &HostPaths, json: bool) -> Result<ExitCode> {
+    let mut client = Client::connect_or_start(paths)?;
+    let response = expect_ok(client.request(&Request::CheckAgents {})?)?;
+    let Response::AgentChecks { checks } = response else {
+        bail!("unexpected answer from the host");
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&checks)?);
+    } else {
+        print!("{}", render::agent_checks(&checks));
+    }
+    Ok(if checks.iter().any(hq_protocol::AgentCheck::failed) {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 /// Reports a settings file problem on stderr; listing keeps working while the owner
@@ -295,6 +322,7 @@ fn daemon() -> Result<ExitCode> {
         idle_exit: seconds("HQ_IDLE_EXIT_SECS", DEFAULT_IDLE_EXIT),
         usage_interval: seconds("HQ_USAGE_INTERVAL_SECS", DEFAULT_USAGE_INTERVAL),
         history_interval: seconds("HQ_HISTORY_INTERVAL_SECS", DEFAULT_HISTORY_INTERVAL),
+        agent_check_interval: seconds("HQ_AGENT_CHECK_SECS", DEFAULT_AGENT_CHECK_INTERVAL),
         // Tests keep removed transcripts out of the machine's Trash.
         trash_dir: std::env::var_os("HQ_TRASH_DIR").map(std::path::PathBuf::from),
     };

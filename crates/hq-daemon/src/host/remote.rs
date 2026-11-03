@@ -144,7 +144,9 @@ fn allowed(kind: DeviceKind, request: &Request) -> bool {
         | Request::RemoteSet { .. }
         | Request::RemotePair {}
         | Request::RemoteDevices {}
-        | Request::RemoteRemove { .. } => false,
+        | Request::RemoteRemove { .. }
+        // It starts the host's agents; only `hq` on the host asks (add-agent-update-check D4).
+        | Request::CheckAgents {} => false,
         // The gateway answers it itself, for the calling device only (`proxy`).
         Request::Unpair {} => false,
     }
@@ -974,6 +976,7 @@ mod tests {
         }
         let neither = [
             Request::Stop {},
+            Request::CheckAgents {},
             Request::RemotePair {},
             Request::RemoteDevices {},
             Request::RemoteRemove { device: "d".into() },
