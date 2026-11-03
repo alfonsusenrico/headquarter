@@ -23,6 +23,9 @@ install-updater = false
 global-artifacts-jobs = ["./build-android"]
 
 [dist.github-custom-runners]
+# Cross-built on Apple Silicon: the Intel runner took 1411 s, twice the next slowest build
+# (2026-11-03), and `macos-15-intel` is GitHub's last Intel image.
+x86_64-apple-darwin = "macos-14"
 aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
 x86_64-unknown-linux-gnu = "ubuntu-24.04"
 
