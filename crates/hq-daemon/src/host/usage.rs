@@ -98,7 +98,7 @@ impl Host {
 
     /// An empty folder of the host's own for agy's `/usage`, so the read touches no
     /// project of the owner's.
-    fn agy_folder(&self) -> PathBuf {
+    pub(super) fn agy_folder(&self) -> PathBuf {
         self.paths.dir.join("quota").join("agy-workspace")
     }
 
@@ -418,7 +418,7 @@ impl Host {
     /// The most recently used Claude session folder that Claude Code records as trusted,
     /// so its trust question does not appear; the most recent existing one when that
     /// record cannot be read (fix-claude-usage-folder D1).
-    fn trusted_claude_folder(&self) -> Result<PathBuf, String> {
+    pub(super) fn trusted_claude_folder(&self) -> Result<PathBuf, String> {
         let mut rows: Vec<_> = lock(&self.store)
             .list()
             .map_err(|error| format!("cannot list sessions: {error}"))?
@@ -532,7 +532,7 @@ impl Host {
     }
 
     /// Agents turned off in the settings file are left out of usage.
-    fn agent_wanted(&self, agent: Agent) -> bool {
+    pub(super) fn agent_wanted(&self, agent: Agent) -> bool {
         lock(&self.settings)
             .current()
             .map_or(true, |settings| settings.agent_enabled(agent.id()))
@@ -582,7 +582,10 @@ impl Host {
                     usage
                 }
             };
-            agents.push(usage);
+            agents.push(AgentUsage {
+                check: self.failed_check(agent),
+                ..usage
+            });
         }
         agents
     }
@@ -617,6 +620,7 @@ fn from_reading(agent: Agent, reading: Option<&QuotaReading>) -> AgentUsage {
         read_at: reading.map(|reading| reading.read_at),
         problem: None,
         account: None,
+        check: None,
     }
 }
 

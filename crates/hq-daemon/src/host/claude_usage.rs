@@ -173,7 +173,7 @@ fn next(chunks: &mpsc::Receiver<Vec<u8>>, deadline: Instant) -> Option<Vec<u8>> 
 
 /// The hidden terminal: Claude's output drawn into a grid, and the replies the terminal
 /// owes it (cursor position and the like).
-struct Screen {
+pub(super) struct Screen {
     term: Term<Replies>,
     processor: Processor<StdSyncHandler>,
     replies: Arc<Mutex<Vec<u8>>>,
@@ -210,7 +210,7 @@ impl Dimensions for Size {
 }
 
 impl Screen {
-    fn new() -> Screen {
+    pub(super) fn new() -> Screen {
         let replies = Arc::new(Mutex::new(Vec::new()));
         Screen {
             term: Term::new(Config::default(), &Size, Replies(Arc::clone(&replies))),
@@ -220,7 +220,7 @@ impl Screen {
     }
 
     /// Draws `bytes` and returns what the terminal must answer.
-    fn feed(&mut self, bytes: &[u8]) -> Vec<u8> {
+    pub(super) fn feed(&mut self, bytes: &[u8]) -> Vec<u8> {
         self.processor.advance(&mut self.term, bytes);
         std::mem::take(
             &mut *self
@@ -244,7 +244,7 @@ impl Screen {
             .collect()
     }
 
-    fn text(&self) -> String {
+    pub(super) fn text(&self) -> String {
         self.lines().join("\n")
     }
 }

@@ -100,6 +100,35 @@ pub fn catalog_list(sessions: &[SessionInfo], groups: &[GroupInfo], now_ms: u64)
     out
 }
 
+/// `hq agents --check`: each agent's version and what was checked.
+pub fn agent_checks(checks: &[hq_protocol::AgentCheck]) -> String {
+    if checks.is_empty() {
+        return "No agents are enabled.\n".to_owned();
+    }
+    let result = |result: hq_protocol::CheckResult| match result {
+        hq_protocol::CheckResult::Ok => "ok",
+        hq_protocol::CheckResult::Failed => "FAILED",
+        hq_protocol::CheckResult::NotChecked => "not checked",
+    };
+    let width = checks
+        .iter()
+        .map(|check| check.version.chars().count())
+        .max()
+        .unwrap_or(0);
+    checks
+        .iter()
+        .map(|check| {
+            format!(
+                "{:<7} {:<width$}  status at start: {:<11}  usage: {}\n",
+                check.agent.to_string(),
+                check.version,
+                result(check.status),
+                result(check.usage)
+            )
+        })
+        .collect()
+}
+
 /// `hq usage`: each agent's windows with share used, reset time and reading age, or
 /// why its usage cannot be read.
 pub fn usage_list<Tz: chrono::TimeZone>(agents: &[AgentUsage], now: &chrono::DateTime<Tz>) -> String
@@ -237,6 +266,31 @@ fn reason_text(reason: NeedsReason) -> &'static str {
 mod tests {
     use super::*;
     use hq_signals::event::Agent;
+
+    #[test]
+    fn agent_checks_name_each_result() {
+        use hq_protocol::{AgentCheck, CheckResult};
+        let checks = [
+            AgentCheck {
+                agent: Agent::Claude,
+                version: "2.1.316".into(),
+                status: CheckResult::Ok,
+                usage: CheckResult::Failed,
+            },
+            AgentCheck {
+                agent: Agent::Codex,
+                version: "0.166.0".into(),
+                status: CheckResult::NotChecked,
+                usage: CheckResult::Ok,
+            },
+        ];
+        assert_eq!(
+            agent_checks(&checks),
+            "claude  2.1.316  status at start: ok           usage: FAILED\n\
+             codex   0.166.0  status at start: not checked  usage: ok\n"
+        );
+        assert_eq!(agent_checks(&[]), "No agents are enabled.\n");
+    }
 
     fn session(id: &str, cwd: &str, name: &str, status: Status) -> SessionInfo {
         SessionInfo {
@@ -423,6 +477,7 @@ mod tests {
                 account: Some(hq_protocol::Account::Subscription {
                     plan: Some("plus".into()),
                 }),
+                check: None,
             },
             AgentUsage {
                 agent: Agent::Claude,
@@ -430,6 +485,7 @@ mod tests {
                 read_at: Some(now_secs - 3 * 3_600),
                 problem: Some("timed out".into()),
                 account: None,
+                check: None,
             },
             AgentUsage {
                 agent: Agent::Agy,
@@ -437,6 +493,7 @@ mod tests {
                 read_at: None,
                 problem: Some("Agy usage not available".into()),
                 account: None,
+                check: None,
             },
         ];
         let text = usage_list(&agents, &now);

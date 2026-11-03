@@ -1,6 +1,7 @@
 //! The host process: one per user, owning every hosted session, the session index,
 //! and the control and hook sockets.
 
+mod agent_check;
 mod claude_usage;
 mod close;
 mod details;
@@ -78,6 +79,9 @@ pub struct HostOptions {
     pub history_interval: Duration,
     /// Where removed Claude transcripts go instead of the system Trash (tests only).
     pub trash_dir: Option<PathBuf>,
+    /// How often the agents are looked at for a new version; the first look waits two
+    /// of these (add-agent-update-check D1).
+    pub agent_check_interval: Duration,
 }
 
 #[derive(Debug)]
@@ -144,6 +148,8 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
         usage_interval: options.usage_interval,
         history_interval: options.history_interval,
         trash_dir: options.trash_dir,
+        agent_check_interval: options.agent_check_interval,
+        checks: Mutex::new(agent_check::CheckBook::default()),
         store: Mutex::new(store),
         live: Mutex::new(HashMap::new()),
         shells: Mutex::new(HashMap::new()),
@@ -215,6 +221,10 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
     {
         let host = Arc::clone(&host);
         thread::spawn(move || host.follow_phones());
+    }
+    {
+        let host = Arc::clone(&host);
+        thread::spawn(move || host.agent_check_loop());
     }
     {
         let order = host.queue_starts();
@@ -305,6 +315,9 @@ struct Host {
     usage_interval: Duration,
     history_interval: Duration,
     trash_dir: Option<PathBuf>,
+    agent_check_interval: Duration,
+    /// Agents' executables as last seen, and their recorded checks.
+    checks: Mutex<agent_check::CheckBook>,
     store: Mutex<Store>,
     live: Mutex<HashMap<String, Arc<Hosted>>>,
     /// Each session's shell, by session id; in memory only (add-session-shell-panel).
@@ -701,6 +714,9 @@ impl Host {
                             self.refresh_usage();
                             send(Response::Done);
                         }
+                        Request::CheckAgents {} => send(Response::AgentChecks {
+                            checks: self.check_agents_now(),
+                        }),
                         Request::Resources {} => send(self.resources()),
                         Request::Stop {} => {
                             send(Response::Done);

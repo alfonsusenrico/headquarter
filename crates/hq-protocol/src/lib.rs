@@ -237,6 +237,9 @@ pub enum Request {
     Usage {},
     /// Read usage again now; subscribers to usage get `UsageChanged` with the result.
     RefreshUsage {},
+    /// Check every agent turned on now, as after an update, and answer with
+    /// `AgentChecks` (add-agent-update-check D4). Local clients only.
+    CheckAgents {},
     /// The host's own CPU and memory, and each running session's with every process it
     /// started and its shell panel (add-usage-window D1).
     Resources {},
@@ -469,6 +472,10 @@ pub enum Response {
     UsageChanged {
         agents: Vec<AgentUsage>,
     },
+    /// Each agent's check, answering `CheckAgents`.
+    AgentChecks {
+        checks: Vec<AgentCheck>,
+    },
     Resources {
         host: Footprint,
         sessions: Vec<SessionFootprint>,
@@ -611,6 +618,38 @@ pub struct AgentUsage {
     /// What the limits belong to, when the agent reports it.
     #[serde(default)]
     pub account: Option<Account>,
+    /// The check of the installed version, only while one of its checks failed
+    /// (add-agent-update-check D3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<AgentCheck>,
+}
+
+/// What Headquarter found when it checked an agent's version without a prompt
+/// (add-agent-update-check D2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCheck {
+    pub agent: Agent,
+    pub version: String,
+    /// Whether the agent reported its status (OSC 7501) as it started.
+    pub status: CheckResult,
+    /// Whether its usage could be read.
+    pub usage: CheckResult,
+}
+
+impl AgentCheck {
+    pub fn failed(&self) -> bool {
+        self.status == CheckResult::Failed || self.usage == CheckResult::Failed
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CheckResult {
+    Ok,
+    Failed,
+    /// The check could not run (a folder-trust question, no folder to run in), so it
+    /// says nothing about the version.
+    NotChecked,
 }
 
 /// What a running session costs: its agent, every process the agent started, and its
@@ -1272,10 +1311,46 @@ mod tests {
                 account: Some(Account::Subscription {
                     plan: Some("plus".into()),
                 }),
+                check: None,
             }],
         };
         let bytes = serde_json::to_vec(&answer).unwrap();
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains("check"),
+            "no check is sent while every check passes"
+        );
         assert_eq!(Response::parse(&bytes).unwrap(), answer);
+    }
+
+    #[test]
+    fn agent_checks_round_trip() {
+        let bytes = serde_json::to_vec(&Request::CheckAgents {}).unwrap();
+        assert_eq!(Request::parse(&bytes).unwrap(), Request::CheckAgents {});
+        let check = AgentCheck {
+            agent: Agent::Claude,
+            version: "2.1.316".into(),
+            status: CheckResult::Ok,
+            usage: CheckResult::Failed,
+        };
+        assert!(check.failed());
+        let answer = Response::AgentChecks {
+            checks: vec![check.clone()],
+        };
+        let bytes = serde_json::to_vec(&answer).unwrap();
+        assert_eq!(Response::parse(&bytes).unwrap(), answer);
+        let usage = Response::UsageChanged {
+            agents: vec![AgentUsage {
+                agent: Agent::Claude,
+                windows: Vec::new(),
+                read_at: None,
+                problem: None,
+                account: None,
+                check: Some(check),
+            }],
+        };
+        let bytes = serde_json::to_vec(&usage).unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains(r#""usage":"failed""#));
+        assert_eq!(Response::parse(&bytes).unwrap(), usage);
     }
 
     #[test]

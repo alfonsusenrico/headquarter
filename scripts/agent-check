@@ -1,0 +1,132 @@
+#!/bin/sh
+# agent-check: checks the installed agents as Headquarter does after an agent updates
+# (add-agent-update-check D4), through an isolated test host with its own data and settings
+# folders, and writes research/evidence/agent-checks/<date>.md. The owner's host, sessions
+# and sidebar are not touched.
+#
+#   scripts/agent-check [--folder DIR] [--turn]
+#
+# --folder DIR  the folder Claude Code and Codex start in; both must already trust it
+#               (default: the current folder). agy uses the host's own empty folder.
+# --turn        also run one real turn per agent ("Reply with just OK.") in DIR and check
+#               that its session goes working, then idle. This spends a little of each
+#               agent's usage and leaves the conversation in its history: owner's go only.
+#
+# Without --turn no prompt is sent. The report keeps versions and results, never what an
+# agent showed or answered.
+set -eu
+
+repo=$(cd "$(dirname "$0")/.." && pwd)
+folder=$(pwd)
+turn=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --folder)
+      folder=$(cd "$2" && pwd)
+      shift 2
+      ;;
+    --turn)
+      turn=1
+      shift
+      ;;
+    *)
+      echo "agent-check: unknown option $1 (use --folder DIR, --turn)" >&2
+      exit 2
+      ;;
+  esac
+done
+
+cargo build -q --manifest-path "$repo/Cargo.toml" -p hq-cli --bin hq
+hq=$repo/target/debug/hq
+# Under /private/tmp: socket paths stay short, and the host resolves /tmp there anyway.
+scratch=$(mktemp -d /private/tmp/hq-agent-check.XXXXXX)
+export HQ_DATA_DIR="$scratch/data"
+export HQ_CONFIG_DIR="$scratch/config"
+# Only the check asked for here runs, not the host's own after a new version.
+export HQ_AGENT_CHECK_SECS=3600
+cleanup() {
+  "$hq" stop --yes >/dev/null 2>&1 || true
+  rm -rf "$scratch"
+}
+trap cleanup EXIT INT TERM
+
+# The status of session $1, from `hq ls --json`.
+status_of() {
+  "$hq" ls --json --all | python3 -I -c '
+import json, sys
+for session in json.load(sys.stdin):
+    if session["name"] == sys.argv[1]:
+        print(session["status"])' "$1"
+}
+
+# Starts agent $1 in the folder as a session, with the remaining arguments, and prints its
+# name.
+start() {
+  agent=$1
+  shift
+  "$hq" new "$agent" --cwd "$folder" --detach -- "$@" | sed 's/ (.*//'
+}
+
+# The check finds Claude Code's and Codex's folder among the host's sessions: start each
+# once, with no prompt, and hang it up.
+for agent in claude codex; do
+  if name=$(start "$agent" 2>/dev/null); then
+    sleep 5
+    "$hq" kill "$name" >/dev/null 2>&1 || true
+  fi
+done
+
+set +e
+checks=$("$hq" agents --check)
+failed=$?
+set -e
+printf '%s\n' "$checks"
+
+turns=""
+if [ -n "$turn" ]; then
+  for agent in claude codex agy; do
+    case $agent in
+      agy) name=$(start agy -i "Reply with just OK.") ;;
+      *) name=$(start "$agent" "Reply with just OK.") ;;
+    esac
+    worked=no
+    result="did not finish within 120 s"
+    started=$(date +%s)
+    while [ $(($(date +%s) - started)) -lt 120 ]; do
+      case $(status_of "$name") in
+        working) worked=yes ;;
+        done | done-unread)
+          if [ "$worked" = yes ]; then
+            result="idle after $(($(date +%s) - started)) s"
+            break
+          fi
+          ;;
+        needs-you)
+          result="asked for the owner"
+          break
+          ;;
+      esac
+      sleep 1
+    done
+    "$hq" kill "$name" >/dev/null 2>&1 || true
+    line="$agent: working seen: $worked; $result"
+    printf '%s\n' "$line"
+    turns="$turns- $line
+"
+  done
+fi
+
+day=$(date +%Y-%m-%d)
+report=$repo/research/evidence/agent-checks/$day.md
+mkdir -p "$(dirname "$report")"
+{
+  printf '# Agent check, %s\n\n' "$(date '+%Y-%m-%d %H:%M %Z')"
+  printf 'Headquarter %s, `scripts/agent-check`, folder for Claude Code and Codex: `%s`.\n\n' \
+    "$("$hq" --version | sed 's/^hq //')" "$(basename "$folder")"
+  printf '```\n%s\n```\n' "$checks"
+  if [ -n "$turn" ]; then
+    printf '\nOne real turn each ("Reply with just OK."):\n\n%s' "$turns"
+  fi
+} >>"$report"
+echo "Report: $report"
+exit "$failed"
