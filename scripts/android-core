@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds the phone's Rust core (crates/hq-mobile) for the Android app: the library for
-# each ABI the APK ships, and its Kotlin binding (add-android-app D12). Gradle runs it
+# each ABI the APK ships (HQ_ANDROID_ABIS, default all three), and its Kotlin binding (add-android-app D12). Gradle runs it
 # before every build. It fails naming what is missing rather than building without it.
 set -eu
 
@@ -30,9 +30,28 @@ bin="$ndk/toolchains/llvm/prebuilt/$host/bin"
 
 # minSdk 29 (Android 10): the NDK's compilers carry the API level in their names.
 api=29
-targets="aarch64-linux-android:arm64-v8a:aarch64-linux-android
+all="aarch64-linux-android:arm64-v8a:aarch64-linux-android
 armv7-linux-androideabi:armeabi-v7a:armv7a-linux-androideabi
 x86_64-linux-android:x86_64:x86_64-linux-android"
+# The ABIs to build, by Android name: all three unless HQ_ANDROID_ABIS names fewer. The release
+# APK ships arm64-v8a only, so its job builds just that (ship-arm64-apk).
+abis="${HQ_ANDROID_ABIS:-arm64-v8a armeabi-v7a x86_64}"
+for abi in $abis; do
+    case " $(printf '%s\n' "$all" | cut -d: -f2 | tr '\n' ' ') " in
+        *" $abi "*) ;;
+        *) echo "android-core: unknown ABI $abi in HQ_ANDROID_ABIS (use arm64-v8a, armeabi-v7a, x86_64)." >&2; exit 1 ;;
+    esac
+done
+# A library left from an earlier build for another ABI never ships.
+targets=""
+for entry in $all; do
+    rest="${entry#*:}"
+    abi="${rest%%:*}"
+    case " $abis " in
+        *" $abi "*) targets="$targets $entry" ;;
+        *) rm -rf "$app/jniLibs/$abi" ;;
+    esac
+done
 
 installed="$(rustup target list --installed)"
 for entry in $targets; do

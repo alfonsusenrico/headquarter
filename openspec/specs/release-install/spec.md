@@ -110,11 +110,11 @@ The installer SHALL, when `HQ_PROGRESS=1` is set, print one line per step (`prog
 - **THEN** its output has no progress lines and no notes
 
 ### Requirement: Android APK in releases
-The system SHALL publish with every version tag a signed Android APK named `headquarter-android.apk`, for arm64-v8a, armeabi-v7a and x86_64, with its SHA-256 in `headquarter-android.apk.sha256`, built and signed by the same release run as the desktop archives, and SHALL publish nothing when the APK cannot be built or signed.
+The system SHALL publish with every version tag a signed Android APK named `headquarter-android.apk`, for arm64-v8a, with its SHA-256 in `headquarter-android.apk.sha256`, built and signed by the same release run as the desktop archives, and SHALL publish nothing when the APK cannot be built or signed.
 
 #### Scenario: A release
 - **WHEN** the owner pushes a version tag
-- **THEN** the release carries `headquarter-android.apk` and its `.sha256` beside the desktop archives, and `apksigner verify` accepts the APK
+- **THEN** the release carries `headquarter-android.apk` and its `.sha256` beside the desktop archives, `apksigner verify` accepts the APK, and its native libraries are for `arm64-v8a` only
 
 #### Scenario: Installing over the previous release
 - **WHEN** a phone with the previous release's APK installs the new one
@@ -123,6 +123,10 @@ The system SHALL publish with every version tag a signed Android APK named `head
 #### Scenario: The APK fails
 - **WHEN** the Android build or its signing fails in a release run
 - **THEN** no GitHub release is published for that tag
+
+#### Scenario: Debug builds for an emulator
+- **WHEN** the owner builds the debug app
+- **THEN** it carries the core for `arm64-v8a`, `armeabi-v7a` and `x86_64`
 
 ### Requirement: The signing key stays with the release run
 The system SHALL sign release APKs only in release runs from version tags, with a key that the owner created and keeps a backup of, and SHALL never print the key or its passwords.
