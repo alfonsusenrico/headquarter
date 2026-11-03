@@ -32,11 +32,6 @@ android {
         versionCode = major * 10000 + minor * 100 + patch
         versionName = workspaceVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ndk {
-            // The core is built for these only (scripts/android-core). JNA brings more, which
-            // would install where the core is missing.
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        }
     }
 
     signingConfigs {
@@ -51,9 +46,13 @@ android {
     }
 
     buildTypes {
+        // Each build type packages only ABIs the core is built for (scripts/android-core):
+        // JNA brings more, which would install where the core is missing.
         debug {
             // Beside the release app on one phone, as Headquarter (debug) (D6).
             applicationIdSuffix = ".debug"
+            // An emulator runs x86_64.
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         }
         release {
             isMinifyEnabled = true
@@ -61,6 +60,9 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Without the key the release builds unsigned, as `./scripts/check` does (D7).
             signingConfig = signingConfigs.findByName("release")
+            // The owner's phone is 64-bit; x86_64 Chromebooks are not served (ship-arm64-apk).
+            //noinspection ChromeOsAbiSupport
+            ndk { abiFilters += listOf("arm64-v8a") }
         }
     }
 
