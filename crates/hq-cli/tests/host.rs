@@ -1484,6 +1484,40 @@ fn cli_starts_the_host_and_manages_sessions() {
 }
 
 #[test]
+fn stop_reports_a_host_its_service_started_again() {
+    let mut env = TestEnv::new("restart");
+    env.start_daemon();
+    let first_id = env.daemons[0].id();
+    let lock = std::fs::read_to_string(env.host_dir().join("agentd.lock")).unwrap();
+    assert_eq!(lock.trim(), first_id.to_string(), "the lock names its host");
+    // A service: a new host as soon as the first is gone.
+    let mut first = env.daemons.remove(0);
+    let mut again = env.command();
+    again
+        .arg("daemon")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let service = std::thread::spawn(move || {
+        first.wait().unwrap();
+        again.spawn().unwrap()
+    });
+    let stopped = env.hq(&["stop", "--yes"]);
+    assert!(stopped.status.success(), "{stopped:?}");
+    assert!(
+        String::from_utf8_lossy(&stopped.stdout).contains("Stopped the host"),
+        "{stopped:?}"
+    );
+    let second = service.join().unwrap();
+    let second_id = second.id();
+    env.daemons.push(second);
+    wait_until("the new host names itself", || {
+        std::fs::read_to_string(env.host_dir().join("agentd.lock"))
+            .is_ok_and(|lock| lock.trim() == second_id.to_string())
+    });
+}
+
+#[test]
 fn stop_ends_running_sessions_and_the_next_host_starts_them() {
     let mut env = TestEnv::new("stop");
     env.stub("agy", INTERACTIVE_STUB);

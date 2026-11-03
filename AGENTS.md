@@ -140,11 +140,14 @@ Where a standard does not fit, and what this project does instead:
 ## Release
 
 - Who: the agent on the owner's go
-- Kind: installer (desktop archives for macOS and Linux, and the signed Android APK)
+- Kind: installer. Host archives `hq-cli-<target>.tar.gz` (macOS and Linux), app archives
+  `hq-app-<target>` (macOS and Linux `.tar.gz`, Windows x86-64 `.zip`, unsigned), `install.sh`
+  (full, `--host-only`, `--app-only`), and the signed Android APK
 - Trigger: pushing a `v*` tag on `main` runs `release.yml` (`dist`). Its `custom-build-android`
   job (`build-android.yml`, environment `android-release`) builds and signs the APK
 - Versions: `vMAJOR.MINOR.PATCH`, one version for every crate and the APK (desktop and phone
-  release together). A `-rc.N` pre-release goes first only when the release pipeline changed
+  release together). A `-rc.N` pre-release goes first only when the release pipeline changed;
+  an `-alpha.N` pre-release only on the owner's request (first: `v0.2.0-alpha.1`, 2026-11-02)
 - Notes: a `## X.Y.Z (YYYY-MM-DD)` section at the top of `CHANGELOG.md`, user-facing, which
   `dist` uses as the GitHub release's notes
 - Before: a `chore/release-X.Y.Z` pull request sets `version` and every `hq-*` path dependency in
@@ -153,7 +156,9 @@ Where a standard does not fit, and what this project does instead:
 - Steps: from `main` equal to `origin/main` at the merge commit, `git tag vX.Y.Z <merge commit>`,
   `git push origin vX.Y.Z`, then watch the `release.yml` run until every job succeeds
 - Staging and soak: none
-- Verify: every job succeeded, `releases/latest` is the new tag, and the assets match `sha256.sum`.
+- Verify: every job succeeded, `releases/latest` is the new tag (a pre-release is not: check
+  its own tag), and the assets match `sha256.sum`: 4 host and 5 app archives, `install.sh`,
+  `source.tar.gz`, `sha256.sum`, the APK and its `.sha256`. No app archive holds `hq`.
   The APK's `.sha256` matches, `apksigner verify --print-certs` shows `CN=Headquarter` with
   SHA-256 `7c64a1f2b6ba540fda5e93dc663b23dc6fb3e5bd19811b09dae1293e25ed5f64`, and its
   version name and code match. The released `hq --version` prints it

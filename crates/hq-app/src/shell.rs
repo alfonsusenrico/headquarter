@@ -54,7 +54,8 @@ fn system_mode(appearance: WindowAppearance) -> Mode {
 }
 
 /// The workspace with the settings as they are now; after setup, "Add sessions" opens
-/// so the owner can fill the sidebar at once.
+/// so the owner can fill the sidebar at once, unless there is no host to add from yet:
+/// then Connect to a Host is what opens (add-windows-client D2).
 fn workspace(open_picker: bool, window: &mut Window, cx: &mut Context<Shell>) -> Entity<Workspace> {
     let mut watcher = settings::watcher();
     let (appearance, note) = settings::read(&mut watcher, None);
@@ -62,7 +63,7 @@ fn workspace(open_picker: bool, window: &mut Window, cx: &mut Context<Shell>) ->
         eprintln!("headquarter-app: {note}");
     }
     let workspace = cx.new(|cx| Workspace::new(watcher, appearance, note, window, cx));
-    if open_picker {
+    if open_picker && !crate::hosts::none_on_screen() {
         workspace.update(cx, |workspace, cx| workspace.show_open_sessions(window, cx));
     }
     workspace

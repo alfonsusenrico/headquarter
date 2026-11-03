@@ -794,18 +794,66 @@ impl std::error::Error for Refused {}
 
 /// Starts the host as `<hq> daemon`, where `<hq>` is this executable when it is `hq`
 /// (or `headquarter`), or the `hq` beside it otherwise (the desktop app).
+/// The `hq` that runs this computer's host (split-host-and-app-install D3): this program
+/// when it is `hq`; else `HQ_HOST_BIN`, the `hq` beside this program (development builds),
+/// the one the installer recorded, or `~/.local/bin/hq`. `None` when the host is not
+/// installed here: the app then shows paired hosts only and never starts one.
 #[cfg(unix)]
-fn start_host() -> Result<()> {
-    let exe = std::env::current_exe().context("locate this executable")?;
+pub fn host_binary() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
     let name = exe
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    let hq = if name == "hq" || name == "headquarter" {
-        exe.clone()
-    } else {
-        exe.with_file_name("hq")
-    };
+    if name == "hq" || name == "headquarter" {
+        return Some(exe);
+    }
+    let home = hq_signals::paths::home();
+    let recorded = home.as_ref().and_then(|home| {
+        std::fs::read_to_string(home.join(".local/share/headquarter/install-manifest")).ok()
+    });
+    host_binary_from(
+        std::env::var_os("HQ_HOST_BIN").map(std::path::PathBuf::from),
+        &exe,
+        recorded.as_deref(),
+        home.as_deref(),
+    )
+}
+
+/// The first of `host_binary`'s places that holds an executable file.
+#[cfg(unix)]
+fn host_binary_from(
+    named: Option<std::path::PathBuf>,
+    exe: &Path,
+    recorded: Option<&str>,
+    home: Option<&Path>,
+) -> Option<std::path::PathBuf> {
+    let in_record = recorded.and_then(|manifest| {
+        manifest
+            .lines()
+            .map(Path::new)
+            .find(|path| path.file_name().is_some_and(|name| name == "hq"))
+            .map(Path::to_path_buf)
+    });
+    named
+        .into_iter()
+        .chain([exe.with_file_name("hq")])
+        .chain(in_record)
+        .chain(home.map(|home| home.join(".local/bin/hq")))
+        .find(|path| is_executable(path))
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(unix)]
+fn start_host() -> Result<()> {
+    let hq = host_binary()
+        .ok_or_else(|| anyhow!("Headquarter's host is not installed on this computer"))?;
     Command::new(hq)
         .arg("daemon")
         .stdin(Stdio::null())
@@ -816,10 +864,59 @@ fn start_host() -> Result<()> {
     Ok(())
 }
 
-// Both tests talk over a Unix socket pair.
+// The tests use a Unix socket pair and Unix permissions.
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_host_is_found_in_order_and_only_where_it_is_installed() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("hq-host-bin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let place = |relative: &str| {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let home = root.join("home");
+        let app = root.join("Applications/Headquarter.app/Contents/MacOS/headquarter-app");
+        let none = host_binary_from(None, &app, None, Some(&home));
+        assert_eq!(none, None, "nothing installed: no host");
+        let default = place("home/.local/bin/hq");
+        assert_eq!(
+            host_binary_from(None, &app, None, Some(&home)),
+            Some(default.clone())
+        );
+        let recorded = place("custom/bin/hq");
+        let manifest = format!("{}\n{}\n", recorded.display(), app.display());
+        assert_eq!(
+            host_binary_from(None, &app, Some(&manifest), Some(&home)),
+            Some(recorded.clone()),
+            "the install record before the default place"
+        );
+        let beside = place("Applications/Headquarter.app/Contents/MacOS/hq");
+        assert_eq!(
+            host_binary_from(None, &app, Some(&manifest), Some(&home)),
+            Some(beside),
+            "a development build's own hq first"
+        );
+        let named = place("named/hq");
+        assert_eq!(
+            host_binary_from(Some(named.clone()), &app, Some(&manifest), Some(&home)),
+            Some(named)
+        );
+        let missing = root.join("nowhere/hq");
+        let _ = std::fs::remove_file(root.join("Applications/Headquarter.app/Contents/MacOS/hq"));
+        assert_eq!(
+            host_binary_from(Some(missing), &app, Some(&manifest), Some(&home)),
+            Some(recorded),
+            "a named hq that is not there is passed over"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
     use hq_protocol::{External, Origin};
     use hq_signals::status::Status;
 

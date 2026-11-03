@@ -72,6 +72,18 @@ which finished while you were away.
 
 ## Install
 
+Headquarter comes in two parts. The **host** runs your agents' sessions and keeps them
+going; the **app** shows them and lets you type into them. Put both on one computer, or
+the host on a server and the app on every laptop and PC you carry.
+
+| You want | Install |
+| --- | --- |
+| Everything on this Mac or Linux machine | [Full](#full-install) |
+| A server that keeps sessions running, no screen needed | [Host only](#host-only-servers) |
+| A laptop or a Windows PC that drives a host elsewhere | [App only](#app-only) |
+
+### Full install
+
 ```bash
 curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/latest/download/install.sh | sh
 ```
@@ -84,26 +96,79 @@ What the installer does:
    add that folder to your `PATH` if it is missing.
 3. On macOS, adds `Headquarter.app` to `~/Applications`, signed with a certificate the
    installer makes on your Mac and keeps in a keychain file of its own, never your login
-   keychain. Open it from Spotlight or the Dock. On Linux, adds `headquarter-app` and an entry in your application menu, and
-   names any system library the app still needs.
+   keychain. Open it from Spotlight or the Dock. On Linux, adds `headquarter-app` and an
+   entry in your application menu, and names any system library the app still needs.
 
 Want to read it first? Download `install.sh` from the latest release, read it, then
 run `sh install.sh`. To install a particular version, set `HQ_VERSION=0.1.0`.
 
+### Host only (servers)
+
+```bash
+curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/latest/download/install.sh | sh -s -- --host-only
+```
+
+Copy that line into an SSH session on the server. It installs `hq` and keeps the host
+running as a user service, so your sessions carry on with nobody watching:
+
+- **Linux:** the systemd user service `headquarter-host`. To keep it running while nobody
+  is logged in, the installer turns on lingering; if the system asks for an administrator,
+  run `sudo loginctl enable-linger $USER` once. Without systemd (some containers), it says
+  how to start `hq daemon` instead.
+- **macOS:** a LaunchAgent, which runs while you are logged in.
+
+Then pair your app with it: run `hq remote pair` on the server and paste the code it
+prints into **Connect to a Host** in the app. Stop the host for good with
+`systemctl --user stop headquarter-host` on Linux.
+
+### App only
+
+```bash
+curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/latest/download/install.sh | sh -s -- --app-only
+```
+
+On macOS and Linux this installs the app alone; on Windows, use the
+[zip](#on-windows-alpha). With no host on the computer, the app opens **Connect to a Host**
+and shows the hosts you pair with. Prefer the archives? Each release has them:
+
+| Platform | Host | App |
+| --- | --- | --- |
+| macOS, Apple silicon | `hq-cli-aarch64-apple-darwin.tar.gz` | `hq-app-aarch64-apple-darwin.tar.gz` |
+| macOS, Intel | `hq-cli-x86_64-apple-darwin.tar.gz` | `hq-app-x86_64-apple-darwin.tar.gz` |
+| Linux, arm64 | `hq-cli-aarch64-unknown-linux-gnu.tar.gz` | `hq-app-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux, x86-64 | `hq-cli-x86_64-unknown-linux-gnu.tar.gz` | `hq-app-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows, x86-64 | none: no host on Windows | `hq-app-x86_64-pc-windows-msvc.zip` |
+
+### Changing, updating, removing
+
+Run the line again with `--host-only`, `--app-only` or `--full` to change what is
+installed; the part you no longer want is removed. Without an option it keeps what you
+chose last.
+
 **Update** from the app: when a new release is out, an "Update" pill appears at the
 bottom of the sidebar (or choose Headquarter > Check for Updates…). One click downloads
-it, checks the installer against the checksum GitHub publishes, installs it, and
-restarts Headquarter, waiting first if you'd rather not interrupt a busy session. Your
-running sessions start again on their conversations. Running the install line again
-works too. **Uninstall** with:
+it, checks the installer against the checksum GitHub publishes, installs the same parts,
+and restarts Headquarter, waiting first if you'd rather not interrupt a busy session.
+Your running sessions start again on their conversations. **A server** updates by running
+its line again; the host keeps its version until it restarts, so run `hq stop` when you
+are ready (the service starts the new one, and sessions resume).
+
+**Pre-releases** such as `0.2.0-alpha.1` are never offered as updates. To try one, use
+that release's own installer:
+
+```bash
+curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/download/v0.2.0-alpha.1/install.sh | HQ_VERSION=0.2.0-alpha.1 sh
+```
+
+**Uninstall** with:
 
 ```bash
 curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/latest/download/install.sh | sh -s -- --uninstall
 ```
 
-It removes exactly what it installed, that certificate included, and keeps your
-settings and sessions in
-`~/.config/headquarter` and `~/.local/share/headquarter`.
+It removes exactly what it installed, that certificate and the host's service included,
+and keeps your settings and sessions in `~/.config/headquarter` and
+`~/.local/share/headquarter`.
 
 **Supported:**
 - macOS 13 or later, on Apple silicon and Intel.

@@ -212,7 +212,9 @@ fn display_date(published: &str) -> Option<String> {
 /// open to start the app again (D2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installed {
-    pub bin_dir: PathBuf,
+    /// Where the installer put the commands: `hq`'s folder, or on Linux the app's; `None`
+    /// for a macOS app-only install, which leaves it to the installer's default.
+    pub bin_dir: Option<PathBuf>,
     pub app: PathBuf,
 }
 
@@ -233,11 +235,15 @@ pub fn installed_copy() -> Option<Installed> {
 
 fn installed_from(manifest: &str, executable: &Path) -> Option<Installed> {
     let listed: Vec<&Path> = manifest.lines().map(Path::new).collect();
-    let bin_dir = listed
-        .iter()
-        .find(|path| path.file_name().is_some_and(|name| name == "hq"))?
-        .parent()?
-        .to_path_buf();
+    // An app-only install lists no `hq` (split-host-and-app-install D2).
+    let named = |file: &str| {
+        listed
+            .iter()
+            .find(|path| path.file_name().is_some_and(|name| name == file))
+            .and_then(|path| path.parent())
+            .map(Path::to_path_buf)
+    };
+    let bin_dir = named("hq").or_else(|| named("headquarter-app"));
     // On macOS the bundle is listed; on Linux the executable itself.
     let app = executable
         .ancestors()
@@ -406,11 +412,15 @@ fn run_installer(folder: &Path, version: Version, installed: &Installed) -> Resu
     command
         .arg(&script)
         .env("HQ_VERSION", version.to_string())
-        .env("HQ_INSTALL_DIR", &installed.bin_dir)
         .env("HQ_PROGRESS", "1")
         .stdin(Stdio::null())
         .stdout(output)
         .stderr(errors);
+    // Run again without an option, the installer keeps the parts it recorded
+    // (split-host-and-app-install D5).
+    if let Some(bin_dir) = &installed.bin_dir {
+        command.env("HQ_INSTALL_DIR", bin_dir);
+    }
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let child = command.spawn().context("cannot start the installer")?;
@@ -630,15 +640,36 @@ mod tests {
                 Path::new("/u/Applications/Headquarter.app/Contents/MacOS/headquarter-app")
             ),
             Some(Installed {
-                bin_dir: PathBuf::from("/u/.local/bin"),
+                bin_dir: Some(PathBuf::from("/u/.local/bin")),
                 app: PathBuf::from("/u/Applications/Headquarter.app"),
             })
+        );
+        let app_only = "parts=app\n/u/.local/share/headquarter/signing.keychain-db\n/u/Applications/Headquarter.app\n";
+        assert_eq!(
+            installed_from(
+                app_only,
+                Path::new("/u/Applications/Headquarter.app/Contents/MacOS/headquarter-app")
+            ),
+            Some(Installed {
+                bin_dir: None,
+                app: PathBuf::from("/u/Applications/Headquarter.app"),
+            }),
+            "a macOS app-only install"
+        );
+        assert_eq!(
+            installed_from(
+                "parts=app\n/u/bin/headquarter-app\n",
+                Path::new("/u/bin/headquarter-app")
+            )
+            .and_then(|installed| installed.bin_dir),
+            Some(PathBuf::from("/u/bin")),
+            "a Linux app-only install"
         );
         let linux = "/u/bin/hq\n/u/bin/headquarter\n/u/bin/headquarter-app\n";
         assert_eq!(
             installed_from(linux, Path::new("/u/bin/headquarter-app")),
             Some(Installed {
-                bin_dir: PathBuf::from("/u/bin"),
+                bin_dir: Some(PathBuf::from("/u/bin")),
                 app: PathBuf::from("/u/bin/headquarter-app"),
             })
         );
