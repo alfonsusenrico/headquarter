@@ -6,7 +6,7 @@ How Headquarter is released and installed: CI builds archives with checksums on 
 ## Requirements
 
 ### Requirement: One-line install
-The system SHALL install the command line and the app for the owner's operating system and architecture with one command, without administrator rights, and SHALL say how to put the install folder on `PATH` when it is missing.
+The system SHALL install, with one command and without administrator rights, the host and the app (default), the host only (`--host-only`), or the app only (`--app-only`), for the owner's system and architecture, and SHALL say how to put the install folder on `PATH` when it is missing.
 
 #### Scenario: macOS
 - **WHEN** the owner runs the install line on an Apple silicon Mac
@@ -23,6 +23,14 @@ The system SHALL install the command line and the app for the owner's operating 
 #### Scenario: Linux window matched to its entry
 - **WHEN** Headquarter runs on a Linux desktop after the install line
 - **THEN** its window carries the app id `headquarter`, the desktop entry names the same window class, and the dock and window switcher show the Headquarter icon
+
+#### Scenario: Host only on a server
+- **WHEN** the owner runs the install line with `--host-only` on a headless Linux server
+- **THEN** `hq` and `headquarter` are installed, no app or menu entry is, and the host runs as the owner's service
+
+#### Scenario: App only
+- **WHEN** the owner runs the install line with `--app-only` on a Mac
+- **THEN** only `Headquarter.app` is installed, and it opens at Connect to a Host
 
 ### Requirement: Verified downloads
 The system SHALL verify every downloaded archive against its published SHA-256 before installing anything.
@@ -140,3 +148,21 @@ The system SHALL build, lint with warnings as errors, and test the client crates
 #### Scenario: A change breaks the Windows build
 - **WHEN** a pull request adds code that does not compile for Windows
 - **THEN** the Windows check fails on that pull request
+
+### Requirement: Install parts are remembered
+The installer SHALL record which parts it installed, keep them when run again without an option, change them when run with another option, and remove only recorded parts on uninstall.
+
+#### Scenario: Rerun on the server
+- **WHEN** the owner reruns the plain install line on a host-only server
+- **THEN** the host is updated and no app is installed
+
+#### Scenario: From full to app only
+- **WHEN** the owner runs the install line with `--app-only` on a full install
+- **THEN** the app stays, `hq` and the host service are removed, and the data folders remain and are named
+
+### Requirement: App archives carry no host
+The app archives SHALL hold the desktop app only, and the macOS app bundle SHALL not contain `hq`.
+
+#### Scenario: Release assets
+- **WHEN** a release is published
+- **THEN** the app archives contain no `hq` executable, and the host archives contain `hq` and `headquarter`
