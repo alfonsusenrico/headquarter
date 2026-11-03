@@ -4,13 +4,15 @@
 # folders, and writes research/evidence/agent-checks/<date>.md. The owner's host, sessions
 # and sidebar are not touched.
 #
-#   scripts/agent-check [--folder DIR] [--turn]
+#   scripts/agent-check [--folder DIR] [--turn] [--only AGENT]
 #
 # --folder DIR  the folder Claude Code and Codex start in; both must already trust it
 #               (default: the current folder). agy uses the host's own empty folder.
 # --turn        also run one real turn per agent ("Reply with just OK.") in DIR and check
 #               that its session goes working, then idle. This spends a little of each
 #               agent's usage and leaves the conversation in its history: owner's go only.
+#               Every agent must trust DIR; Headquarter never answers a trust question.
+# --only AGENT  the turn for this agent only (claude, codex or agy).
 #
 # Without --turn no prompt is sent. The report keeps versions and results, never what an
 # agent showed or answered.
@@ -19,6 +21,7 @@ set -eu
 repo=$(cd "$(dirname "$0")/.." && pwd)
 folder=$(pwd)
 turn=""
+turn_agents="claude codex agy"
 while [ $# -gt 0 ]; do
   case $1 in
     --folder)
@@ -29,8 +32,12 @@ while [ $# -gt 0 ]; do
       turn=1
       shift
       ;;
+    --only)
+      turn_agents=$2
+      shift 2
+      ;;
     *)
-      echo "agent-check: unknown option $1 (use --folder DIR, --turn)" >&2
+      echo "agent-check: unknown option $1 (use --folder DIR, --turn, --only AGENT)" >&2
       exit 2
       ;;
   esac
@@ -84,7 +91,7 @@ printf '%s\n' "$checks"
 
 turns=""
 if [ -n "$turn" ]; then
-  for agent in claude codex agy; do
+  for agent in $turn_agents; do
     case $agent in
       agy) name=$(start agy -i "Reply with just OK.") ;;
       *) name=$(start "$agent" "Reply with just OK.") ;;
@@ -102,7 +109,7 @@ if [ -n "$turn" ]; then
           fi
           ;;
         needs-you)
-          result="asked for the owner"
+          result="asked for the owner (a trust or permission question)"
           break
           ;;
       esac
