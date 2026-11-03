@@ -2,6 +2,23 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.2.0-alpha.2 (2026-11-03)
+
+A pre-release. The app's update check skips it; install it with the line below.
+
+- Headquarter checks an agent after it updates. When Claude Code, Codex or agy changes
+  version, the host checks the new version once, without sending a prompt: that it still
+  reports its status as it starts, and that its usage still reads. If a check fails, a notice
+  names the agent, its version and what no longer works (for example "Claude Code 2.1.316:
+  Headquarter can't read its usage."), once per version. Passing checks stay quiet.
+- `hq agents --check` runs the same checks now and exits with 1 when one fails.
+
+Try it:
+
+```sh
+curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/download/v0.2.0-alpha.2/install.sh | HQ_VERSION=0.2.0-alpha.2 sh
+```
+
 ## 0.2.0-alpha.1 (2026-11-03)
 
 A pre-release for trying Headquarter across computers. The app's update check skips it; install
