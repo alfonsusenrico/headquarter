@@ -9,6 +9,6 @@
 ## 2. Verification and delivery
 
 - [x] 2.1 `./scripts/check` passes; `verification.md` written.
-- [ ] 2.2 The owner checks it.
-- [ ] 2.3 After the owner accepts: archive, push, open the PR. The next release tag proves the
+- [x] 2.2 The owner checks it. Accepted 2026-11-03 ("1 done").
+- [x] 2.3 After the owner accepts: archive, push, open the PR. The next release tag proves the
   job's time and the APK's ABI.
