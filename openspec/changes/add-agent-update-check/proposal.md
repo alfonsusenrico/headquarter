@@ -1,6 +1,6 @@
 # Headquarter checks an agent after it updates
 
-Status: plan, waiting for the owner's approval.
+Status: approved by the owner on 2026-11-02 ("approve both"); building.
 
 ## Why
 
@@ -23,7 +23,7 @@ check it by itself without spending tokens, and say plainly when something no lo
 
 - Host: per-agent version memory and the free checks on change (D1, D2).
 - App: a notice for a failed check (D3), reusing the quiet notice.
-- `scripts/agent-check` (D4).
+- `hq agents --check` and `scripts/agent-check` (D4).
 - `agent-discovery` spec.
 
 ## Non-goals
@@ -38,4 +38,5 @@ No new project capability. Modified: `agent-discovery`.
 ## Impact
 
 `hq-daemon` (a checker beside the usage readers), `hq-protocol` (an optional field for check
-results), `hq-app` (the notice), `scripts/`. Protocol stays 14.
+results and a local-only request), `hq-cli`, `hq-app` (the notice), `scripts/`. Protocol stays 15:
+older apps ignore the field, and the request is refused to phones and other computers.

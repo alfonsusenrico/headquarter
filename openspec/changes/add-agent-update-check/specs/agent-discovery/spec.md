@@ -14,3 +14,19 @@ When an installed agent's version changes, the system SHALL check, without sendi
 #### Scenario: No tokens spent
 - **WHEN** a check runs
 - **THEN** no prompt is sent to any agent
+
+#### Scenario: A check that cannot run
+- **WHEN** Codex's most recent session folder asks whether to trust it
+- **THEN** the status check is recorded as not checked, and no notice appears
+
+#### Scenario: Once per version
+- **WHEN** a failed check's notice was shown for Claude Code 2.1.316 and the host restarts
+- **THEN** the version is not checked again and the notice does not return
+
+#### Scenario: Checking on demand
+- **WHEN** the owner runs `hq agents --check`
+- **THEN** each agent turned on is checked now and its results are printed
+
+#### Scenario: Not from another device
+- **WHEN** a paired phone or computer asks the host to check its agents
+- **THEN** the host refuses
