@@ -2,6 +2,33 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.2.0-alpha.1 (2026-11-03)
+
+A pre-release for trying Headquarter across computers. The app's update check skips it; install
+it with the line below.
+
+- Control another computer's sessions. `hq remote pair` on a server (or Remote Control ▸ Pair a
+  Phone or Computer on a Mac) shows a code; paste it into Connect to a Host… in the new host
+  switcher at the top of the sidebar. The other host's sessions, folders and terminals then work
+  as this computer's do, and come back by themselves after a dropped connection. Stopping the
+  host, pairing and removing devices stay on the host itself.
+- The desktop app on Windows (alpha, x86-64, unsigned): a client of hosts on a Mac, Linux or a
+  server, since Windows runs no host. Unzip `hq-app-x86_64-pc-windows-msvc.zip` and run
+  `headquarter-app.exe`; SmartScreen asks once (More info ▸ Run anyway).
+- Install the host and the app separately. `install.sh --host-only` sets up a server: the host
+  alone, kept running as a user service (systemd on Linux, a LaunchAgent on macOS).
+  `--app-only` installs just the app, for a computer that only controls hosts elsewhere, and
+  `--full` both. Updates keep the parts you chose. The app archives no longer carry `hq`.
+- `hq stop` says when a service started the host again, instead of reporting that it did not
+  stop.
+- Protocol 15: update the host, the desktop app and the phone app together.
+
+Try it:
+
+```sh
+curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/download/v0.2.0-alpha.1/install.sh | HQ_VERSION=0.2.0-alpha.1 sh
+```
+
 ## 0.1.24 (2026-11-02)
 
 - Claude usage updates again. Claude Code 2.1.316 stopped showing the five-hour session window
