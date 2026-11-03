@@ -8,12 +8,12 @@
 
 ## 2. App
 
-- [ ] 2.1 Local host lookup through the install record; no host started when none is found (D3). Evidence: unit tests; on screen with an app-only sandbox.
+- [x] 2.1 Local host lookup through the install record; no host started when none is found (D3). Evidence: unit tests; on screen with an app-only sandbox.
 - [x] 2.2 Updater by parts (D5). Evidence: unit tests of full and app-only records (the installer keeps the recorded parts on a rerun, covered by the installer test).
 
 ## 3. Docs and release
 
-- [ ] 3.1 README install section (D6). Evidence: the owner reads it.
+- [x] 3.1 README install section (D6). Evidence: the owner reads it.
 - [x] 3.2 `AGENTS.md` Release section (D7).
 
 ## 4. Linux host
@@ -25,6 +25,6 @@ Done: installer test (56+ checks, macOS and Debian) incl. an install from before
 
 ## 5. Verification and delivery
 
-- [ ] 5.1 `./scripts/check` passes; `verification.md` written.
-- [ ] 5.2 The owner checks it.
+- [x] 5.1 `./scripts/check` passes; `verification.md` written.
+- [x] 5.2 The owner checks it.
 - [ ] 5.3 After the owner accepts: archive, push `feat/split-install`, open the PR, report its URL. Then the `chore/release-0.2.0-alpha.1` pull request (pre-release).
