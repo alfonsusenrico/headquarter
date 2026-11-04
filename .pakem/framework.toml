@@ -1,4 +1,4 @@
 # Written by `pakem project sync --aligned` (ADR 0017): the Pakem commit this project last
 # aligned to, and the Pakem version each changed copy was merged with.
-aligned = "4ddc00a8453583b696172e268395105519010055"
-aligned_at = "2026-11-03"
+aligned = "c4a4eb669ce9d394695d6164bcba7675f35caa21"
+aligned_at = "2026-11-04"
