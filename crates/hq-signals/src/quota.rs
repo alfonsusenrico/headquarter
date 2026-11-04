@@ -354,6 +354,53 @@ pub fn save_snapshot(path: &Path, reading: &QuotaReading) -> std::io::Result<()>
     std::fs::rename(&partial, path)
 }
 
+/// Resets this close together belong to one period: the `/usage` screen gives minutes and
+/// the status line seconds, and a window's next period resets at least five hours later.
+const SAME_PERIOD_SECS: u64 = 60 * 60;
+
+/// Whether two windows count the same period: the same length and model, resetting together.
+/// A window without a reset time matches none.
+pub fn same_period(a: &QuotaWindow, b: &QuotaWindow) -> bool {
+    let resets_together = match (a.resets_at, b.resets_at) {
+        (Some(first), Some(second)) => first.abs_diff(second) < SAME_PERIOD_SECS,
+        _ => false,
+    };
+    a.duration_mins == b.duration_mins && a.model == b.model && resets_together
+}
+
+/// Whether `report` holds older figures than `kept`: one of its windows counts less than
+/// `kept`'s window of the same period. A share only grows until its window resets, so a
+/// lower one comes from an older response (fix-claude-usage-going-back D1).
+pub fn is_behind(report: &[QuotaWindow], kept: &[QuotaWindow]) -> bool {
+    report.iter().any(|window| {
+        kept.iter()
+            .any(|other| same_period(window, other) && window.used_percent < other.used_percent)
+    })
+}
+
+/// `window`, or the window of the same period in `others` when that one counts more
+/// (fix-claude-usage-going-back D2).
+pub fn higher_of_same_period(window: &QuotaWindow, others: &[QuotaWindow]) -> QuotaWindow {
+    others
+        .iter()
+        .find(|other| same_period(window, other) && other.used_percent > window.used_percent)
+        .unwrap_or(window)
+        .clone()
+}
+
+/// Saves a status-line reading unless the saved one holds newer figures: Claude Code also
+/// runs the status line with a session's older limits (on resume, a mode change or prompt
+/// cache expiry). Returns whether it was saved.
+pub fn save_status_line_reading(path: &Path, reading: &QuotaReading) -> std::io::Result<bool> {
+    if let QuotaReport::Available(saved) = read_snapshot(path, reading.provider)
+        && is_behind(&reading.windows, &saved.windows)
+    {
+        return Ok(false);
+    }
+    save_snapshot(path, reading)?;
+    Ok(true)
+}
+
 pub fn read_snapshot(path: &Path, provider: Agent) -> QuotaReport {
     let unavailable = |reason: &str| QuotaReport::Unavailable {
         provider,
@@ -778,5 +825,102 @@ mod tests {
         assert!(!migrate_snapshot(&old, &current).unwrap(), "never replaces");
         assert_eq!(std::fs::read(&current).unwrap(), b"new");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn week(used_percent: f64, resets_at: u64) -> QuotaWindow {
+        QuotaWindow {
+            duration_mins: Some(WEEK_MINS),
+            used_percent,
+            resets_at: Some(resets_at),
+            model: None,
+        }
+    }
+
+    fn claude_reading(windows: Vec<QuotaWindow>, read_at: u64) -> QuotaReading {
+        QuotaReading {
+            provider: Agent::Claude,
+            windows,
+            read_at,
+        }
+    }
+
+    const SATURDAY: u64 = 1_800_000_000;
+
+    #[test]
+    fn windows_of_one_period_reset_within_the_hour() {
+        let screen = week(59.0, SATURDAY - 40);
+        assert!(
+            same_period(&week(58.0, SATURDAY), &screen),
+            "minutes against seconds"
+        );
+        assert!(!same_period(&week(2.0, SATURDAY + WEEK_MINS * 60), &screen));
+        let five_hours = QuotaWindow {
+            duration_mins: Some(FIVE_HOURS_MINS),
+            ..week(59.0, SATURDAY)
+        };
+        assert!(!same_period(&five_hours, &screen), "another length");
+        let fable = QuotaWindow {
+            model: Some("Fable".into()),
+            ..week(59.0, SATURDAY)
+        };
+        assert!(!same_period(&fable, &screen), "another model");
+        let no_reset = QuotaWindow {
+            resets_at: None,
+            ..week(59.0, SATURDAY)
+        };
+        assert!(!same_period(&no_reset, &no_reset));
+    }
+
+    #[test]
+    fn an_older_status_line_report_is_not_saved() {
+        let dir = scratch("status-line");
+        let path = dir.join("claude.json");
+        assert!(
+            save_status_line_reading(&path, &claude_reading(vec![week(59.0, SATURDAY)], 100))
+                .unwrap(),
+            "nothing saved yet"
+        );
+        assert!(
+            !save_status_line_reading(&path, &claude_reading(vec![week(58.0, SATURDAY)], 200))
+                .unwrap(),
+            "an idle session re-sends 58%"
+        );
+        let saved = |path: &Path| match read_snapshot(path, Agent::Claude) {
+            QuotaReport::Available(reading) => (reading.windows[0].used_percent, reading.read_at),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(saved(&path), (59.0, 100));
+        assert!(
+            save_status_line_reading(&path, &claude_reading(vec![week(59.0, SATURDAY)], 300))
+                .unwrap()
+        );
+        assert_eq!(saved(&path), (59.0, 300), "the same figures keep it fresh");
+        assert!(
+            save_status_line_reading(&path, &claude_reading(vec![week(60.0, SATURDAY)], 400))
+                .unwrap()
+        );
+        assert_eq!(saved(&path), (60.0, 400));
+        let next_week = SATURDAY + WEEK_MINS * 60;
+        assert!(
+            save_status_line_reading(&path, &claude_reading(vec![week(2.0, next_week)], 500))
+                .unwrap()
+        );
+        assert_eq!(saved(&path), (2.0, 500), "a new week starts low");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_higher_share_of_one_period_wins() {
+        let screen = [week(59.0, SATURDAY - 40)];
+        assert_eq!(
+            higher_of_same_period(&week(58.0, SATURDAY), &screen).used_percent,
+            59.0
+        );
+        assert_eq!(
+            higher_of_same_period(&week(60.0, SATURDAY), &screen).used_percent,
+            60.0
+        );
+        let next_week = week(2.0, SATURDAY + WEEK_MINS * 60);
+        assert_eq!(higher_of_same_period(&next_week, &screen), next_week);
     }
 }

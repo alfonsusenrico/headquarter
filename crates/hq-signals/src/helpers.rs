@@ -104,7 +104,7 @@ fn record_claude_limits(input: &[u8]) {
         windows,
         read_at: crate::now_ms() / 1000,
     };
-    let _ = quota::save_snapshot(&path, &reading);
+    let _ = quota::save_status_line_reading(&path, &reading);
 }
 
 pub fn claude_snapshot_path() -> Option<PathBuf> {

@@ -635,7 +635,8 @@ fn from_report(agent: Agent, report: QuotaReport) -> AgentUsage {
 }
 
 /// Claude's usage from its two sources: a hosted session's status line report and the
-/// hidden `/usage` read. The newer one gives the five-hour and weekly numbers; per-model
+/// hidden `/usage` read. The newer one gives the five-hour and weekly numbers, except that a
+/// newer status line never lowers the `/usage` read's share of the same window; per-model
 /// windows come only from `/usage`. `problem` is why the last `/usage` read failed.
 fn claude_usage(
     report: QuotaReport,
@@ -662,7 +663,16 @@ fn claude_usage(
         }
     };
     let newest = match (&status_line, screen) {
-        (Some(line), Some(screen)) if line.read_at > screen.read_at => line.clone(),
+        // A newer status-line report may still carry a session's older figures; a `/usage`
+        // read newer than it is shown as read (fix-claude-usage-going-back D2).
+        (Some(line), Some(screen)) if line.read_at > screen.read_at => QuotaReading {
+            windows: line
+                .windows
+                .iter()
+                .map(|window| quota::higher_of_same_period(window, &screen.windows))
+                .collect(),
+            ..line.clone()
+        },
         (_, Some(screen)) => screen.clone(),
         (Some(line), None) => line.clone(),
         (None, None) => unreachable!("handled above"),
@@ -718,6 +728,7 @@ fn pick_trusted(folders: Vec<PathBuf>, trusted: Option<Vec<PathBuf>>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hq_signals::quota::QuotaWindow;
 
     fn paths(list: &[&str]) -> Vec<PathBuf> {
         list.iter().map(PathBuf::from).collect()
@@ -752,5 +763,63 @@ mod tests {
         let picked = pick_trusted(vec![link.clone()], Some(vec![dir]));
         std::fs::remove_file(&link).unwrap();
         assert_eq!(picked, Ok(link));
+    }
+
+    const WEEK: u64 = 7 * 24 * 60;
+    const SATURDAY: u64 = 1_800_000_000;
+
+    fn week(used_percent: f64, resets_at: u64) -> QuotaWindow {
+        QuotaWindow {
+            duration_mins: Some(WEEK),
+            used_percent,
+            resets_at: Some(resets_at),
+            model: None,
+        }
+    }
+
+    fn claude(windows: Vec<QuotaWindow>, read_at: u64) -> QuotaReading {
+        QuotaReading {
+            provider: Agent::Claude,
+            windows,
+            read_at,
+        }
+    }
+
+    /// The week's share shown for a status-line reading and a `/usage` read.
+    fn shown_week(line: QuotaReading, screen: QuotaReading) -> f64 {
+        let usage = claude_usage(QuotaReport::Available(line), Some(&screen), None);
+        usage
+            .windows
+            .iter()
+            .find(|window| window.model.is_none())
+            .map(|window| window.used_percent)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_newer_status_line_never_lowers_the_week() {
+        let screen = claude(vec![week(59.0, SATURDAY - 40)], 100);
+        assert_eq!(
+            shown_week(claude(vec![week(58.0, SATURDAY)], 200), screen.clone()),
+            59.0,
+            "an idle session redraws with its older 58%"
+        );
+        assert_eq!(
+            shown_week(claude(vec![week(60.0, SATURDAY)], 200), screen.clone()),
+            60.0
+        );
+        let next_week = SATURDAY + WEEK * 60;
+        assert_eq!(
+            shown_week(claude(vec![week(2.0, next_week)], 200), screen),
+            2.0,
+            "a new week starts low"
+        );
+    }
+
+    #[test]
+    fn a_newer_usage_read_is_shown_as_read() {
+        let line = claude(vec![week(59.0, SATURDAY)], 100);
+        let screen = claude(vec![week(57.0, SATURDAY - 40)], 200);
+        assert_eq!(shown_week(line, screen), 57.0, "Refresh reads 57%");
     }
 }
