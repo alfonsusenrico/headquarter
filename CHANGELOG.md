@@ -2,6 +2,43 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.3.0 (2026-11-09)
+
+- Control another computer's sessions. `hq remote pair` on a server (or Remote Control ▸ Pair a
+  Phone or Computer on a Mac) shows a code; paste it into Connect to a Host… in the host switcher
+  at the top of the sidebar. The other host's sessions, folders and terminals then work as this
+  computer's do, and come back by themselves after a dropped connection. Stopping the host,
+  pairing and removing devices stay on the host itself.
+- The desktop app on Windows (alpha, x86-64, unsigned): a client of hosts on a Mac, Linux or a
+  server, since Windows runs no host. Unzip `hq-app-x86_64-pc-windows-msvc.zip` and run
+  `headquarter-app.exe`; SmartScreen asks once (More info ▸ Run anyway).
+- Install the host and the app separately. `install.sh --host-only` sets up a server: the host
+  alone, kept running as a user service (systemd on Linux, a LaunchAgent on macOS). `--app-only`
+  installs just the app, for a computer that only controls hosts elsewhere, and `--full` both.
+  Updates keep the parts you chose. The app archives no longer carry `hq`.
+- Send images to an agent. On the phone, the new image key opens the photo picker; on the
+  desktop, drop an image or paste a screenshot into a session on another computer. The image
+  goes to the computer the agent runs on and its path lands in the agent's box, where Claude Code
+  and Codex attach it. A HEIC photo or one over 10 MB is converted to JPEG on the phone first.
+  The computer keeps images only for the agent: 7 days, or until the session is closed.
+- Type straight into the agent on the phone. The text box is gone: tap the terminal and type into
+  the agent's own input box, with autocorrect, swipe and voice typing. The keyboard's Enter starts
+  a new line in Claude Code and Codex; the ⏎ key sends.
+- Move the cursor on the phone: ← and → in the key row, or tap where you want it on the agent's
+  input line.
+- Tap a link on the phone to open it in the browser; a long press copies it.
+- Claude usage no longer falls back. An idle Claude session could report its older numbers as new
+  ones, so the week showed 58% after `/usage` said 59%. The panel now keeps the higher share
+  within the same window, and a new week starts fresh.
+- Headquarter checks an agent after it updates. When Claude Code, Codex or agy changes version,
+  the host checks the new version once, without sending a prompt: that it still reports its
+  status as it starts, and that its usage still reads. If a check fails, a notice names the agent,
+  its version and what no longer works. `hq agents --check` runs the same checks now.
+- `hq stop` says when a service started the host again, instead of reporting that it did not
+  stop.
+- The Android app is built for 64-bit (arm64) phones.
+- Protocol 16: update the host, the desktop app and the phone app together.
+
 ## 0.3.0-rc.2 (2026-11-09)
 
 A release candidate that checks the changed release pipeline: both Mac builds now run on GitHub's
