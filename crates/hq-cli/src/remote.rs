@@ -2,6 +2,7 @@
 //! code, list and remove paired devices. Remote control runs while a device is paired,
 //! with no switch (remote-follows-paired-phones D3, add-remote-desktop-client D1).
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -80,17 +81,21 @@ fn pair(paths: &HostPaths) -> Result<ExitCode> {
              Headquarter ▸ Remote Control… in the app.\n",
             rows + 4
         ),
-        _ => println!(
-            "{}",
-            qr.render::<qrcode::render::unicode::Dense1x2>()
+        _ => {
+            let drawn = qr
+                .render::<qrcode::render::unicode::Dense1x2>()
                 .quiet_zone(true)
-                .build()
-        ),
+                .build();
+            let coloured =
+                std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+            println!("{}", paint_qr(&drawn, coloured));
+        }
     }
     println!(
         "Scan the QR code with Headquarter on your phone, or paste the code into Connect to a \
          Host in the Headquarter app on another computer:\n{code}\n"
     );
+    println!("Get the phone app: {PHONE_APP_LINK}\n");
     println!(
         "Waiting for a device; the code works once, for {} minutes.",
         expires_in_secs.div_ceil(60)
@@ -112,6 +117,22 @@ fn pair(paths: &HostPaths) -> Result<ExitCode> {
 
 /// Columns and rows a QR code of `modules` takes in a terminal: two rows of modules per
 /// line, with a 4-module quiet zone around it.
+/// The latest stable phone app, as the Remote Control window links it.
+const PHONE_APP_LINK: &str = "https://github.com/alfonsusenrico/headquarter/releases/latest/download/headquarter-android.apk";
+
+/// The QR code dark on light whatever the terminal's theme: on a dark theme the blocks would
+/// otherwise draw light on dark, which many camera apps cannot read (fix-remote-polish D2).
+fn paint_qr(drawn: &str, coloured: bool) -> String {
+    if !coloured {
+        return drawn.to_owned();
+    }
+    drawn
+        .lines()
+        .map(|line| format!("\x1b[30;107m{line}\x1b[0m"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn qr_size(modules: usize) -> (u16, u16) {
     let side = modules + 8;
     (side as u16, side.div_ceil(2) as u16)
@@ -193,6 +214,20 @@ mod tests {
         // A 45-module code (an hqp2 code with a relay) needs 53 columns and 27 rows.
         assert_eq!(qr_size(45), (53, 27));
         assert_eq!(qr_size(57), (65, 33));
+    }
+
+    #[test]
+    fn the_qr_code_is_dark_on_light_in_a_terminal() {
+        let drawn = "\u{2588}\u{2580}\n \u{2584}";
+        assert_eq!(
+            paint_qr(drawn, true),
+            "\x1b[30;107m\u{2588}\u{2580}\x1b[0m\n\x1b[30;107m \u{2584}\x1b[0m"
+        );
+        assert_eq!(
+            paint_qr(drawn, false),
+            drawn,
+            "plain when piped or NO_COLOR"
+        );
     }
 
     #[test]
