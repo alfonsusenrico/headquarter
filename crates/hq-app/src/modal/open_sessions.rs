@@ -22,6 +22,7 @@ use hq_protocol::{Origin, RemoveWay, SessionInfo, removal_ways};
 use hq_signals::event::Agent;
 
 use super::folders::{self, FolderRow};
+use crate::hosts::HostId;
 use crate::marks::Marks;
 use crate::terminal::view::hsla;
 use crate::theme::Chrome;
@@ -213,7 +214,7 @@ pub fn pick_items<Tz: TimeZone>(
 pub fn suggestions(text: &str, home: &Path) -> Vec<PathBuf> {
     // This computer's folders say nothing about a remote host's
     // (add-remote-desktop-client D7).
-    if !folders::is_path(text) || crate::hosts::is_remote() {
+    if !folders::is_path(text) || !crate::hosts::has_local_host() {
         return Vec::new();
     }
     folders::list(text, home, &[])
@@ -235,6 +236,8 @@ pub enum OpenEvent {
 
 pub struct OpenSessions {
     sessions: Vec<SessionInfo>,
+    /// Each session's host, so a removal goes there (add-merged-host-list D4).
+    hosts: HashMap<String, HostId>,
     filters: Filters,
     order: HashMap<String, u64>,
     picked: HashSet<String>,
@@ -305,6 +308,7 @@ impl OpenSessions {
             .collect();
         OpenSessions {
             sessions,
+            hosts: HashMap::new(),
             filters: Filters::default(),
             order,
             picked: HashSet::new(),
@@ -342,6 +346,11 @@ impl OpenSessions {
     pub fn set_loaded(&mut self, loaded: bool, cx: &mut Context<Self>) {
         self.loaded = loaded;
         cx.notify();
+    }
+
+    /// Each listed session's host.
+    pub fn set_hosts(&mut self, hosts: HashMap<String, HostId>) {
+        self.hosts = hosts;
     }
 
     pub fn update_sessions(&mut self, sessions: Vec<SessionInfo>, cx: &mut Context<Self>) {
@@ -413,9 +422,10 @@ impl OpenSessions {
     fn send(&mut self, session: SessionInfo, way: RemoveWay, cx: &mut Context<Self>) {
         self.sent.insert(session.id.clone());
         let id = session.id.clone();
+        let host = self.host_of(&id);
         let task = cx
             .background_executor()
-            .spawn(async move { send_removal(&id, way) });
+            .spawn(async move { send_removal(&host, &id, way) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -1086,9 +1096,15 @@ impl OpenSessions {
     }
 }
 
-fn send_removal(id: &str, way: RemoveWay) -> anyhow::Result<()> {
-    let host = crate::hosts::current()?;
+fn send_removal(host: &HostId, id: &str, way: RemoveWay) -> anyhow::Result<()> {
+    let host = crate::hosts::host(host)?;
     hq_client::remove_conversation(&host, id, way)
+}
+
+impl OpenSessions {
+    fn host_of(&self, id: &str) -> HostId {
+        self.hosts.get(id).cloned().unwrap_or_default()
+    }
 }
 
 /// A removal still in its undo window when the window closes is sent then: closing is
@@ -1096,8 +1112,9 @@ fn send_removal(id: &str, way: RemoveWay) -> anyhow::Result<()> {
 impl Drop for OpenSessions {
     fn drop(&mut self) {
         if let Some(pending) = self.pending.take() {
+            let host = self.host_of(&pending.session.id);
             std::thread::spawn(move || {
-                if let Err(error) = send_removal(&pending.session.id, pending.way) {
+                if let Err(error) = send_removal(&host, &pending.session.id, pending.way) {
                     log::warn!("removing {} failed: {error:#}", pending.session.id);
                 }
             });

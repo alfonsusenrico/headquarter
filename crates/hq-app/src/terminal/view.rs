@@ -418,6 +418,11 @@ impl TerminalView {
         .detach();
     }
 
+    /// Whether the session runs on another computer (add-merged-host-list D4).
+    fn remote(&self, cx: &App) -> bool {
+        self.session.read(cx).host != crate::hosts::HostId::Local
+    }
+
     /// Pastes the clipboard's text. On a session on another computer, an image on the
     /// clipboard with no text is sent there and its path pasted (add-image-upload D7).
     fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
@@ -428,7 +433,7 @@ impl TerminalView {
             self.paste(&text, cx);
             return;
         }
-        if !crate::hosts::is_remote() {
+        if !self.remote(cx) {
             return;
         }
         let image = item.entries().iter().find_map(|entry| match entry {
@@ -455,7 +460,7 @@ impl TerminalView {
     /// their paths pasted, and other files are refused (add-image-upload D7).
     fn drop_paths(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
-        if crate::hosts::is_remote() {
+        if self.remote(cx) {
             let mut sendable = Vec::new();
             let mut refused = None;
             for path in paths.paths() {
@@ -495,7 +500,7 @@ impl TerminalView {
     /// pastes paths (D5). The pane stays usable meanwhile.
     fn send_images(&mut self, images: Vec<Vec<u8>>, cx: &mut Context<Self>) {
         let session = self.session.read(cx).info.id.clone();
-        let host = match crate::hosts::current() {
+        let host = match crate::hosts::host(&self.session.read(cx).host) {
             Ok(host) => host,
             Err(error) => {
                 self.tell(&error.to_string(), true, cx);
@@ -797,7 +802,7 @@ impl TerminalView {
         if let Some(press) = self.link_press.take() {
             // A file link names a file on the host's computer (add-remote-desktop-client D8).
             let file = press.link.address().starts_with("file:");
-            if !(file && crate::hosts::is_remote()) {
+            if !(file && self.remote(cx)) {
                 cx.open_url(press.link.address());
             }
             return;

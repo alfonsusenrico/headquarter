@@ -212,8 +212,9 @@ impl Workspace {
     /// Notices a host older than this app, left by an update made elsewhere (D7).
     pub(super) fn check_host_version(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let task = cx.background_executor().spawn(async move {
-            // A remote host updates on its own computer (add-remote-desktop-client D8).
-            if crate::hosts::is_remote() {
+            // Only this computer's host is this app's to update; a remote host updates on its
+            // own computer (add-remote-desktop-client D8).
+            if !crate::hosts::has_local_host() {
                 return None;
             }
             let host = crate::hosts::local().ok()?;
@@ -721,9 +722,9 @@ impl Workspace {
     /// The sidebar's Update Now for an installed update: restarts at once when nothing is
     /// busy, otherwise asks first (D2).
     fn restart_when_asked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // With a remote host on screen only the app restarts, so its sessions are not
-        // this restart's to interrupt (add-remote-desktop-client D8).
-        if crate::hosts::is_remote() || update::busy(&self.sessions).is_empty() {
+        // Only this computer's sessions are this restart's to interrupt; other hosts' keep
+        // running (add-merged-host-list).
+        if !crate::hosts::has_local_host() || update::busy(&self.local_sessions()).is_empty() {
             self.restart_for_update(window, cx);
         } else {
             self.updates.phase = Phase::Asking;
@@ -747,10 +748,9 @@ impl Workspace {
             .as_ref()
             .map(|installed| installed.app.clone())
             .or_else(this_app);
-        // With a remote host on screen only the app restarts: this computer's host and its
-        // sessions are left as they are, and the app offers to finish the update when it
-        // shows them again (add-remote-desktop-client D8).
-        let stop_local = !crate::hosts::is_remote();
+        // Without a host here only the app restarts (add-remote-desktop-client D8); other
+        // computers' hosts are never stopped from here.
+        let stop_local = crate::hosts::has_local_host();
         let task = cx.background_executor().spawn(async move {
             let app = app.ok_or("cannot tell where this app is")?;
             if !stop_local {

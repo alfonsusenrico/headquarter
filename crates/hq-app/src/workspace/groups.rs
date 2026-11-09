@@ -200,31 +200,23 @@ impl Workspace {
                 if let Some(group) = self.groups.iter_mut().find(|group| group.id == id) {
                     group.name = name.clone();
                 }
-                self.host_call(
-                    window,
-                    cx,
-                    move |paths| hq_client::rename_group(paths, id, &name),
-                    |_, (), _, _| {},
-                );
+                self.on_group_hosts(id, window, cx, move |paths, real| {
+                    hq_client::rename_group(paths, real, &name)
+                });
             }
+            // Made on the session's host, or on the first host when made empty; the
+            // host's change then shows it, merged with groups of the same name
+            // (add-merged-host-list D3).
             Naming::New { session } => {
-                let member = session.clone();
+                let host = session
+                    .as_deref()
+                    .map_or_else(|| self.usage_host(), |id| self.host_of(id));
                 self.host_call(
+                    host,
                     window,
                     cx,
                     move |paths| hq_client::new_group(paths, Some(&name), session.as_deref()),
-                    move |this, group, _, cx| {
-                        if let Some(member) = &member
-                            && let Some(known) =
-                                this.sessions.iter_mut().find(|known| known.id == *member)
-                        {
-                            known.group = Some(group.id);
-                        }
-                        if !this.groups.iter().any(|known| known.id == group.id) {
-                            this.groups.push(group);
-                        }
-                        cx.notify();
-                    },
+                    |_, _, _, _| {},
                 );
             }
         }
@@ -244,12 +236,30 @@ impl Workspace {
         }
         self.color_picker = None;
         cx.notify();
-        self.host_call(
-            window,
-            cx,
-            move |paths| hq_client::set_group_color(paths, id, color),
-            |_, (), _, _| {},
-        );
+        self.on_group_hosts(id, window, cx, move |paths, real| {
+            hq_client::set_group_color(paths, real, color)
+        });
+    }
+
+    /// Runs a group action on every host that has the merged group `id`, with that host's
+    /// own group id (add-merged-host-list D3).
+    fn on_group_hosts(
+        &mut self,
+        id: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        call: impl Fn(&hq_client::Host, i64) -> anyhow::Result<()> + Clone + Send + 'static,
+    ) {
+        for (host, real) in self.hosts.merged.hosts_of(id) {
+            let call = call.clone();
+            self.host_call(
+                host,
+                window,
+                cx,
+                move |paths| call(paths, real),
+                |_, (), _, _| {},
+            );
+        }
     }
 
     /// The colour dot that starts a group's header and opens its colour picker: the
@@ -365,12 +375,9 @@ impl Workspace {
             group.collapsed = collapsed;
         }
         cx.notify();
-        self.host_call(
-            window,
-            cx,
-            move |paths| hq_client::collapse_group(paths, id, collapsed),
-            |_, (), _, _| {},
-        );
+        self.on_group_hosts(id, window, cx, move |paths, real| {
+            hq_client::collapse_group(paths, real, collapsed)
+        });
     }
 
     /// Puts a dragged session where it was dropped; dropping it where it already is
@@ -406,12 +413,38 @@ impl Workspace {
             session.group = group;
         }
         cx.notify();
-        self.host_call(
-            window,
-            cx,
-            move |paths| hq_client::set_group(paths, &id, group),
-            |_, (), _, _| {},
-        );
+        // The session's host's group of that name, made there when it has none
+        // (add-merged-host-list D3).
+        let host = self.host_of(&id);
+        let target = group.map(|display| {
+            (
+                self.hosts.merged.on_host(display, &host),
+                self.hosts
+                    .merged
+                    .name(display)
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        });
+        match target {
+            Some((None, name)) => self.host_call(
+                host,
+                window,
+                cx,
+                move |paths| hq_client::new_group(paths, Some(&name), Some(&id)).map(|_| ()),
+                |_, (), _, _| {},
+            ),
+            target => {
+                let real = target.and_then(|(real, _)| real);
+                self.host_call(
+                    host,
+                    window,
+                    cx,
+                    move |paths| hq_client::set_group(paths, &id, real),
+                    |_, (), _, _| {},
+                );
+            }
+        }
     }
 
     /// The keyboard alternative to dragging (D4): the selected session moves to the
@@ -453,12 +486,26 @@ impl Workspace {
         self.groups.insert(to, moved);
         cx.notify();
         let id = dragged.id;
-        self.host_call(
-            window,
-            cx,
-            move |paths| hq_client::move_group(paths, id, before),
-            |_, (), _, _| {},
-        );
+        // Each host places it before the next group in the shown order that it has.
+        let after: Vec<i64> = self
+            .groups
+            .iter()
+            .skip_while(|group| group.id != id)
+            .skip(1)
+            .map(|group| group.id)
+            .collect();
+        for (host, real) in self.hosts.merged.hosts_of(id) {
+            let before = after
+                .iter()
+                .find_map(|next| self.hosts.merged.on_host(*next, &host));
+            self.host_call(
+                host,
+                window,
+                cx,
+                move |paths| hq_client::move_group(paths, real, before),
+                |_, (), _, _| {},
+            );
+        }
     }
 
     fn delete_group(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
@@ -471,12 +518,7 @@ impl Workspace {
         }
         window.focus(&self.sidebar_focus, cx);
         cx.notify();
-        self.host_call(
-            window,
-            cx,
-            move |paths| hq_client::delete_group(paths, id),
-            |_, (), _, _| {},
-        );
+        self.on_group_hosts(id, window, cx, hq_client::delete_group);
     }
 
     fn group(&self, id: i64) -> Option<&GroupInfo> {

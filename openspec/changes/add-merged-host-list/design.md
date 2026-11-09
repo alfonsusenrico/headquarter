@@ -52,11 +52,15 @@ conversations, each added on its own host.
 
 Each host's usage is kept apart. The footer shows the selected session's host's usage (this
 computer's when nothing is selected), with the host's name when it is not this computer. The Usage
-window lists each host.
+window (CPU and memory, ⌘U) measures the same host and lists only its sessions, named "host on
+<name>" when it is another computer.
+
+Rejected: the Usage window listing every host at once. Each host is measured by its own request
+every few seconds; one host at a time keeps the window as it is, and the selection picks it.
 
 ### D6. The Hosts menu
 
-The header reads "Hosts" with the number of hosts, and opens the list: each host with connected,
+The header reads "Hosts" with "N hosts" beside it, and opens the list: each host with connected,
 reconnecting or not reachable; Connect to a Host…; Forget on a paired host, which turns the row into
 "Forget <host>? You'll need a new code from it to connect again." with Cancel and Forget of equal
 width (Forget in the danger colour); Escape or a click elsewhere cancels.

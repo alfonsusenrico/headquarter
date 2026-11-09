@@ -1,6 +1,6 @@
 # Every host's sessions in one list
 
-Status: proposed 2026-11-09, waiting for the owner's approval (phase 2, step 2; the outline in
+Status: approved by the owner 2026-11-09 ("approve, build it"; phase 2, step 2; the outline in
 `research/notes/2026-11-09-merged-host-list-plan.md` was approved 2026-11-09). Builds on
 `add-shared-host-endpoint`.
 
@@ -22,7 +22,8 @@ from both. Decisions: `research/notes/2026-11-04-several-hosts.md` (2026-11-04, 
   Forget, which asks in place before forgetting.
 - A host that cannot be reached keeps its sessions in the list, greyed, with "Reconnecting…".
 - New Session asks which host when there is more than one.
-- The usage footer shows the selected session's host, named when not this computer.
+- The usage footer and the Usage window show the selected session's host, named when not this
+  computer.
 - Notifications come from every host, named when not from this computer.
 
 ## What Changes

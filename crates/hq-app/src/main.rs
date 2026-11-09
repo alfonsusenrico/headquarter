@@ -11,6 +11,7 @@ mod hosts;
 mod loading;
 mod marks;
 mod menus;
+mod merged;
 mod modal;
 mod notifications;
 mod settings;
@@ -70,9 +71,8 @@ fn main() {
             let show_setup = setup::should_show(
                 settings::path().is_some_and(|path| path.exists()),
                 setup::asked_from_args(),
-                // Setup reads this computer's agents only beside its own host; without
-                // one (Windows) setup is the look alone and runs as usual.
-                hosts::has_local_host() && hosts::is_remote(),
+                // Every host's sessions show together, so no other host is on screen.
+                false,
             );
             let opened = cx.open_window(options, |window, cx| {
                 let view = cx.new(|cx| shell::Shell::new(show_setup, window, cx));

@@ -63,7 +63,7 @@ fn workspace(open_picker: bool, window: &mut Window, cx: &mut Context<Shell>) ->
         eprintln!("headquarter-app: {note}");
     }
     let workspace = cx.new(|cx| Workspace::new(watcher, appearance, note, window, cx));
-    if open_picker && !crate::hosts::none_on_screen() {
+    if open_picker && !crate::hosts::none() {
         workspace.update(cx, |workspace, cx| workspace.show_open_sessions(window, cx));
     }
     workspace

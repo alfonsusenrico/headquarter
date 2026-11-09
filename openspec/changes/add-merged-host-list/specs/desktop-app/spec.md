@@ -79,7 +79,7 @@ The sidebar header SHALL open a Hosts menu listing this computer when it has a h
 - **THEN** the server leaves the Hosts menu and its sessions leave the list
 
 ### Requirement: Usage follows the selected session
-The usage footer SHALL show the usage of the selected session's host, naming the host when it is not this computer, and this computer's usage when nothing is selected. The Usage window SHALL list each host's usage.
+The usage footer SHALL show the usage of the selected session's host, naming the host when it is not this computer, and this computer's usage when nothing is selected. The Usage window (CPU and memory) SHALL show the same host's sessions and name it when it is not this computer.
 
 #### Scenario: A server session selected
 - **WHEN** the owner selects the server's health agent

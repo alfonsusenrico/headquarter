@@ -339,7 +339,7 @@ impl Workspace {
     /// The usage ring of the agent with the highest share used, for the rail's foot.
     pub(super) fn render_rail_usage(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let now = hq_signals::now_ms() / 1000;
-        let busiest = self.usage.iter().max_by(|a, b| {
+        let busiest = self.shown_usage().iter().max_by(|a, b| {
             let share = |usage| hq_protocol::usage::fill(usage, now).unwrap_or(-1.0);
             share(a).total_cmp(&share(b))
         })?;

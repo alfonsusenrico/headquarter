@@ -32,10 +32,15 @@ impl Workspace {
         if self.followed.as_ref() == Some(&shown) {
             return;
         }
-        let Some(control) = self.feed_control.as_mut() else {
-            return;
-        };
-        if control.follow(shown.as_deref()).is_ok() {
+        // The shown session's host follows it; every other host follows nothing
+        // (add-merged-host-list D2).
+        let host = shown.as_deref().map(|id| self.host_of(id));
+        let mut told = false;
+        for (owner, control) in &mut self.hosts.controls {
+            let follow = shown.as_deref().filter(|_| host.as_ref() == Some(owner));
+            told |= control.follow(follow).is_ok() && follow.is_some() == shown.is_some();
+        }
+        if told || shown.is_none() {
             self.details_open = false;
             self.followed = Some(shown);
         }

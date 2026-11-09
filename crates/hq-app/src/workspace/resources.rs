@@ -37,6 +37,8 @@ const MARK_SIZE: f32 = 16.0;
 
 pub(super) struct ResourcesView {
     shown: Shown,
+    /// The host measured: the selected session's, as the usage footer (add-merged-host-list D5).
+    host: crate::hosts::HostId,
     sort: Sort,
     focus: FocusHandle,
     reading: Option<Reading>,
@@ -249,9 +251,9 @@ fn key_label(mac: bool) -> &'static str {
     if mac { "⌘U" } else { "Ctrl+Shift+U" }
 }
 
-/// Measures the app here and asks the host for the rest; runs off the main thread.
-fn read(sampler: &Mutex<Sampler>) -> anyhow::Result<Reading> {
-    let target = crate::hosts::current()?;
+/// Measures the app here and asks `host` for the rest; runs off the main thread.
+fn read(sampler: &Mutex<Sampler>, host: &crate::hosts::HostId) -> anyhow::Result<Reading> {
+    let target = crate::hosts::host(host)?;
     let (host, sessions) = hq_client::resources(&target)?;
     let mut sampler = sampler.lock().unwrap_or_else(PoisonError::into_inner);
     sampler.refresh();
@@ -302,12 +304,15 @@ impl Workspace {
         }
         self.usage_open = None;
         let sampler = Arc::new(Mutex::new(Sampler::new()));
+        let host = self.usage_host();
+        let measuring = host.clone();
         let refresh = cx.spawn_in(window, async move |this, cx| {
             loop {
                 let sampler = Arc::clone(&sampler);
+                let measured = measuring.clone();
                 let reading = cx
                     .background_executor()
-                    .spawn(async move { read(&sampler) })
+                    .spawn(async move { read(&sampler, &measured) })
                     .await;
                 let open = this
                     .update_in(cx, |this, _, cx| {
@@ -335,6 +340,7 @@ impl Workspace {
         window.focus(&focus, cx);
         self.resources = Some(ResourcesView {
             shown,
+            host,
             sort: Sort::Sidebar,
             focus,
             reading: None,
@@ -372,10 +378,21 @@ impl Workspace {
             Shown::Popover => Sort::Sidebar,
             Shown::Window => view.sort,
         };
+        // The measured host's sessions only (add-merged-host-list D5).
+        let measured: Vec<SessionInfo> = self
+            .sessions
+            .iter()
+            .filter(|session| self.host_of(&session.id) == view.host)
+            .cloned()
+            .collect();
+        let home = match &view.host {
+            crate::hosts::HostId::Local => self.home.clone(),
+            remote => self.hosts.homes.get(remote).cloned(),
+        };
         let lines = lines(
-            &self.sessions,
+            &measured,
             &self.groups,
-            self.home.as_deref(),
+            home.as_deref(),
             view.reading.as_ref(),
             sort,
         );
@@ -686,7 +703,7 @@ impl Workspace {
             .map(|reading| Totals::of(reading, lines));
         // With a remote host on screen, the app runs here and the host there
         // (add-remote-desktop-client D7).
-        let (app_place, host_place) = match crate::hosts::shown_name() {
+        let (app_place, host_place) = match crate::hosts::label(&view.host) {
             Some(name) => ("app on this computer".to_owned(), format!("host on {name}")),
             None => ("app".to_owned(), "host".to_owned()),
         };

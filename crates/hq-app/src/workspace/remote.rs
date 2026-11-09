@@ -102,17 +102,6 @@ impl Workspace {
             );
             return;
         }
-        // Remote control belongs to this computer's host (add-remote-desktop-client D8).
-        if crate::hosts::is_remote() {
-            let local = super::hosts::this_computer();
-            self.show_notice(
-                format!("Remote Control pairs devices with this computer's host. Switch to {local} to use it."),
-                false,
-                window,
-                cx,
-            );
-            return;
-        }
         let refresh = cx.spawn_in(window, async move |this, cx| {
             loop {
                 let open = this
