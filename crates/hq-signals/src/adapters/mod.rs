@@ -50,7 +50,8 @@ pub const PARENT_SESSION_MARKERS: &[&str] = &[
 pub enum Conversation<'a> {
     /// A new conversation; `id` is used by agents that accept a chosen id (Claude).
     New { id: &'a str },
-    /// Continue the agent's own conversation `id`, or open its picker when unknown.
+    /// Continue the agent's own conversation `id`; when unknown, Claude Code opens its picker
+    /// and the others start a new conversation.
     Resume(Option<&'a str>),
 }
 
