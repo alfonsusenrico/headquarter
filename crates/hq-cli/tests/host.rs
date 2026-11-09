@@ -5547,3 +5547,39 @@ fn the_host_deletes_images_past_a_week_when_it_starts() {
     assert!(fresh.exists());
     assert!(!gone.exists(), "its session left the sidebar");
 }
+
+/// Claude Code also runs the status line with a session's older limits (resume, a mode
+/// change, prompt-cache expiry): the helper keeps the newer week (fix-claude-usage-going-back).
+#[test]
+fn an_idle_sessions_older_limits_do_not_replace_newer_ones() {
+    let env = TestEnv::new("olderlimits");
+    let report = |used: u64, resets_at: u64| {
+        let mut helper = env
+            .command()
+            .arg("hook-statusline")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let line = format!(
+            r#"{{"session_id":"conv","rate_limits":{{"seven_day":{{"used_percentage":{used},"resets_at":{resets_at}}}}}}}"#
+        );
+        helper
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(line.as_bytes())
+            .unwrap();
+        assert!(helper.wait().unwrap().success());
+        let saved: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(env.host_dir().join("quota/claude.json")).unwrap(),
+        )
+        .unwrap();
+        saved["windows"][0]["used_percent"].as_f64().unwrap()
+    };
+    let saturday = 1_800_000_000;
+    assert_eq!(report(59, saturday), 59.0);
+    assert_eq!(report(58, saturday), 59.0, "an idle session's older 58%");
+    assert_eq!(report(60, saturday), 60.0);
+    assert_eq!(report(2, saturday + 7 * 24 * 3600), 2.0, "a new week");
+}
