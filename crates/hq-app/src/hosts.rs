@@ -1,17 +1,19 @@
 //! The hosts this app shows (add-remote-desktop-client D5, D6): this computer's host, and
-//! paired hosts on other computers, one on screen at a time. The paired hosts and the one
-//! on screen are kept in `<data folder>/hosts.json`, and this computer's key for them in
+//! paired hosts on other computers, one on screen at a time. Every paired host keeps its
+//! link, all through one endpoint (add-shared-host-endpoint D3). The paired hosts and the
+//! one on screen are kept in `<data folder>/hosts.json`, and this computer's key for them in
 //! `client.key` beside it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use anyhow::{Context, Result, anyhow};
 #[cfg(unix)]
 use hq_client::HostPaths;
 use hq_client::{Host, HostAddress, Link, LinkError};
 use hq_remote::PairingCode;
+use hq_remote::client::ClientEndpoint;
 use serde::{Deserialize, Serialize};
 
 /// A host on another computer this app has paired with. Nothing secret: the pairing
@@ -61,8 +63,10 @@ struct File {
 
 struct State {
     file: File,
-    /// One link per paired host, made when first needed.
+    /// One link per paired host, made when first needed and kept while it is paired.
     links: HashMap<String, Link>,
+    /// The endpoint every link dials through, made with this computer's key on first use.
+    endpoint: Option<Arc<ClientEndpoint>>,
 }
 
 fn state() -> MutexGuard<'static, State> {
@@ -73,6 +77,7 @@ fn state() -> MutexGuard<'static, State> {
             Mutex::new(State {
                 file,
                 links: HashMap::new(),
+                endpoint: None,
             })
         })
         .lock()
@@ -166,33 +171,27 @@ pub fn shown_name() -> Option<String> {
         .map(|host| host.name.clone())
 }
 
-/// Puts `shown` on screen and remembers it. The other hosts' links close off the main
-/// thread: this computer's key works on one link at a time (D5).
+/// Puts `shown` on screen and remembers it. The other hosts stay connected, so showing one
+/// again does not dial (add-shared-host-endpoint D3).
 pub fn show(shown: Shown) {
-    let others = {
-        let mut state = state();
-        state.file.shown = match shown {
-            Shown::Local => None,
-            Shown::Remote(id) => Some(id),
-        };
-        save(&state.file);
-        let kept = state.file.shown.clone();
-        take_links(&mut state, kept.as_deref())
+    let mut state = state();
+    state.file.shown = match shown {
+        Shown::Local => None,
+        Shown::Remote(id) => Some(id),
     };
-    if !others.is_empty() {
-        std::thread::spawn(move || others.iter().for_each(Link::close));
-    }
+    save(&state.file);
 }
 
-/// Takes every link out but `kept`'s.
-fn take_links(state: &mut State, kept: Option<&str>) -> Vec<Link> {
-    let ids: Vec<String> = state
-        .links
-        .keys()
-        .filter(|id| Some(id.as_str()) != kept)
-        .cloned()
-        .collect();
-    ids.iter().filter_map(|id| state.links.remove(id)).collect()
+/// The app's one endpoint for paired hosts, made with this computer's key on first use.
+fn shared_endpoint(state: &mut State) -> Result<Arc<ClientEndpoint>> {
+    if let Some(endpoint) = &state.endpoint {
+        return Ok(Arc::clone(endpoint));
+    }
+    let key = hq_remote::client::client_key(&key_path().context("no data folder")?)
+        .context("cannot read this computer's key")?;
+    let endpoint = ClientEndpoint::new(key).context("cannot start the connection")?;
+    state.endpoint = Some(Arc::clone(&endpoint));
+    Ok(endpoint)
 }
 
 /// What clients connect to now: the paired host on screen, or this computer's.
@@ -211,9 +210,8 @@ pub fn current() -> Result<Host> {
         .find(|host| host.id == id)
         .cloned()
         .ok_or_else(|| anyhow!("the host on screen is no longer paired"))?;
-    let key = hq_remote::client::client_key(&key_path().context("no data folder")?)
-        .context("cannot read this computer's key")?;
-    let link = Link::new(key, host.address()).context("cannot start the connection")?;
+    let shared = shared_endpoint(&mut state)?;
+    let link = Link::new(&shared, host.address());
     state.links.insert(id, link.clone());
     Ok(Host::Remote(link))
 }
@@ -298,15 +296,11 @@ impl std::fmt::Display for PairError {
 /// Blocks while the host answers; run it off the main thread.
 pub fn pair(code: &str) -> Result<KnownHost, PairError> {
     let code = PairingCode::parse(code).map_err(|error| PairError::NotACode(error.to_string()))?;
-    let key_path = key_path().ok_or_else(|| PairError::Unreachable("no data folder".into()))?;
-    let key = hq_remote::client::client_key(&key_path).map_err(|error| {
-        PairError::Unreachable(format!("cannot read this computer's key: {error}"))
-    })?;
-    // Pairing dials with this computer's key: no other link may hold it meanwhile.
-    let open = take_links(&mut state(), None);
-    open.iter().for_each(Link::close);
+    // The other hosts stay connected: pairing dials through the same endpoint.
+    let shared = shared_endpoint(&mut state())
+        .map_err(|error| PairError::Unreachable(format!("{error:#}")))?;
     let (link, welcome) =
-        Link::pair(key, &code, &computer_name()).map_err(|error| match error {
+        Link::pair(&shared, &code, &computer_name()).map_err(|error| match error {
             LinkError::Refused(reason) => PairError::Refused(refusal(&reason)),
             LinkError::NotKnown => PairError::Refused(
                 "The code was not accepted. Show a new one on the host and try again.".into(),
