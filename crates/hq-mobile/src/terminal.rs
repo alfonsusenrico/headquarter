@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::Column;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor, StdSyncHandler};
@@ -72,6 +73,8 @@ pub enum Key {
     ShiftTab,
     Up,
     Down,
+    Left,
+    Right,
     Tab,
     CtrlC,
     CtrlD,
@@ -204,6 +207,42 @@ impl Terminal {
             .map(|link| link.address().to_owned())
     }
 
+    /// The arrow presses that bring the agent's cursor to a tapped cell on the cursor's own row:
+    /// negative for ←, positive for →, counted in characters (a wide character is one press).
+    /// A tap past the row's text stops at its end. None when the tap is on another row, the
+    /// cursor is hidden, or the view is scrolled back (add-phone-cursor-movement D2).
+    pub fn cursor_steps(&self, row: u16, col: u16) -> Option<i32> {
+        if self.term.grid().display_offset() != 0
+            || !self.term.mode().contains(TermMode::SHOW_CURSOR)
+        {
+            return None;
+        }
+        let cursor = self.term.grid().cursor.point;
+        if i32::from(row) != cursor.line.0 {
+            return None;
+        }
+        let line = &self.term.grid()[cursor.line];
+        let columns = self.term.columns();
+        let text_end = (0..columns)
+            .rev()
+            .find(|&column| !matches!(line[Column(column)].c, ' ' | '\0'))
+            .map_or(0, |last| last + 1);
+        let from = cursor.column.0;
+        let mut to = usize::from(col).min(columns);
+        if to > from {
+            to = to.min(text_end.max(from));
+        }
+        let (low, high) = if to < from { (to, from) } else { (from, to) };
+        let presses = (low..high)
+            .filter(|&column| {
+                !line[Column(column)]
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            })
+            .count() as i32;
+        Some(if to < from { -presses } else { presses })
+    }
+
     /// Whether the program asked for pastes to be bracketed.
     pub fn bracketed_paste(&self) -> bool {
         self.term.mode().contains(TermMode::BRACKETED_PASTE)
@@ -226,6 +265,10 @@ impl Terminal {
             Key::Up => b"\x1b[A",
             Key::Down if app_cursor => b"\x1bOB",
             Key::Down => b"\x1b[B",
+            Key::Left if app_cursor => b"\x1bOD",
+            Key::Left => b"\x1b[D",
+            Key::Right if app_cursor => b"\x1bOC",
+            Key::Right => b"\x1b[C",
             Key::Tab => b"\t",
             Key::CtrlC => b"\x03",
             Key::CtrlD => b"\x04",
@@ -429,6 +472,53 @@ mod tests {
         // Mouse reports in the old encoding are not used, as on the desktop.
         terminal.feed(b"\x1b[?1000h");
         assert_eq!(terminal.scroll(1, 0, 0), b"\x1bOA");
+    }
+
+    #[test]
+    fn a_tap_on_the_cursors_row_counts_the_arrows_to_it() {
+        let mut terminal = Terminal::new(30, 4);
+        // A prompt, then "abcdef" with the cursor after it, as Claude Code draws it.
+        terminal.feed(b"> abcdef");
+        assert_eq!(terminal.cursor_steps(0, 4), Some(-4), "to the c");
+        assert_eq!(terminal.cursor_steps(0, 8), Some(0), "already there");
+        assert_eq!(
+            terminal.cursor_steps(0, 25),
+            Some(0),
+            "past the text stops at its end"
+        );
+        assert_eq!(terminal.cursor_steps(1, 4), None, "another row");
+        terminal.feed(b"\x1b[4D");
+        assert_eq!(
+            terminal.cursor_steps(0, 7),
+            Some(3),
+            "right, to before the f"
+        );
+        assert_eq!(terminal.cursor_steps(0, 25), Some(4), "to the end");
+        terminal.feed(b"\x1b[?25l");
+        assert_eq!(terminal.cursor_steps(0, 2), None, "the cursor is hidden");
+    }
+
+    #[test]
+    fn a_wide_character_is_one_press() {
+        let mut terminal = Terminal::new(30, 4);
+        terminal.feed("> 日本x".as_bytes());
+        // Cells: "> " 0-1, 日 2-3, 本 4-5, x 6, the cursor at 7.
+        assert_eq!(terminal.cursor_steps(0, 2), Some(-3));
+        assert_eq!(
+            terminal.cursor_steps(0, 3),
+            Some(-2),
+            "the second half of 日 rounds right"
+        );
+    }
+
+    #[test]
+    fn left_and_right_follow_the_cursor_mode() {
+        let mut terminal = Terminal::new(10, 3);
+        assert_eq!(terminal.key_bytes(Key::Left), b"\x1b[D");
+        assert_eq!(terminal.key_bytes(Key::Right), b"\x1b[C");
+        terminal.feed(b"\x1b[?1h");
+        assert_eq!(terminal.key_bytes(Key::Left), b"\x1bOD");
+        assert_eq!(terminal.key_bytes(Key::Right), b"\x1bOC");
     }
 
     #[test]

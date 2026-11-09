@@ -5,18 +5,13 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.content.MediaType
-import androidx.compose.foundation.content.contentReceiver
-import androidx.compose.foundation.content.hasMediaType
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -104,6 +99,8 @@ import uniffi.hq_mobile.RowStatus
 import java.io.IOException
 import androidx.compose.ui.input.key.Key as KeyboardKey
 
+// Six a row, the arrows together on the second; the image key takes the last place
+// (add-phone-cursor-movement D1).
 private val SessionKeys =
     listOf(
         "1" to Key.ONE,
@@ -111,20 +108,26 @@ private val SessionKeys =
         "3" to Key.THREE,
         "Esc" to Key.ESCAPE,
         "⇧Tab" to Key.SHIFT_TAB,
+        "Tab" to Key.TAB,
+        "←" to Key.LEFT,
         "↑" to Key.UP,
         "↓" to Key.DOWN,
-        "Tab" to Key.TAB,
+        "→" to Key.RIGHT,
         "Ctrl-C" to Key.CTRL_C,
     )
+private const val SESSION_COLUMNS = 6
 private val ShellKeys =
     listOf(
         "Esc" to Key.ESCAPE,
         "Tab" to Key.TAB,
-        "↑" to Key.UP,
-        "↓" to Key.DOWN,
         "Ctrl-C" to Key.CTRL_C,
         "Ctrl-D" to Key.CTRL_D,
+        "←" to Key.LEFT,
+        "↑" to Key.UP,
+        "↓" to Key.DOWN,
+        "→" to Key.RIGHT,
     )
+private const val SHELL_COLUMNS = 4
 
 /** A running session, or its shell, at the phone's width (add-android-app D8). */
 @OptIn(ExperimentalLayoutApi::class)
@@ -268,6 +271,10 @@ fun SessionScreen(
                     if (link != null) {
                         openLink(context, link)
                     } else {
+                        // On the agent's input line, the cursor goes where the owner tapped
+                        // (add-phone-cursor-movement D2); typing then starts there afresh.
+                        typed.clearText()
+                        core.input { runCatching { phone.moveCursorTo(row.toUShort(), col.toUShort()) } }
                         typing.requestFocus()
                         keyboard?.show()
                     }
@@ -282,17 +289,6 @@ fun SessionScreen(
                 onEdit = { edit -> core.input { runCatching { phone.edit(edit.erase.toUInt(), edit.text) } } },
                 onEmptyBackspace = { core.input { runCatching { phone.edit(1u, "") } } },
                 onEnter = { sendKey(Key.ENTER) },
-                // An image the keyboard offers, read while the keyboard's permission holds (D6).
-                onImage =
-                    if (shell) {
-                        null
-                    } else {
-                        { uri ->
-                            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.let { bytes ->
-                                sendImage { prepareImage(bytes) }
-                            }
-                        }
-                    },
                 modifier = Modifier.align(Alignment.BottomStart).focusRequester(typing),
             )
         }
@@ -307,7 +303,7 @@ fun SessionScreen(
             if (WindowInsets.isImeVisible) {
                 FoldedKeys(keys, sendKey, pickImage)
             } else {
-                KeyGrid(keys, if (shell) keys.size else 5, sendKey, pickImage)
+                KeyGrid(keys, if (shell) SHELL_COLUMNS else SESSION_COLUMNS, sendKey, pickImage)
             }
         }
     }
@@ -441,8 +437,9 @@ private fun FoldedKeys(
             horizontalArrangement = Arrangement.spacedBy(KeyGap),
         ) {
             keys.forEach { (label, key) -> KeyButton(label, Modifier.widthIn(min = 48.dp)) { onKey(key) } }
-            onImage?.let { ImageKey(Modifier.widthIn(min = 48.dp), it) }
         }
+        // Pinned beside Enter, so it never scrolls out of sight (add-image-upload D6).
+        onImage?.let { ImageKey(Modifier.width(56.dp), it) }
         EnterKey(Modifier.width(56.dp)) { onKey(Key.ENTER) }
     }
 }
@@ -451,10 +448,8 @@ private fun FoldedKeys(
  * The field the keyboard types into, never seen: each edit reaches the agent's own box as it
  * happens (refine-phone-typing-and-links D1), and the cursor stays at the end. Where Enter
  * starts a new line it holds several lines; where Enter sends, it is one line and Enter is its
- * action (D3). A shell gets exact keys: no autocorrect, no capitals. In a session it takes the
- * images the keyboard offers (add-image-upload D6).
+ * action (D3). A shell gets exact keys: no autocorrect, no capitals.
  */
-@OptIn(ExperimentalFoundationApi::class) // Compose's content receiver, for keyboard images.
 @Composable
 private fun LiveInput(
     state: TextFieldState,
@@ -463,7 +458,6 @@ private fun LiveInput(
     onEdit: (Edit) -> Unit,
     onEmptyBackspace: () -> Unit,
     onEnter: () -> Unit,
-    onImage: ((Uri) -> Unit)?,
     modifier: Modifier,
 ) {
     val options =
@@ -493,20 +487,6 @@ private fun LiveInput(
             if (edit.erase > 0 || edit.text.isNotEmpty()) onEdit(edit)
             placeCursorAtEnd()
         }
-    val images =
-        onImage?.let { take ->
-            Modifier.contentReceiver { content ->
-                if (!content.hasMediaType(MediaType.Image)) return@contentReceiver content
-                val clip = content.clipEntry.clipData
-                val uri = (0 until clip.itemCount).firstNotNullOfOrNull { clip.getItemAt(it).uri }
-                if (uri == null) {
-                    content
-                } else {
-                    take(uri)
-                    null
-                }
-            }
-        } ?: Modifier
     BasicTextField(
         state = state,
         inputTransformation = mirror,
@@ -517,7 +497,6 @@ private fun LiveInput(
             modifier
                 .size(1.dp)
                 .alpha(0f)
-                .then(images)
                 // Backspace with nothing typed here still erases in the agent's box, such as a
                 // message recalled with ↑ (D2).
                 .onPreviewKeyEvent { event ->

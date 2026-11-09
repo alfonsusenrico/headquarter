@@ -832,6 +832,32 @@ impl Phone {
             .map_err(|_| MobileError::NotConnected)
     }
 
+    /// Moves the agent's cursor to a tapped cell on its own row with arrow presses
+    /// (add-phone-cursor-movement D2). Returns whether the tap was on the cursor's row.
+    pub fn move_cursor_to(&self, row: u16, col: u16) -> Result<bool, MobileError> {
+        let (steps, left, right) = {
+            let state = self.shared.lock();
+            let Some(terminal) = state.terminal.as_ref() else {
+                return Ok(false);
+            };
+            let Some(steps) = terminal.cursor_steps(row, col) else {
+                return Ok(false);
+            };
+            (
+                steps,
+                terminal.key_bytes(Key::Left).to_vec(),
+                terminal.key_bytes(Key::Right).to_vec(),
+            )
+        };
+        if steps != 0 {
+            let arrow = if steps < 0 { left } else { right };
+            self.link_tx()?
+                .send(Command::Input(arrow.repeat(steps.unsigned_abs() as usize)))
+                .map_err(|_| MobileError::NotConnected)?;
+        }
+        Ok(true)
+    }
+
     /// How far the image being sent has got; none while nothing is sent.
     pub fn sending(&self) -> Option<Sending> {
         self.shared.lock().sending
