@@ -2,11 +2,16 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.3.0-rc.2 (2026-11-09)
+
+A release candidate that checks the changed release pipeline: both Mac builds now run on GitHub's
+`macos-15` image (0.3.0-rc.1 stopped there, since GitHub retired `macos-14`), the Android APK is
+built for arm64 phones only, and every GitHub Action is pinned to a commit. The full notes come
+with 0.3.0.
+
 ## 0.3.0-rc.1 (2026-11-09)
 
-A release candidate that checks the changed release pipeline: the Intel Mac build now runs on an
-Apple Silicon runner, the Android APK is built for arm64 phones only, and every GitHub Action is
-pinned to a commit. The full notes come with 0.3.0.
+Not released: its Mac builds could not start on GitHub's retired `macos-14` image.
 
 ## 0.2.0-alpha.2 (2026-11-03)
 
