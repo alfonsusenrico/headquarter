@@ -42,6 +42,7 @@ gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = 
 hq-client = { path = "../hq-client" }
 hq-config = { path = "../hq-config" }
 hq-discovery = { path = "../hq-discovery" }
+hq-links = { path = "../hq-links" }
 hq-protocol = { path = "../hq-protocol" }
 hq-remote = { path = "../hq-remote" }
 hq-signals = { path = "../hq-signals" }

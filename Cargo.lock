@@ -3380,6 +3380,7 @@ dependencies = [
  "hq-client",
  "hq-config",
  "hq-discovery",
+ "hq-links",
  "hq-protocol",
  "hq-remote",
  "hq-signals",
@@ -3466,10 +3467,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hq-links"
+version = "0.2.0-alpha.2"
+dependencies = [
+ "alacritty_terminal",
+]
+
+[[package]]
 name = "hq-mobile"
 version = "0.2.0-alpha.2"
 dependencies = [
  "alacritty_terminal",
+ "hq-links",
  "hq-protocol",
  "hq-remote",
  "hq-signals",

@@ -1,6 +1,7 @@
-//! Links in the pane (add-terminal-links): a link an agent marked up (OSC 8), or a
+//! Links in a terminal (add-terminal-links): a link an agent marked up (OSC 8), or a
 //! plain `http(s)` address in the text, across the lines the terminal wrapped. Only web
-//! addresses open, so a marked-up `file:` or app link cannot launch a program.
+//! addresses open, so a marked-up `file:` or app link cannot launch a program. The
+//! desktop's panes and the phone's terminal share it (refine-phone-typing-and-links D5).
 
 use std::ops::RangeInclusive;
 
@@ -94,6 +95,12 @@ impl LinkFinder {
     }
 }
 
+impl Default for LinkFinder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Only web addresses open.
 fn opens(address: &str) -> bool {
     let lower = address.to_ascii_lowercase();
@@ -155,18 +162,37 @@ pub fn view_point<T>(term: &Term<T>, row: usize, column: usize) -> Point {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::terminal::model::{GridSize, TerminalModel};
-    use crate::theme::Theme;
+    use alacritty_terminal::event::VoidListener;
+    use alacritty_terminal::term::Config;
+    use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 
-    fn model(columns: usize, output: &[u8]) -> TerminalModel {
-        let mut model = TerminalModel::new(GridSize { columns, rows: 6 }, Theme::light().palette);
-        model.feed(output);
-        model
+    use super::*;
+
+    struct Size {
+        columns: usize,
     }
 
-    fn address_at(model: &TerminalModel, row: usize, column: usize) -> Option<String> {
-        let term = model.term();
+    impl Dimensions for Size {
+        fn total_lines(&self) -> usize {
+            6
+        }
+
+        fn screen_lines(&self) -> usize {
+            6
+        }
+
+        fn columns(&self) -> usize {
+            self.columns
+        }
+    }
+
+    fn model(columns: usize, output: &[u8]) -> Term<VoidListener> {
+        let mut term = Term::new(Config::default(), &Size { columns }, VoidListener);
+        Processor::<StdSyncHandler>::new().advance(&mut term, output);
+        term
+    }
+
+    fn address_at(term: &Term<VoidListener>, row: usize, column: usize) -> Option<String> {
         LinkFinder::new()
             .at(term, view_point(term, row, column))
             .map(|link| link.address().to_owned())

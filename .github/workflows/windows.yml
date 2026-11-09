@@ -27,6 +27,6 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Clippy
-        run: cargo clippy -p hq-app -p hq-client -p hq-remote -p hq-protocol --all-targets -- -D warnings
+        run: cargo clippy -p hq-app -p hq-client -p hq-links -p hq-remote -p hq-protocol --all-targets -- -D warnings
       - name: Tests
-        run: cargo test -p hq-app -p hq-client -p hq-remote -p hq-protocol
+        run: cargo test -p hq-app -p hq-client -p hq-links -p hq-remote -p hq-protocol

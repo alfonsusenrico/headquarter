@@ -21,7 +21,7 @@ use gpui::{
 use super::copy;
 use super::frame::{self, Frame, TextStyle, Underline};
 use super::keys::{self, Binding, KeyModes, KeyPress};
-use super::links::{self, Link, LinkFinder};
+use hq_links::{self as links, Link, LinkFinder};
 use super::model::GridSize;
 use super::session::TerminalSession;
 use crate::shortcuts;

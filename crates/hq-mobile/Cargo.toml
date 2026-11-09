@@ -21,6 +21,7 @@ bindgen = ["uniffi/cli"]
 
 [dependencies]
 alacritty_terminal = "=0.26.0"
+hq-links = { version = "0.2.0-alpha.2", path = "../hq-links" }
 hq-protocol = { version = "0.2.0-alpha.2", path = "../hq-protocol" }
 hq-remote = { version = "0.2.0-alpha.2", path = "../hq-remote" }
 hq-signals = { version = "0.2.0-alpha.2", path = "../hq-signals" }
