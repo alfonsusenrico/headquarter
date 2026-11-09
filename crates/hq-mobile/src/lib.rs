@@ -31,8 +31,6 @@ uniffi::setup_scaffolding!();
 
 /// How long a request may wait for the host's answer.
 const ANSWER_WAIT: Duration = Duration::from_secs(15);
-/// Typed text and its Enter go separately, or agents read them as a paste (spike).
-const ENTER_DELAY: Duration = Duration::from_millis(80);
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum MobileError {
@@ -50,6 +48,13 @@ fn failed(reason: impl ToString) -> MobileError {
     MobileError::Failed {
         reason: reason.to_string(),
     }
+}
+
+/// Backspace (DEL, as terminals send it) `erase` times, then the text.
+fn edit_bytes(erase: u32, text: &str) -> Vec<u8> {
+    let mut bytes = vec![0x7f; erase as usize];
+    bytes.extend_from_slice(text.as_bytes());
+    bytes
 }
 
 /// Where the connection to the computer on screen stands.
@@ -760,19 +765,23 @@ impl Phone {
         }
     }
 
-    /// Types `text`, then Enter a moment later (D8).
-    pub fn type_text(&self, text: String) -> Result<(), MobileError> {
+    /// Erases `erase` characters of the session's input with Backspace, then types `text`,
+    /// new lines (`\n`, Ctrl+J) included and no Enter: the phone's keyboard edits the agent's
+    /// own box as it types (refine-phone-typing-and-links D6).
+    pub fn edit(&self, erase: u32, text: String) -> Result<(), MobileError> {
+        let bytes = edit_bytes(erase, &text);
+        if bytes.is_empty() {
+            return Ok(());
+        }
         let tx = self.link_tx()?;
         self.follow_output();
-        if !text.is_empty() {
-            tx.send(Command::Input(text.into_bytes()))
-                .map_err(|_| MobileError::NotConnected)?;
-        }
-        self.runtime.spawn(async move {
-            tokio::time::sleep(ENTER_DELAY).await;
-            let _ = tx.send(Command::Input(b"\r".to_vec()));
-        });
-        Ok(())
+        tx.send(Command::Input(bytes))
+            .map_err(|_| MobileError::NotConnected)
+    }
+
+    /// The web address at a cell of the open terminal as drawn, if any (D4).
+    pub fn link_at(&self, row: u16, col: u16) -> Option<String> {
+        self.shared.lock().terminal.as_mut()?.link_at(row, col)
     }
 
     pub fn send_key(&self, key: Key) -> Result<(), MobileError> {
@@ -858,6 +867,15 @@ async fn pair_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_edit_erases_then_types_without_enter() {
+        assert_eq!(edit_bytes(0, "fix it"), b"fix it");
+        assert_eq!(edit_bytes(4, "the "), b"\x7f\x7f\x7f\x7fthe ");
+        assert_eq!(edit_bytes(0, "first\nsecond"), b"first\nsecond");
+        assert_eq!(edit_bytes(1, ""), b"\x7f");
+        assert!(edit_bytes(0, "").is_empty());
+    }
 
     #[test]
     fn waiting_returns_when_the_version_moves_or_times_out() {

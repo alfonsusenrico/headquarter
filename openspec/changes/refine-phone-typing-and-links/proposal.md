@@ -1,6 +1,6 @@
 # Type into the agent's own box on the phone, and tap links
 
-Status: proposed 2026-11-09, waiting for the owner's approval.
+Status: approved by the owner 2026-11-09 ("approve, build it").
 
 ## Why
 
