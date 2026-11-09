@@ -10,27 +10,6 @@ data class Edit(
 )
 
 /**
- * The text typed on the phone since the last send or key (D1, D2). The keyboard edits it as a
- * normal field; each change becomes the [Edit] that makes the agent's own box match.
- */
-class LiveDraft {
-    var text: String = ""
-        private set
-
-    /** The edit that turns the agent's box from the current text into [next]; null when equal. */
-    fun change(next: String): Edit? {
-        val edit = mirrorEdit(text, next)
-        text = next
-        return edit.takeUnless { it.erase == 0 && it.text.isEmpty() }
-    }
-
-    /** Starts afresh: the agent's box may have changed (a key, a send, a reconnect). */
-    fun reset() {
-        text = ""
-    }
-}
-
-/**
  * Erases what differs at the end of [old], counted in characters as the agents' boxes delete
  * them (grapheme clusters), and types what [next] has in its place.
  */
