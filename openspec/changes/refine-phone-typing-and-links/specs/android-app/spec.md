@@ -76,7 +76,7 @@ In an agent session, the keyboard's Enter SHALL insert a new line in the agent's
 - **THEN** the shell runs `ls`
 
 ### Requirement: Links on the phone
-Tapping a web address (`http` or `https`) in the terminal SHALL open it in the phone's browser and SHALL NOT open the keyboard or send anything to the session. A long press on one SHALL copy it. The app SHALL find links an agent marks up (OSC 8) and plain-text addresses across wrapped rows, as the desktop does, and SHALL NOT open other kinds of links.
+Tapping a web address (`http` or `https`) in the terminal SHALL open it in the phone's browser and SHALL NOT open the keyboard or send anything to the session. A long press on one SHALL copy it and confirm the copy. The app SHALL find links an agent marks up (OSC 8) and plain-text addresses across wrapped rows, as the desktop does, and SHALL NOT open other kinds of links.
 
 #### Scenario: Opening a link
 - **WHEN** Claude Code prints a link it wraps over two rows and the owner taps the second row
@@ -84,7 +84,7 @@ Tapping a web address (`http` or `https`) in the terminal SHALL open it in the p
 
 #### Scenario: Copying a link
 - **WHEN** the owner long-presses `https://example.com/docs.` in the shell
-- **THEN** `https://example.com/docs` is copied, without the full stop, and "Link copied" shows
+- **THEN** `https://example.com/docs` is copied, without the full stop, and a copy confirmation shows (the system's own on Android 13 and later, "Link copied" before)
 
 #### Scenario: Not a web link
 - **WHEN** an agent marks up a `file:` link and the owner taps it

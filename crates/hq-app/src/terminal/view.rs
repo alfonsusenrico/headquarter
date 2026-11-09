@@ -21,11 +21,11 @@ use gpui::{
 use super::copy;
 use super::frame::{self, Frame, TextStyle, Underline};
 use super::keys::{self, Binding, KeyModes, KeyPress};
-use hq_links::{self as links, Link, LinkFinder};
 use super::model::GridSize;
 use super::session::TerminalSession;
 use crate::shortcuts;
 use crate::theme::Paint;
+use hq_links::{self as links, Link, LinkFinder};
 
 /// Appearance and keyboard options for the pane, from settings.
 #[derive(Debug, Clone, PartialEq)]

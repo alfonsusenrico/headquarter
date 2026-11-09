@@ -61,7 +61,8 @@ For agy the new-line key is unverified. Until it is checked, an agy session uses
 `Phone::link_at(row, col) -> Option<String>`: the web address at that cell of the screen as drawn
 (scrolled back or not), from the same finder the desktop uses. A tap on a link opens it with the
 system browser (Android `ACTION_VIEW`) and does not open the keyboard. A long press on a link copies
-it and shows "Link copied". A tap elsewhere opens the keyboard (D1); a drag still scrolls and a
+it. Android 13 and later confirm a copy themselves, so "Link copied" shows only before 13
+(Android's guidance on copy feedback, developer.android.com/develop/ui/views/touch-and-input/copy-paste). A tap elsewhere opens the keyboard (D1); a drag still scrolls and a
 pinch still sizes the text. Only `http` and `https` open, as on the desktop.
 
 Rejected: sending every link's cells with each screen snapshot so the app could underline them.

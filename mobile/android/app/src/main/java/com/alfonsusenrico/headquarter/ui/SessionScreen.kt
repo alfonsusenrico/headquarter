@@ -1,5 +1,11 @@
 package com.alfonsusenrico.headquarter.ui
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,22 +51,33 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.alfonsusenrico.headquarter.Core
@@ -72,6 +89,7 @@ import uniffi.hq_mobile.LinkStatus
 import uniffi.hq_mobile.MobileException
 import uniffi.hq_mobile.RowBeside
 import uniffi.hq_mobile.RowStatus
+import androidx.compose.ui.input.key.Key as KeyboardKey
 
 private val SessionKeys =
     listOf(
@@ -118,7 +136,10 @@ fun SessionScreen(
     var grid by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var opened by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
-    var draft by remember { mutableStateOf("") }
+    val draft = remember(id, shell) { LiveDraft() }
+    var field by remember(id, shell) { mutableStateOf(TextFieldValue("")) }
+    val typing = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
 
     DisposableEffect(id, shell) {
         onDispose {
@@ -165,6 +186,11 @@ fun SessionScreen(
     // Opens once the grid is known and the computer is connected. Reconnects reattach in
     // the core.
     val connected = status == LinkStatus.Connected
+    // The agent's box may have changed while the link was down (D2).
+    LaunchedEffect(connected) {
+        draft.reset()
+        field = TextFieldValue("")
+    }
     LaunchedEffect(grid != null, connected, problem) {
         val size = grid
         if (size != null && !opened && connected && problem == null) {
@@ -178,37 +204,63 @@ fun SessionScreen(
         if (status is LinkStatus.Reconnecting) Banner("Reconnecting…", info = false)
         problem?.let { Banner(it, info = false, action = "Try again") { problem = null } }
         if (ended) Banner("The agent exited.", info = true)
-        TerminalView(
-            screen = screen,
-            textSize = textSize,
-            onTextSize = {
-                textSize = it
-                core.settings.textSize = it
-            },
-            onGrid = { cols, rows ->
-                grid = cols to rows
-                if (opened) core.io { phone.resize(cols.toUShort(), rows.toUShort()) }
-            },
-            onScroll = { lines, row, col -> core.io { phone.scroll(lines, row.toUShort(), col.toUShort()) } },
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        )
-        val keys = if (shell) ShellKeys else SessionKeys
-        val sendKey = { key: Key -> core.io { runCatching { phone.sendKey(key) } } }
-        if (WindowInsets.isImeVisible) {
-            FoldedKeys(keys, sendKey)
-        } else {
-            KeyGrid(keys, if (shell) keys.size else 5, sendKey)
+        // Every key starts the next edit afresh: it may change or clear the agent's box (D2).
+        val sendKey = { key: Key ->
+            draft.reset()
+            field = TextFieldValue("")
+            core.io { runCatching { phone.sendKey(key) } }
         }
-        Composer(
-            draft = draft,
-            onDraft = { draft = it },
-            shell = shell,
-            onSend = {
-                val text = draft
-                draft = ""
-                core.io { runCatching { phone.typeText(text) } }
-            },
-        )
+        val linkAt = { row: Int, col: Int -> phone.linkAt(row.toUShort(), col.toUShort()) }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            TerminalView(
+                screen = screen,
+                textSize = textSize,
+                onTextSize = {
+                    textSize = it
+                    core.settings.textSize = it
+                },
+                onGrid = { cols, rows ->
+                    grid = cols to rows
+                    if (opened) core.io { phone.resize(cols.toUShort(), rows.toUShort()) }
+                },
+                onScroll = { lines, row, col -> core.io { phone.scroll(lines, row.toUShort(), col.toUShort()) } },
+                onTap = { row, col ->
+                    val link = linkAt(row, col)
+                    if (link != null) {
+                        openLink(context, link)
+                    } else {
+                        typing.requestFocus()
+                        keyboard?.show()
+                    }
+                },
+                onLongPress = { row, col -> linkAt(row, col)?.let { copyLink(context, it) } },
+                modifier = Modifier.fillMaxSize(),
+            )
+            LiveInput(
+                value = field,
+                shell = shell,
+                enterSends = enterSends(row?.agent, shell),
+                onValue = { next ->
+                    // The cursor stays at the end: only the end of the agent's box is edited (D1).
+                    val pinned = next.copy(selection = TextRange(next.text.length))
+                    draft.change(pinned.text)?.let { edit ->
+                        core.io { runCatching { phone.edit(edit.erase.toUInt(), edit.text) } }
+                    }
+                    field = pinned
+                },
+                onEmptyBackspace = { core.io { runCatching { phone.edit(1u, "") } } },
+                onEnter = { sendKey(Key.ENTER) },
+                modifier = Modifier.align(Alignment.BottomStart).focusRequester(typing),
+            )
+        }
+        val keys = if (shell) ShellKeys else SessionKeys
+        Column(Modifier.background(LocalTokens.current.page).navigationBarsPadding().padding(bottom = 10.dp)) {
+            if (WindowInsets.isImeVisible) {
+                FoldedKeys(keys, sendKey)
+            } else {
+                KeyGrid(keys, if (shell) keys.size else 5, sendKey)
+            }
+        }
     }
 }
 
@@ -339,78 +391,85 @@ private fun FoldedKeys(
     }
 }
 
-/** The text box as a pill, with Send inside it only while it holds text (D4). */
+/**
+ * The field the keyboard types into, never seen: its edits reach the agent's own box as they
+ * happen (refine-phone-typing-and-links D1). Where Enter starts a new line it holds several
+ * lines; where Enter sends, it is one line and Enter is its action (D3). A shell gets exact
+ * keys: no autocorrect, no capitals.
+ */
 @Composable
-private fun Composer(
-    draft: String,
-    onDraft: (String) -> Unit,
+private fun LiveInput(
+    value: TextFieldValue,
     shell: Boolean,
-    onSend: () -> Unit,
+    enterSends: Boolean,
+    onValue: (TextFieldValue) -> Unit,
+    onEmptyBackspace: () -> Unit,
+    onEnter: () -> Unit,
+    modifier: Modifier,
 ) {
-    val tokens = LocalTokens.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(tokens.page)
-            .navigationBarsPadding()
-            .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 10.dp)
-            .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(tokens.card)
-            .padding(start = 18.dp, end = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.weight(1f).padding(vertical = 13.dp), contentAlignment = Alignment.CenterStart) {
-            if (draft.isEmpty()) {
-                Text(if (shell) "Type a command…" else "Type to the agent…", color = tokens.muted, fontSize = 15.sp)
-            }
-            BasicTextField(
-                value = draft,
-                onValueChange = onDraft,
-                textStyle = TextStyle(color = tokens.text, fontSize = 15.sp),
-                cursorBrush = SolidColor(tokens.accent),
-                maxLines = 4,
-                // A command goes to the shell exactly as typed. Gboard keeps correcting a
-                // plain text field without autocorrect, but never a URI field.
-                keyboardOptions =
-                    if (shell) {
-                        KeyboardOptions(
-                            capitalization = KeyboardCapitalization.None,
-                            autoCorrectEnabled = false,
-                            keyboardType = KeyboardType.Uri,
-                            imeAction = ImeAction.Send,
-                        )
-                    } else {
-                        KeyboardOptions(imeAction = ImeAction.Send)
-                    },
-                keyboardActions = KeyboardActions(onSend = { if (draft.isNotEmpty()) onSend() }),
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .semantics { contentDescription = if (shell) "Type a command" else "Type to the agent" },
-            )
-        }
-        if (draft.isNotEmpty()) {
-            Box(
-                Modifier
-                    .padding(start = 6.dp)
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(tokens.accent)
-                    .clickable(role = Role.Button, onClick = onSend)
-                    .semantics { contentDescription = "Send" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painterResource(R.drawable.ic_send),
-                    null,
-                    tint = onAccent(tokens),
-                    modifier = Modifier.size(18.dp),
+    val options =
+        when {
+            shell -> {
+                // Gboard keeps correcting a plain text field without autocorrect, but never a URI field.
+                KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    autoCorrectEnabled = false,
+                    keyboardType = KeyboardType.Uri,
+                    imeAction = ImeAction.Go,
                 )
             }
-        } else {
-            Spacer(Modifier.width(6.dp))
+
+            enterSends -> {
+                KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send)
+            }
+
+            else -> {
+                KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Default)
+            }
         }
+    BasicTextField(
+        value = value,
+        onValueChange = onValue,
+        singleLine = enterSends,
+        keyboardOptions = options,
+        keyboardActions = KeyboardActions(onGo = { onEnter() }, onSend = { onEnter() }),
+        modifier =
+            modifier
+                .size(1.dp)
+                .alpha(0f)
+                // Backspace with nothing typed here still erases in the agent's box, such as a
+                // message recalled with ↑ (D2).
+                .onPreviewKeyEvent { event ->
+                    val erase =
+                        event.type == KeyEventType.KeyDown &&
+                            event.key == KeyboardKey.Backspace &&
+                            value.text.isEmpty()
+                    if (erase) onEmptyBackspace()
+                    erase
+                }.semantics { contentDescription = if (shell) "Type a command" else "Type to the agent" },
+    )
+}
+
+/** Opens a web link in the phone's browser (D4). */
+private fun openLink(
+    context: Context,
+    link: String,
+) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, link.toUri()))
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(context, "No app can open this link", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Copies a link. Android 13 and later confirm a copy themselves (D4). */
+private fun copyLink(
+    context: Context,
+    link: String,
+) {
+    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Link", link))
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
     }
 }
 

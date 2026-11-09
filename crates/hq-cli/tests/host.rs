@@ -4640,7 +4640,11 @@ fn the_phone_core_pairs_mirrors_types_reconnects_and_unpairs() {
             .is_some_and(|screen| screen_text(&screen).contains(needle))
     };
     wait_until("the agent's output", || screen_has("stub-ready"));
-    phone.type_text("from-the-core".into()).unwrap();
+    // Typed live, a misspelling corrected with Backspace, then sent with the key row's Enter
+    // (refine-phone-typing-and-links D6).
+    phone.edit(0, "from-the-coer".into()).unwrap();
+    phone.edit(2, "re".into()).unwrap();
+    phone.send_key(hq_mobile::Key::Enter).unwrap();
     wait_until("the typed line", || screen_has("got:from-the-core"));
     assert_eq!(phone.screen().unwrap().cols, 54);
 

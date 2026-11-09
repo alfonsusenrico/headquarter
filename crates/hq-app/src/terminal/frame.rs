@@ -7,9 +7,9 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 
-use hq_links::Link;
 use super::model::{TerminalModel, palette_color};
 use crate::theme::{Paint, Palette, readable};
+use hq_links::Link;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Underline {

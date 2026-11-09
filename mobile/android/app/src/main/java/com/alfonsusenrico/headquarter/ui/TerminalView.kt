@@ -4,6 +4,7 @@ import android.util.LruCache
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,8 +65,9 @@ private val Padding = 8.dp
 /**
  * The open terminal, drawn from the core's snapshot (add-android-app D8). Reports the grid
  * that fits through [onGrid], scrolls with a vertical drag at the dragged cell (the core
- * decides whether that is history or the agent's own scrolling, fix-phone-scroll D2), and
- * changes the text size with a pinch.
+ * decides whether that is history or the agent's own scrolling, fix-phone-scroll D2),
+ * changes the text size with a pinch, and reports a tap or a long press at a cell
+ * (refine-phone-typing-and-links D4).
  */
 @Composable
 fun TerminalView(
@@ -74,6 +76,8 @@ fun TerminalView(
     onTextSize: (Float) -> Unit,
     onGrid: (cols: Int, rows: Int) -> Unit,
     onScroll: (lines: Int, row: Int, col: Int) -> Unit,
+    onTap: (row: Int, col: Int) -> Unit,
+    onLongPress: (row: Int, col: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalTokens.current
@@ -87,6 +91,8 @@ fun TerminalView(
     val currentTextSize by rememberUpdatedState(textSize)
     val currentCell by rememberUpdatedState(cell)
     val currentAdvance by rememberUpdatedState(advance)
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnLongPress by rememberUpdatedState(onLongPress)
     var pending by remember { mutableFloatStateOf(0f) }
 
     BoxWithConstraints(modifier.background(tokens.terminalBackground)) {
@@ -97,8 +103,19 @@ fun TerminalView(
         Canvas(
             Modifier
                 .fillMaxSize()
-                .semantics { contentDescription = "Terminal" }
+                .semantics { contentDescription = "Terminal, tap to type" }
                 .pointerInput(Unit) {
+                    fun cell(at: Offset): Pair<Int, Int> {
+                        val inset = Padding.toPx()
+                        val row = ((at.y - inset) / currentCell.height).toInt().coerceAtLeast(0)
+                        val col = ((at.x - inset) / currentAdvance).toInt().coerceAtLeast(0)
+                        return row to col
+                    }
+                    detectTapGestures(
+                        onTap = { at -> cell(at).let { (row, col) -> currentOnTap(row, col) } },
+                        onLongPress = { at -> cell(at).let { (row, col) -> currentOnLongPress(row, col) } },
+                    )
+                }.pointerInput(Unit) {
                     detectTransformGestures { centroid, pan, zoom, _ ->
                         if (zoom != 1f) {
                             val size = (currentTextSize * zoom).coerceIn(Settings.MIN_TEXT_SIZE, Settings.MAX_TEXT_SIZE)

@@ -433,7 +433,11 @@ mod tests {
         terminal.feed(b"\x1b]8;;file:///etc/hosts\x07hosts\x1b]8;;\x07");
         let whole = Some("https://example.com/long/path".to_owned());
         assert_eq!(terminal.link_at(0, 10), whole);
-        assert_eq!(terminal.link_at(1, 3), whole, "the row the terminal wrapped");
+        assert_eq!(
+            terminal.link_at(1, 3),
+            whole,
+            "the row the terminal wrapped"
+        );
         assert_eq!(terminal.link_at(0, 1), None, "beside the link");
         assert_eq!(terminal.link_at(2, 1), None, "not a web link");
     }
