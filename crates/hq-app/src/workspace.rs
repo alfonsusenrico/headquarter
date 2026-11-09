@@ -1104,14 +1104,8 @@ impl Workspace {
         let drops = cx.subscribe_in(
             &view,
             window,
-            |this, _, _: &crate::terminal::view::DropRefused, window, cx| {
-                let host = this.host_name_shown();
-                this.show_notice(
-                    format!("The files are on this computer; the session runs on {host}."),
-                    false,
-                    window,
-                    cx,
-                );
+            |this, _, notice: &crate::terminal::view::PaneNotice, window, cx| {
+                this.show_notice(notice.text.clone(), notice.error, window, cx);
             },
         );
         window.focus(&view.focus_handle(cx), cx);

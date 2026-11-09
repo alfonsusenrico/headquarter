@@ -24,6 +24,7 @@ pub(super) struct ShellPanel {
     _ended: Subscription,
     _focus: Subscription,
     _holder: Subscription,
+    _notices: Subscription,
 }
 
 /// The divider between the agent and the shell, while it is dragged.
@@ -104,12 +105,21 @@ impl Workspace {
             this.mark_seen_if_watched(window, cx);
             this.tell_host_in_use(window, cx);
         });
+        // Images sent from the shell to another computer say how it went, as from the agent's pane.
+        let notices = cx.subscribe_in(
+            &view,
+            window,
+            |this, _, notice: &crate::terminal::view::PaneNotice, window, cx| {
+                this.show_notice(notice.text.clone(), notice.error, window, cx);
+            },
+        );
         self.shell = Some(ShellPanel {
             session,
             view,
             _ended: ended,
             _focus: focus,
             _holder: holder,
+            _notices: notices,
         });
     }
 

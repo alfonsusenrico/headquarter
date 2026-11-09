@@ -2,6 +2,7 @@
 
 pub mod copy;
 pub mod frame;
+pub mod images;
 pub mod keys;
 pub mod model;
 pub mod session;

@@ -4,6 +4,7 @@
 //! and the payload (at most [`MAX_PAYLOAD`]). Control frames carry one JSON
 //! [`Request`] or [`Response`]; output and input frames carry raw terminal bytes.
 
+pub mod image;
 pub mod paste;
 pub mod sidebar;
 pub mod usage;

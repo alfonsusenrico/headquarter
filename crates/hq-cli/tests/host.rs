@@ -4326,6 +4326,24 @@ fn the_client_works_over_a_remote_link_and_dials_again() {
             None => panic!("closed before the echo: {seen:?}"),
         }
     }
+    // An image from the PC, on a stream of its own: the path names the host's file
+    // (add-image-upload D1, D7).
+    let image = png(700_000);
+    let mut reported = Vec::new();
+    let path =
+        hq_client::upload_image(&host, &session.id, &image, |sent| reported.push(sent)).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), image);
+    assert!(
+        path.starts_with(
+            &env.host_dir()
+                .join("images")
+                .join(&session.id)
+                .to_string_lossy()
+                .into_owned()
+        )
+    );
+    assert_eq!(reported.last(), Some(&700_000), "{reported:?}");
+    assert!(reported.len() > 1, "progress in steps: {reported:?}");
     drop(attached);
     drop(feed);
 

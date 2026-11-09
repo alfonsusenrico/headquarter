@@ -12,14 +12,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use hq_protocol::image::{ImageKind as Kind, MAX_IMAGE_BYTES as MAX_BYTES};
 use hq_protocol::{ErrorCode, Response};
 
 use hq_signals::now_ms;
 
 use super::{Host, OpResult, fail, lock};
 
-/// The largest image the host takes: 10 MiB (D3).
-pub const MAX_BYTES: u64 = 10 * 1024 * 1024;
 /// How long an image is kept while its session stays in the sidebar (owner, 2026-11-06).
 pub const KEPT_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// How often the host deletes what is past keeping.
@@ -30,50 +29,6 @@ const PART: &str = "part";
 
 /// Files saved by this host process, so two images in one millisecond get their own names.
 static SAVED: AtomicU64 = AtomicU64::new(0);
-
-/// The image formats Claude Code and Codex read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    Png,
-    Jpeg,
-    Gif,
-    Webp,
-}
-
-impl Kind {
-    /// The format the file's first bytes show, whatever the client said (D3).
-    pub fn of(head: &[u8]) -> Option<Kind> {
-        if head.starts_with(b"\x89PNG\r\n\x1a\n") {
-            Some(Kind::Png)
-        } else if head.starts_with(b"\xff\xd8\xff") {
-            Some(Kind::Jpeg)
-        } else if head.starts_with(b"GIF87a") || head.starts_with(b"GIF89a") {
-            Some(Kind::Gif)
-        } else if head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"WEBP" {
-            Some(Kind::Webp)
-        } else {
-            None
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Kind::Png => "png",
-            Kind::Jpeg => "jpeg",
-            Kind::Gif => "gif",
-            Kind::Webp => "webp",
-        }
-    }
-
-    fn extension(self) -> &'static str {
-        match self {
-            Kind::Png => "png",
-            Kind::Jpeg => "jpg",
-            Kind::Gif => "gif",
-            Kind::Webp => "webp",
-        }
-    }
-}
 
 /// Why an image was not saved. Each says what the owner can do.
 #[derive(Debug)]
@@ -419,17 +374,6 @@ mod tests {
         let root = std::env::temp_dir().join(format!("hq-images-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         root
-    }
-
-    #[test]
-    fn formats_are_read_from_the_first_bytes() {
-        assert_eq!(Kind::of(PNG), Some(Kind::Png));
-        assert_eq!(Kind::of(b"\xff\xd8\xff\xe0\0\x10JFIF"), Some(Kind::Jpeg));
-        assert_eq!(Kind::of(b"GIF89a\x01\0"), Some(Kind::Gif));
-        assert_eq!(Kind::of(b"RIFF\x24\0\0\0WEBPVP8 "), Some(Kind::Webp));
-        assert_eq!(Kind::of(b"%PDF-1.7\n"), None);
-        assert_eq!(Kind::of(b"RIFF\x24\0\0\0WAVE"), None);
-        assert_eq!(Kind::of(b""), None);
     }
 
     #[test]
