@@ -17,6 +17,8 @@ Revision: `feat/image-upload` at 73e8167, on `main` d10dfeb.
 | `./gradlew ktlintCheck assembleDebug lint testDebugUnitTest` | passed: 17 JVM tests (`SendImageTest`: formats, conversion rule, scaling), Lint clean |
 
 Compose's keyboard content check: `research/evidence/image-upload/2026-11-09-content-receiver.md`.
+Keyboard images were then removed (owner, 2026-11-09); the owner's own test of the picker found
+the image key scrolled out of sight with the keyboard open, now pinned beside ⏎.
 
 ## On the phone by adb (2026-11-09)
 
@@ -29,7 +31,8 @@ its images.
 
 ## Not verified yet
 
-- Gboard's screenshot suggestion: the owner.
+- The image key with the keyboard open, by the owner (it was off screen in 73e8167; now pinned
+  beside ⏎, seen there by adb).
 - On screen, an isolated app instance paired with the test host: a PNG dropped and a screenshot
   pasted (once the Mac is free).
 - agy with a pasted image path.

@@ -87,19 +87,20 @@ after a key (the agent's box changed).
 Rejected: the host typing the path into the session. The client already knows which terminal is
 open (the agent or its shell) and how it pastes; the host would have to guess both.
 
-### D6. The phone: an image key, the photo picker, keyboard images
+### D6. The phone: an image key and the photo picker
 
-- The session key grid gets an image key in its free tenth place (and in the folded row while the
-  keyboard is open). The shell's keys do not.
+- The session key grid gets an image key in its free last place; while the keyboard is open it
+  is pinned beside ⏎, outside the row that scrolls sideways (the owner found it scrolled out of
+  sight, 2026-11-09). The shell's keys do not have it.
 - The image key opens Android's photo picker (one image; no storage permission needed).
-- An image the keyboard offers (Gboard's screenshot suggestion, an image on the clipboard) is sent
-  the same way, through Compose's content receiver on the hidden typing field. Checked first
-  (2026-11-09, Compose foundation 1.12.1): the receiver is wired only into the state-based text
-  field (`TextFieldState`); the `TextFieldValue` field's `commitContent` ignores it. So the field
-  moved to `TextFieldState`. Its input transformation sees each edit's text before and after,
-  in order, so the mirror needs no copy of its own and a key tapped right after typing cannot
-  drop letters; the cursor is placed at the end there. The receiver is still marked
-  experimental in Compose (`@OptIn`), so a Compose upgrade re-runs the keyboard image check.
+- The typing field moved to Compose's state-based field (`TextFieldState`): its input
+  transformation sees each edit's text before and after, in order, so the mirror needs no copy
+  of its own and a key tapped right after typing cannot drop letters; the cursor is placed at the
+  end there.
+- Rejected after building: images the keyboard offers (Gboard's clipboard and screenshot
+  suggestion), through Compose's content receiver. Only the state-based field takes them
+  (`research/evidence/image-upload/2026-11-09-content-receiver.md`), the API is still marked
+  experimental, and the owner never uses them (2026-11-09); removed rather than shipped untested.
 - An image that is not PNG, JPEG, GIF or WebP (HEIC from a camera), or that is larger than 10 MiB,
   is converted on the phone to JPEG at quality 90, scaled down so its longer side is at most 4096
   pixels, and smaller again until it fits. Agents scale images down further themselves.
@@ -160,5 +161,4 @@ the older host ignores it, and the next 16 host's sweep deletes it by age.
 
 ## Open questions
 
-- Whether Compose's content receiver works with the `TextFieldValue` field (checked first, D6).
 - agy's behaviour with a pasted image path (once agy trusts a folder).

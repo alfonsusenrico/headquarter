@@ -23,7 +23,7 @@ a remote session upload too, 2026-11-09).
 
 - On the phone, an image key in a session's key row opens the photo picker. The chosen image is
   sent to the computer, and its path appears in the agent's box, where Claude Code and Codex show
-  `[Image #1]`. A screenshot offered by the keyboard can be sent the same way.
+  `[Image #1]`.
 - In the desktop app, dropping an image onto a session on another computer, or pasting an image
   copied to the clipboard (a Windows or macOS screenshot), does the same.
 - The computer keeps each image 7 days, or until its session leaves the sidebar if that is sooner.
@@ -36,7 +36,7 @@ a remote session upload too, 2026-11-09).
 - The host checks and saves images under its data folder, one folder per session, and deletes
   them by age and with their session (D2-D4).
 - Clients paste the returned path as they paste text (D5).
-- The phone's image key, photo picker, keyboard images, and a conversion to JPEG for images the
+- The phone's image key, photo picker, and a conversion to JPEG for images the
   agents cannot read or that are too large (D6).
 - The desktop uploads image drops and image pastes on a remote host's session (D7).
 - `AGENTS.md`: the host keeps the images the owner sends, as a stated exception to keeping
@@ -46,6 +46,9 @@ a remote session upload too, 2026-11-09).
   computer, images go).
 
 ## Non-goals
+
+- Images the keyboard offers (Gboard's clipboard or screenshot suggestion): built, then removed
+  before delivery (owner, 2026-11-09: never used; it relied on an experimental Compose API).
 
 - Other files (PDFs, archives, folders): a non-image drop onto a remote session stays refused.
 - Video.
@@ -66,5 +69,6 @@ and Codex 0.166.0; agy 1.5.1 receives the path as text, its attachment behaviour
   the connection loop, close and remove, the hourly sweep, `allowed()`), `hq-client` (upload over
   a host connection or a link), `hq-mobile` (`send_image`), `hq-app` (drop and paste on a remote
   session).
-- Android: the image key, the photo picker, keyboard images, conversion, progress.
+- Android: the image key, the photo picker, conversion, progress; the typing field moves to
+  Compose's state-based field (D6).
 - Every client and host must update together (protocol 16), as for every protocol bump.

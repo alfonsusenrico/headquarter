@@ -37,11 +37,12 @@ Expected Result: the phone core and the desktop put an image's path in the agent
 
 ## 3. Phone app
 
-- [x] 3.1 Check first: Compose's content receiver with the `TextFieldValue` field (D6). Evidence:
+- [x] 3.1 Check first: Compose's content receiver with the `TextFieldValue` field (D6; keyboard
+  images later removed, owner 2026-11-09). Evidence:
   `research/evidence/image-upload/2026-11-09-content-receiver.md` (foundation 1.12.1: only the
   state-based field takes keyboard content); the field moved to `TextFieldState`; the mirror's
   `LiveTypingTest` cases pass.
-- [x] 3.2 The image key in the session grid and folded row, the photo picker, keyboard images,
+- [x] 3.2 The image key in the session grid and pinned beside ⏎ in the folded row, the photo picker,
   progress and failure in the banner, the draft starting afresh after the paste (D6). Evidence:
   ktlint and Android Lint clean.
 - [x] 3.3 Conversion: not PNG, JPEG, GIF or WebP, or over 10 MiB, to JPEG 90 with the longer side at
@@ -57,8 +58,8 @@ Expected Result: the phone sends a picked or offered image and the agent attache
 - [x] 4.2 `./scripts/check` passes; `./scripts/android-core` and `./gradlew ktlintCheck assembleDebug
   lint testDebugUnitTest` pass.
 - [ ] 4.3 On the owner's phone with a test host, with the owner's go: a screenshot to Claude Code
-  and to Codex (`[Image #1]` in the box, nothing sent to the agent), a HEIC photo, a keyboard
-  screenshot, the link dropped mid-send. An isolated app instance on this Mac (own
+  and to Codex (`[Image #1]` in the box, nothing sent to the agent), a HEIC photo, the image key
+  with the keyboard open, the link dropped mid-send. An isolated app instance on this Mac (own
   `HQ_DATA_DIR`, once the owner frees the Mac) paired with the test host: a PNG dropped and a
   screenshot pasted. The images folder after closing the session.
   `verification.md` written.

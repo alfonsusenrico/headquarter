@@ -14,15 +14,15 @@ The app SHALL store only the phone's key (encrypted by the Android Keystore and 
 ## ADDED Requirements
 
 ### Requirement: Sending an image
-A session's screen SHALL have an image key that opens the system's photo picker, and SHALL take an image the keyboard offers. The app SHALL send the chosen image to the computer for that session and paste the path the computer answers into the agent's box, followed by a space. It SHALL show the sending's progress and say why when it fails, pasting nothing. A shell's screen SHALL have no image key.
+A session's screen SHALL have an image key that opens the system's photo picker, shown while the keyboard is open too. The app SHALL send the chosen image to the computer for that session and paste the path the computer answers into the agent's box, followed by a space. It SHALL show the sending's progress and say why when it fails, pasting nothing. A shell's screen SHALL have no image key.
 
 #### Scenario: A screenshot to Claude Code
 - **WHEN** the owner taps the image key in a Claude Code session and picks a screenshot
 - **THEN** "Sending image…" shows with its progress, and then Claude Code's box shows `[Image #1]`
 
-#### Scenario: From the keyboard
-- **WHEN** Gboard offers the screenshot just taken and the owner taps it while typing to Codex
-- **THEN** the screenshot is sent and Codex's box shows `[Image #1]` after the typed text
+#### Scenario: With the keyboard open
+- **WHEN** the owner is typing to Codex with the keyboard open and taps the image key beside ⏎
+- **THEN** the photo picker opens, and the chosen image's path follows the typed text in Codex's box
 
 #### Scenario: The connection drops
 - **WHEN** the link to the computer drops while an image is sending
