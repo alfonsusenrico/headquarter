@@ -50,7 +50,8 @@ pub const PARENT_SESSION_MARKERS: &[&str] = &[
 pub enum Conversation<'a> {
     /// A new conversation; `id` is used by agents that accept a chosen id (Claude).
     New { id: &'a str },
-    /// Continue the agent's own conversation `id`, or open its picker when unknown.
+    /// Continue the agent's own conversation `id`; when unknown, Claude Code opens its picker
+    /// and the others start a new conversation.
     Resume(Option<&'a str>),
 }
 
@@ -161,8 +162,8 @@ pub fn terminal_event(agent: Agent, signal: &TerminalSignal) -> Option<(Source, 
             }
             ProgramState::Done => EventKind::TurnComplete,
             ProgramState::Error => EventKind::TurnFailed,
-            // Codex reports the end of every turn as idle rather than done.
-            ProgramState::Idle if agent == Agent::Codex => EventKind::TurnComplete,
+            // Every agent ends a turn with done (Codex since 0.164.0); idle is a stop with
+            // nothing to read, such as Codex's `/new` (fix-codex-new-unread D1).
             ProgramState::Idle => EventKind::Interrupted,
             ProgramState::Clear => return None,
         };
@@ -208,6 +209,70 @@ mod tests {
                 ))
             );
         }
+    }
+
+    #[test]
+    fn only_done_ends_a_turn_and_idle_is_a_stop_for_every_agent() {
+        let state = |state| {
+            TerminalSignal::ProgramStatus(ProgramStatus {
+                state,
+                kind: None,
+                id: None,
+                message: None,
+                title: None,
+            })
+        };
+        for agent in Agent::ALL {
+            assert_eq!(
+                terminal_event(agent, &state(ProgramState::Done)),
+                Some((Source::ProgramStatus, EventKind::TurnComplete))
+            );
+            assert_eq!(
+                terminal_event(agent, &state(ProgramState::Idle)),
+                Some((Source::ProgramStatus, EventKind::Interrupted)),
+                "{agent}"
+            );
+        }
+    }
+
+    /// Codex 0.166.0's `/new`: working, then idle (research/evidence/codex-new/).
+    #[test]
+    fn codex_new_after_a_read_turn_leaves_nothing_unread() {
+        let mut status = crate::status::SessionTracker::new(true, Default::default(), 0);
+        let (_, ready) = terminal_event(Agent::Codex, &state_of(ProgramState::Idle)).unwrap();
+        status.apply(ready, 1);
+        // The owner types a message.
+        status.apply(EventKind::Seen, 2);
+        for (signal, at) in [(ProgramState::Working, 2), (ProgramState::Done, 3)] {
+            let (_, event) = terminal_event(Agent::Codex, &state_of(signal)).unwrap();
+            status.apply(event, at);
+        }
+        assert_eq!(
+            status.status(),
+            crate::status::Status::DoneUnread,
+            "a finished turn is unread"
+        );
+        status.apply(EventKind::Seen, 4);
+        assert_eq!(status.status(), crate::status::Status::Done);
+        for (signal, at) in [(ProgramState::Working, 5), (ProgramState::Idle, 6)] {
+            let (_, event) = terminal_event(Agent::Codex, &state_of(signal)).unwrap();
+            status.apply(event, at);
+        }
+        assert_eq!(
+            status.status(),
+            crate::status::Status::Done,
+            "/new leaves nothing to read"
+        );
+    }
+
+    fn state_of(state: ProgramState) -> TerminalSignal {
+        TerminalSignal::ProgramStatus(ProgramStatus {
+            state,
+            kind: None,
+            id: None,
+            message: None,
+            title: None,
+        })
     }
 
     #[test]

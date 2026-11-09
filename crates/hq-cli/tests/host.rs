@@ -3447,7 +3447,7 @@ fn a_codex_turn_ending_reads_codex_usage_again() {
   read line
   printf '\033]7501;state=working\007'
   sleep 0.3
-  printf '\033]7501;state=idle\007'
+  printf '\033]7501;state=done\007'
   sleep 30
   exit 0
 fi"#,
@@ -5582,4 +5582,37 @@ fn an_idle_sessions_older_limits_do_not_replace_newer_ones() {
     assert_eq!(report(58, saturday), 59.0, "an idle session's older 58%");
     assert_eq!(report(60, saturday), 60.0);
     assert_eq!(report(2, saturday + 7 * 24 * 3600), 2.0, "a new week");
+}
+
+/// A Codex session in which nothing was sent has no conversation id; started again with the
+/// host, it opens a new conversation, not Codex's picker of other conversations
+/// (fix-codex-empty-resume D1).
+#[test]
+fn an_empty_codex_session_starts_fresh_with_the_host() {
+    let mut env = TestEnv::new("codexfresh");
+    env.stub("codex", RECORDING_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Codex);
+    let args = env.root.join("stub-args.txt");
+    wait_until("the first launch", || args.exists());
+    assert!(matches!(
+        env.connect().request(&Request::Stop {}),
+        Response::Done
+    ));
+    assert!(env.daemons.pop().unwrap().wait().unwrap().success());
+    std::fs::remove_file(&args).unwrap();
+
+    env.start_daemon();
+    wait_until("started again", || env.session(&session.id).live);
+    wait_until("the second launch", || args.exists());
+    let launched = std::fs::read_to_string(&args).unwrap();
+    assert!(!launched.lines().any(|arg| arg == "resume"), "{launched:?}");
+    assert!(
+        env.log().contains(&format!(
+            "session started id={} agent=codex resume=true known_conversation=false",
+            session.id
+        )),
+        "{}",
+        env.log()
+    );
 }

@@ -15,11 +15,14 @@ use super::{Conversation, LaunchSpec};
 use crate::event::{EventKind, NeedsReason, Source};
 use crate::scanner::TerminalSignal;
 
+/// A known conversation resumes with `resume <id>`. Without an id the session is one where
+/// nothing was sent (imported conversations always carry theirs), so it starts a new
+/// conversation rather than Codex's picker of other conversations (fix-codex-empty-resume D1).
 pub fn launch_spec(conversation: Conversation<'_>) -> LaunchSpec {
     let mut args = Vec::new();
-    if let Conversation::Resume(id) = conversation {
+    if let Conversation::Resume(Some(id)) = conversation {
         args.push("resume".to_owned());
-        args.extend(id.map(str::to_owned));
+        args.push(id.to_owned());
     }
     LaunchSpec {
         program: "codex".to_owned(),
@@ -45,11 +48,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resume_uses_the_resume_subcommand() {
+    fn resume_uses_the_resume_subcommand_and_an_empty_session_starts_fresh() {
         let known = launch_spec(Conversation::Resume(Some("t1")));
         assert_eq!(known.args[known.args.len() - 2..], ["resume", "t1"]);
-        let picker = launch_spec(Conversation::Resume(None));
-        assert_eq!(picker.args.last().map(String::as_str), Some("resume"));
+        let empty = launch_spec(Conversation::Resume(None));
+        assert!(empty.args.is_empty(), "no picker: {:?}", empty.args);
     }
 
     #[test]
