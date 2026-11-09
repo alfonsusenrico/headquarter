@@ -2,6 +2,33 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.4.0-alpha.1 (2026-11-09)
+
+A pre-release for trying every computer's sessions in one list. The app's update check skips it;
+install it with the line below. Only the desktop app changed: hosts on 0.3.1 work with it.
+
+- One list for every computer. The sidebar shows this computer's sessions and every paired
+  host's together, with no switching between hosts. Sessions from another computer carry its
+  name; this computer's carry none.
+- Groups with the same name merge: an "ops" group on your Mac and one on your server show as one
+  "ops". Dragging a session into a group its computer doesn't have yet makes that group there.
+  Renaming, colouring, folding, ordering and deleting a group apply on every computer that has
+  it.
+- The Hosts menu at the top of the sidebar lists each computer with its state, Connect to a
+  Host…, and Forget, which now asks first.
+- When a computer can't be reached, only its sessions dim and the sidebar says "Reconnecting to
+  <name>…". The others keep working.
+- New Session asks where to start: "Start on" lists your computers, starts on the selected
+  session's computer, and shows that computer's folders.
+- The usage footer and the Usage window show the selected session's computer.
+- Notifications from another computer name it in their title, for example "fix login · server".
+
+Try it:
+
+```sh
+curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/download/v0.4.0-alpha.1/install.sh | HQ_VERSION=0.4.0-alpha.1 sh
+```
+
 ## 0.3.1 (2026-11-09)
 
 - A Codex session where nothing was sent now starts a new conversation when you resume it or the
