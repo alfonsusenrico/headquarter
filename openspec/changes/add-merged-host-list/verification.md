@@ -20,14 +20,24 @@ On screen (debug app, synthetic sessions "fix login", "write docs" on A and "hea
   unchanged. Resumed: B reconnected within about 1 s and its rows came back.
 - New Session with B's session selected: "Start on" offered This Mac and B, B chosen, B's folders
   listed; Start session ran the agent in B's home and the new row carried B's tag.
+- Moving: B's session dropped onto "ops" went into B's own "ops" (`hq ls` on B). A group made on
+  this Mac ("notes"), then B's "read logs" dropped onto it: B made its own "notes" and moved the
+  session there; the list showed one "notes" with both.
+- Needs you on B (a stand-in reporting a permission request, B's session not shown): the row moved
+  to Needs you with B's tag. The macOS banner itself cannot show from the debug app: GPUI turns
+  system notifications off outside an app bundle (`vendor/gpui-pre-macos/src/system_notifications.rs`).
+  The title "<title> · <host>" is covered by `a_notice_names_another_computer`.
+- Forget: the first click asked "Forget <B>?" with "You'll need a new code from it to connect
+  again."; Cancel kept B; Forget then Forget removed B's sessions, the header read "1 host" and
+  the app's paired hosts were empty.
 - Found and fixed on screen (50f0b4e): the host tag hid long titles (the tag now shares the title's
   space and shrinks first); the header showed B's full path instead of `~/logs`; a stopped
   session of another computer would have read "The folder … no longer exists" because its folder
   was checked on this Mac.
 
 Not verified yet:
-- On screen: Forget's confirmation, moving a session into the merged group, a notification from
-  B. The owner took the Mac back before these.
+- The notification banner from another computer (needs the installed, bundled app: 4.3).
+- Escape closing Forget's question (Cancel and closing the menu share the same reset).
 - The owner's server and Windows PC (4.3).
 - Test setup limit: with relays off, a restarted host comes back on new ports that the app cannot
   learn; the app reached B again only after its addresses were edited. Relays (the default)

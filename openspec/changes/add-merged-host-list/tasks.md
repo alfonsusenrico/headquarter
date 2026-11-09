@@ -28,9 +28,10 @@
 ## 4. Verification and delivery
 
 - [x] 4.1 `./scripts/check` (643 tests); the Windows check runs on the pull request.
-- [ ] 4.2 On screen (Mac free, owner's go): this Mac plus a sandbox host: one list with labels on
+- [x] 4.2 On screen (Mac free, owner's go): this Mac plus a sandbox host: one list with labels on
   the sandbox's sessions only, a merged group and a session moved in, a notification from the
   sandbox, the sandbox stopped (greyed) and back, Forget's confirmation, New Session on the sandbox.
+  Evidence: `verification.md` (2026-11-09); the banner itself waits for the bundled app (4.3).
 - [ ] 4.3 The owner's server and Windows PC.
 - [ ] 4.4 After the owner accepts (and step 1 is merged): archive, push `feat/merged-host-list`,
   open the PR.
