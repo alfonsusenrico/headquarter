@@ -1,7 +1,6 @@
 # Verification: refine-phone-typing-and-links
 
-Revision: `feat/phone-typing-and-links` at a55ae12 (code), on `main` 4deda3d. Not yet run on a
-phone: the on-phone checks (tasks 2.3, 4.2) wait for the owner's go.
+Revision: `feat/phone-typing-and-links` at 7ee72ee (code), on `main` 4deda3d.
 
 ## Automated (2026-11-09, macOS, Rust from `rust-toolchain.toml`, JDK 17)
 
@@ -18,9 +17,20 @@ Agents: Claude Code 2.1.318 and Codex 0.166.0 take Ctrl+J as a new line
 (`research/evidence/phone-typing-images/2026-11-06-agent-input.md`). agy 1.5.1 not checked;
 its sessions keep "Enter sends".
 
+## On the phone by adb (2026-11-09)
+
+TECNO CN7c, Android 16, debug build beside the release app, paired with an isolated test host
+(`research/evidence/phone-typing-images/2026-11-09-phone-check.md`). Passed: tap to type, live
+letters in Claude Code's box, Backspace, Backspace on an empty field (key event), Enter as a new
+line in Claude Code and Codex, Enter running a shell command, tapping a link (opened without the
+full stop), long press copying it (Android's own "Copied"). Found and fixed: fast edits arrived out
+of order ("seocnd") because each ran on its own IO coroutine; 7ee72ee sends them through one
+ordered queue, and fast typing then arrived in order. Android checks rerun after the fix: ktlint,
+Lint, 15 JVM tests pass.
+
 ## Not verified yet
 
-- What Gboard sends for Backspace on an empty field (task 2.3); the build uses the key event.
-- Every spec scenario on the owner's phone (task 4.2): typing, a corrected word, swipe and voice
-  typing, erasing recalled text, a two-line message, a shell command, opening and copying links,
-  "No app can open this link".
+- With Gboard itself (adb injects key events): swipe, voice typing, autocorrect replacing a word,
+  Gboard's Backspace on an empty field (task 2.3), a sent two-line Claude message: the owner.
+- "No app can open this link" (needs a phone without a browser) and the app's own "Link copied"
+  (Android 12 and older).
