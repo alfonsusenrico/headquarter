@@ -53,6 +53,27 @@ cannot be read).
 Rejected: retrying every kind. A removed computer would knock on the host every 30 seconds for
 nothing.
 
+### D5. Reconnect all
+
+The owner chose one row in the Hosts menu (2026-11-09), above Connect to a Host, shown while any
+paired host is not connected (connecting, reconnecting, needs an update, pair again, not
+reachable). It ends each such host's feed and starts a new one at once, clearing its trouble
+first, so the menu shows "connecting" until the host answers. A host that removed this computer
+comes back as "pair again" when the new try is refused the same way.
+
+Rejected: a "Try again" on each row (more buttons for a rare action), and an icon in the sidebar
+header (always visible for something needed rarely).
+
+### D6. The tag keeps the name's first characters
+
+Found in the alpha test (2026-11-09): on a selected row the close button takes width, the tag
+shrank to its 28 px minimum and showed only "…", sitting low. The tag's minimum becomes the width
+of its first four characters plus the ellipsis and padding, measured with the row's font, and the
+tag stays centred. The title gives way first. Names of four characters or fewer show whole.
+
+Rejected: hiding the tag on a narrow row. Which computer a session runs on matters most when the
+row is selected.
+
 ## Failure behaviour
 
 - The host updates while the app runs: within 30 seconds its sessions return, the line goes.

@@ -28,7 +28,7 @@ While a host is unreachable, the app SHALL keep that host's sessions in the list
 - **THEN** this computer's sessions show at once, and the Hosts menu says the host is connecting
 
 ### Requirement: Hosts menu
-The sidebar header SHALL open a Hosts menu listing this computer when it has a host and each paired host with its state (connected, connecting, reconnecting, needs an update, pair again, not reachable), Connect to a Host, and Forget for each paired host. A host the app gave up on SHALL show why under its row. Forget SHALL ask in place before forgetting: the row SHALL read "Forget <host>? You'll need a new code from it to connect again." with Cancel and Forget buttons of equal width, Forget in the danger colour, and Escape or a click elsewhere SHALL cancel.
+The sidebar header SHALL open a Hosts menu listing this computer when it has a host and each paired host with its state (connected, connecting, reconnecting, needs an update, pair again, not reachable), Connect to a Host, and Forget for each paired host. A host the app gave up on SHALL show why under its row. While any paired host is not connected, the menu SHALL offer Reconnect all, which tries every such host again at once. Forget SHALL ask in place before forgetting: the row SHALL read "Forget <host>? You'll need a new code from it to connect again." with Cancel and Forget buttons of equal width, Forget in the danger colour, and Escape or a click elsewhere SHALL cancel.
 
 #### Scenario: A misclick on Forget
 - **WHEN** the owner clicks Forget on the server's row by mistake and presses Escape
@@ -38,6 +38,33 @@ The sidebar header SHALL open a Hosts menu listing this computer when it has a h
 - **WHEN** the owner clicks Forget, then Forget again in the confirmation
 - **THEN** the server leaves the Hosts menu and its sessions leave the list
 
+#### Scenario: Reconnect all
+- **WHEN** the server shows "reconnecting" or "needs an update" and the owner chooses Reconnect all
+- **THEN** the app tries the server again at once, and its sessions return as soon as it answers on the same release
+
+#### Scenario: Every host connected
+- **WHEN** every paired host is connected
+- **THEN** the Hosts menu does not show Reconnect all
+
 #### Scenario: Forgetting a host that needs an update
 - **WHEN** the server needs an update and the owner forgets it
 - **THEN** its line leaves the sidebar and the app stops trying it
+
+### Requirement: Every host in one list
+The sidebar SHALL list the sessions of this computer's host and of every paired host together. A session on another computer SHALL show that computer's name; on a computer without its own host, every session SHALL show its host's name. Every action on a session SHALL go to its host. When a row is too narrow for the title and the whole name, the name SHALL keep at least its first four characters before an ellipsis, and the title SHALL give way first.
+
+#### Scenario: The Mac and the server
+- **WHEN** the owner on the Mac has a server paired with a health agent running there
+- **THEN** the sidebar lists the Mac's sessions without a host name and the health agent with "server"
+
+#### Scenario: On Windows
+- **WHEN** the owner on a Windows PC has one server paired
+- **THEN** every session shows "server"
+
+#### Scenario: Renaming a server session
+- **WHEN** the owner renames the server's health agent from the Mac's sidebar
+- **THEN** the server renames it, and the phone paired with the server shows the new name
+
+#### Scenario: A long title on a selected row
+- **WHEN** the selected row of "Server Management Agent Setup" on "msigs63vr" shows its close button
+- **THEN** the tag reads at least "msig…", centred in its box, and the title is shortened instead

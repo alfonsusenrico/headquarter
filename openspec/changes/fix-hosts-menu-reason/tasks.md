@@ -10,6 +10,11 @@
 - [ ] 1.3 Sidebar lines and Hosts menu state words and reasons (D2, D3). Evidence: unit test of the
   lines in host-name order; on screen (2.2).
 
+- [ ] 1.4 Reconnect all in the Hosts menu (D5). Evidence: on screen (2.2): shown only while a host
+  is not connected, and a frozen host comes back at once after it is resumed.
+- [ ] 1.5 The tag's minimum width keeps four characters (D6). Evidence: unit test that the minimum
+  fits "msig…" for the row's font size; on screen (2.2) on a selected row with a long title.
+
 Expected Result: a host the app gave up on is named with what to do, and one that was updated comes
 back by itself.
 
