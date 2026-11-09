@@ -29,10 +29,14 @@ text) and to Codex; a HEIC photo converted to a 1200x800 JPEG (`[Image #2]`); th
 mid-send (no partial file, "The image didn't arrive", nothing pasted); closing a session deleted
 its images.
 
+## By the owner (2026-11-09)
+
+"tested, all works": the image key with the keyboard open (now beside ⏎), a picked screenshot
+(the host logged a 242,532-byte JPEG saved), on the same test host. The test host was stopped
+and its folder, which held the owner's screenshot, removed.
+
 ## Not verified yet
 
-- The image key with the keyboard open, by the owner (it was off screen in 73e8167; now pinned
-  beside ⏎, seen there by adb).
 - On screen, an isolated app instance paired with the test host: a PNG dropped and a screenshot
   pasted (once the Mac is free).
 - agy with a pasted image path.

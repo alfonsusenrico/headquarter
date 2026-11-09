@@ -17,5 +17,5 @@ Expected Result: the arrows and a tap move the agent's cursor.
 - [x] 2.2 On the owner's phone by adb with a test host: the grid, "abcdef" then a tap on "c" and
   "X" gives "abXcdef", Backspace there, ← twice then "Y". Evidence:
   `research/evidence/phone-typing-images/2026-11-09-cursor.md`.
-- [ ] 2.3 The owner tries it; then archive with `add-image-upload`, push `feat/image-upload`, open
+- [x] 2.3 The owner tried it ("tested, all works", 2026-11-09); then archive with `add-image-upload`, push `feat/image-upload`, open
   the one pull request, report its URL.
