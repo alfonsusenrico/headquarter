@@ -204,6 +204,11 @@ impl Terminal {
             .map(|link| link.address().to_owned())
     }
 
+    /// Whether the program asked for pastes to be bracketed.
+    pub fn bracketed_paste(&self) -> bool {
+        self.term.mode().contains(TermMode::BRACKETED_PASTE)
+    }
+
     pub fn scroll_to_bottom(&mut self) {
         self.term.scroll_display(Scroll::Bottom);
     }

@@ -4648,6 +4648,19 @@ fn the_phone_core_pairs_mirrors_types_reconnects_and_unpairs() {
     wait_until("the typed line", || screen_has("got:from-the-core"));
     assert_eq!(phone.screen().unwrap().cols, 54);
 
+    // An image, on a second stream while the session stays open: saved on the computer and
+    // its path pasted into the session (add-image-upload D5, D9).
+    phone.send_image(png(400_000)).unwrap();
+    assert_eq!(phone.sending(), None, "done");
+    let images = env.host_dir().join("images").join(&session.id);
+    let saved = files_in(&images);
+    assert_eq!(saved.len(), 1, "{saved:?}");
+    phone.send_key(hq_mobile::Key::Enter).unwrap();
+    wait_until("the pasted path", || screen_has("second:/"));
+    let line = screen_text(&phone.screen().unwrap()).replace('\n', "");
+    let name = saved[0].file_name().unwrap().to_string_lossy().into_owned();
+    assert!(line.contains(&name), "{line}");
+
     // Away and back: home and the open terminal come back by themselves.
     phone.disconnect();
     assert_eq!(phone.status(), LinkStatus::Off);
