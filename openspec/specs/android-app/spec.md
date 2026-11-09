@@ -137,11 +137,15 @@ The app SHALL say which side to update when the computer and the app speak diffe
 - **THEN** home shows that the new version is available, with Download opening the release page
 
 ### Requirement: The phone keeps no content
-The app SHALL store only the phone's key (encrypted by the Android Keystore and excluded from backups), the paired computers' names, keys and relays, and its settings. It SHALL NOT store or log prompts, terminal output, session titles, pairing codes or keys.
+The app SHALL store only the phone's key (encrypted by the Android Keystore and excluded from backups), the paired computers' names, keys and relays, and its settings. It SHALL NOT store or log prompts, terminal output, session titles, pairing codes, keys or images it sends.
 
 #### Scenario: After use
 - **WHEN** the owner has used sessions on the phone and closes the app
 - **THEN** the app's storage holds no terminal content, titles or codes, and its log only connection events
+
+#### Scenario: After sending an image
+- **WHEN** the owner has sent a photo, converted to JPEG, to a session
+- **THEN** neither the photo nor the JPEG is in the app's storage or cache
 
 ### Requirement: Home layout
 Home SHALL show a large title that folds away while the list scrolls down and returns at the top, a full-width row for the computer with its connection state that opens the switcher and keeps Settings in reach, usage as one tile per agent, and a floating Add button that shrinks to an icon while the list scrolls down. What Home lists and how it behaves SHALL stay as before.
@@ -233,7 +237,7 @@ The session and shell screens SHALL show the terminal flush to the screen's edge
 
 #### Scenario: Keys in reach
 - **WHEN** the owner opens a session with the keyboard closed
-- **THEN** 1, 2, 3, Esc, ⇧Tab, ↑, ↓, Tab, Ctrl-C and ⏎ all show at once, ⏎ the largest, and no text box shows under them
+- **THEN** 1, 2, 3, Esc, ⇧Tab, Tab, ←, ↑, ↓, →, Ctrl-C, the image key and ⏎ all show at once, ⏎ the largest, and no text box shows under them
 
 #### Scenario: Typing folds the keys
 - **WHEN** the owner taps the terminal and the keyboard opens
@@ -248,7 +252,7 @@ The session and shell screens SHALL show the terminal flush to the screen's edge
 - **THEN** a Live button shows, and tapping it returns to the newest output and hides the button
 
 ### Requirement: Typing into the agent's box
-Tapping the terminal, away from a link, SHALL open the keyboard. Each edit the keyboard makes SHALL reach the session as it happens: new text as typed characters, and text the keyboard replaces or deletes as Backspaces before the replacement. The keyboard's autocorrect, swipe typing and voice typing SHALL keep working in an agent session. The key row's keys SHALL start the next edit afresh, and Backspace SHALL reach the session even when nothing was typed since.
+Tapping the terminal, away from a link, SHALL open the keyboard. Each edit the keyboard makes SHALL reach the session as it happens: new text as typed characters, and text the keyboard replaces or deletes as Backspaces before the replacement. The keyboard's autocorrect, swipe typing and voice typing SHALL keep working in an agent session. The key row's keys, and a tap that moves the cursor, SHALL start the next edit afresh, and Backspace SHALL reach the session even when nothing was typed since.
 
 #### Scenario: Letters appear in the agent's box
 - **WHEN** the owner taps the terminal of a Claude Code session and types "fix the test"
@@ -295,3 +299,44 @@ Tapping a web address (`http` or `https`) in the terminal SHALL open it in the p
 #### Scenario: No browser
 - **WHEN** no app on the phone can open web links and the owner taps a link
 - **THEN** "No app can open this link" shows and nothing else happens
+
+### Requirement: Sending an image
+A session's screen SHALL have an image key that opens the system's photo picker, shown while the keyboard is open too. The app SHALL send the chosen image to the computer for that session and paste the path the computer answers into the agent's box, followed by a space. It SHALL show the sending's progress and say why when it fails, pasting nothing. A shell's screen SHALL have no image key.
+
+#### Scenario: A screenshot to Claude Code
+- **WHEN** the owner taps the image key in a Claude Code session and picks a screenshot
+- **THEN** "Sending image…" shows with its progress, and then Claude Code's box shows `[Image #1]`
+
+#### Scenario: With the keyboard open
+- **WHEN** the owner is typing to Codex with the keyboard open and taps the image key beside ⏎
+- **THEN** the photo picker opens, and the chosen image's path follows the typed text in Codex's box
+
+#### Scenario: The connection drops
+- **WHEN** the link to the computer drops while an image is sending
+- **THEN** the banner says "The image didn't arrive" and nothing is pasted
+
+### Requirement: Images the agents can read
+Before sending, the app SHALL convert an image that is not PNG, JPEG, GIF or WebP, or that is larger than 10 MiB, to JPEG, scaled down until it is at most 10 MiB.
+
+#### Scenario: A camera photo in HEIC
+- **WHEN** the owner picks a 12 MB HEIC photo
+- **THEN** the app sends it as a JPEG under 10 MiB and Claude Code attaches it
+
+### Requirement: Moving the cursor
+The key rows of sessions and shells SHALL have ← and →. A tap away from a link on the row the agent's cursor is on SHALL move the cursor to the tapped character with arrow presses, and no further than the end of the row's text. A tap on another row SHALL only open the keyboard.
+
+#### Scenario: Correcting the middle of a message
+- **WHEN** Claude Code's box holds "abcdef" with the cursor at its end, and the owner taps the "c" and types "X"
+- **THEN** the box reads "abXcdef"
+
+#### Scenario: Past the end
+- **WHEN** the owner taps to the right of the text on the cursor's row
+- **THEN** the cursor goes to the end of the text, not beyond
+
+#### Scenario: Wide characters
+- **WHEN** the box holds "日本x" and the owner taps the "本"
+- **THEN** the cursor moves two characters left, one press per character
+
+#### Scenario: Arrow keys
+- **WHEN** the owner taps ← twice in the key row and types "Y"
+- **THEN** "Y" is inserted two characters before where the cursor was

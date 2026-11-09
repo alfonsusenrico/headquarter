@@ -1,12 +1,10 @@
 package com.alfonsusenrico.headquarter
 
 import com.alfonsusenrico.headquarter.ui.Edit
-import com.alfonsusenrico.headquarter.ui.LiveDraft
 import com.alfonsusenrico.headquarter.ui.enterSends
 import com.alfonsusenrico.headquarter.ui.mirrorEdit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -41,17 +39,6 @@ class LiveTypingTest {
     @Test
     fun aNewLineIsTypedAsItIs() {
         assertEquals(Edit(0, "\nsecond"), mirrorEdit("first", "first\nsecond"))
-    }
-
-    @Test
-    fun theDraftStartsAfreshAfterAKey() {
-        val draft = LiveDraft()
-        assertEquals(Edit(0, "abc"), draft.change("abc"))
-        assertNull("no change, nothing to send", draft.change("abc"))
-        draft.reset()
-        assertEquals("", draft.text)
-        // What was typed before the key is not erased again: the agent's box owns it now.
-        assertEquals(Edit(0, "d"), draft.change("d"))
     }
 
     @Test

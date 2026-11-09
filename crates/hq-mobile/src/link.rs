@@ -13,7 +13,7 @@ use iroh::{Endpoint, EndpointAddr, PublicKey, RelayUrl, SecretKey};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::computers::Computer;
-use crate::{LinkStatus, Shared, Taken};
+use crate::{LinkStatus, MobileError, Shared, Taken};
 
 /// How long dialling a computer may take before it counts as unreachable.
 const DIAL_WAIT: Duration = Duration::from_secs(15);
@@ -207,6 +207,72 @@ pub(crate) async fn dial(
         .map_err(|error| error.to_string())?;
     Ok((endpoint, connection, send, recv))
 }
+
+/// Bytes in each input frame of an upload, so progress moves often over a relay.
+const UPLOAD_CHUNK: usize = 256 * 1024;
+
+/// Sends an image for `session` on a new stream of `connection` (the gateway lets a phone
+/// have one beside its own, add-image-upload D9) and returns where the computer saved it.
+pub(crate) async fn upload(
+    connection: &Connection,
+    session: &str,
+    image: &[u8],
+    mut sent: impl FnMut(u64),
+) -> Result<String, MobileError> {
+    let cut = || MobileError::Failed {
+        reason: "The image didn't arrive".to_owned(),
+    };
+    let (mut send, mut recv) = connection.open_bi().await.map_err(|_| cut())?;
+    let hello = Request::Hello {
+        protocol: PROTOCOL_VERSION,
+    };
+    hq_remote::write_frame(&mut send, &Frame::request(&hello))
+        .await
+        .map_err(|_| cut())?;
+    if !matches!(answer(&mut recv).await, Some(Response::Welcome { .. })) {
+        return Err(cut());
+    }
+    let upload = Request::Upload {
+        session: session.to_owned(),
+        size: image.len() as u64,
+    };
+    hq_remote::write_frame(&mut send, &Frame::request(&upload))
+        .await
+        .map_err(|_| cut())?;
+    match answer(&mut recv).await {
+        Some(Response::UploadReady {}) => {}
+        Some(Response::Error { message, .. }) => {
+            return Err(MobileError::Refused { reason: message });
+        }
+        _ => return Err(cut()),
+    }
+    let mut done = 0u64;
+    for chunk in image.chunks(UPLOAD_CHUNK) {
+        hq_remote::write_frame(&mut send, &Frame::Input(chunk.to_vec()))
+            .await
+            .map_err(|_| cut())?;
+        done += chunk.len() as u64;
+        sent(done);
+    }
+    let saved = match answer(&mut recv).await {
+        Some(Response::Uploaded { path }) => Ok(path),
+        Some(Response::Error { message, .. }) => Err(MobileError::Refused { reason: message }),
+        _ => Err(cut()),
+    };
+    let _ = send.finish();
+    saved
+}
+
+/// The next answer on an upload's stream, within the time the host has to answer.
+async fn answer(recv: &mut RecvStream) -> Option<Response> {
+    tokio::time::timeout(UPLOAD_ANSWER_WAIT, read_response(recv))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// How long the computer has to answer each step of an upload.
+const UPLOAD_ANSWER_WAIT: Duration = Duration::from_secs(15);
 
 /// What a version difference means for the owner (D4).
 pub(crate) fn mismatch(host_protocol: u32, host_version: String) -> Option<LinkStatus> {

@@ -7,6 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -39,6 +42,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.KeyboardActionHandler
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.placeCursorAtEnd
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -67,13 +76,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,8 +96,11 @@ import uniffi.hq_mobile.LinkStatus
 import uniffi.hq_mobile.MobileException
 import uniffi.hq_mobile.RowBeside
 import uniffi.hq_mobile.RowStatus
+import java.io.IOException
 import androidx.compose.ui.input.key.Key as KeyboardKey
 
+// Six a row, the arrows together on the second; the image key takes the last place
+// (add-phone-cursor-movement D1).
 private val SessionKeys =
     listOf(
         "1" to Key.ONE,
@@ -98,20 +108,26 @@ private val SessionKeys =
         "3" to Key.THREE,
         "Esc" to Key.ESCAPE,
         "⇧Tab" to Key.SHIFT_TAB,
+        "Tab" to Key.TAB,
+        "←" to Key.LEFT,
         "↑" to Key.UP,
         "↓" to Key.DOWN,
-        "Tab" to Key.TAB,
+        "→" to Key.RIGHT,
         "Ctrl-C" to Key.CTRL_C,
     )
+private const val SESSION_COLUMNS = 6
 private val ShellKeys =
     listOf(
         "Esc" to Key.ESCAPE,
         "Tab" to Key.TAB,
-        "↑" to Key.UP,
-        "↓" to Key.DOWN,
         "Ctrl-C" to Key.CTRL_C,
         "Ctrl-D" to Key.CTRL_D,
+        "←" to Key.LEFT,
+        "↑" to Key.UP,
+        "↓" to Key.DOWN,
+        "→" to Key.RIGHT,
     )
+private const val SHELL_COLUMNS = 4
 
 /** A running session, or its shell, at the phone's width (add-android-app D8). */
 @OptIn(ExperimentalLayoutApi::class)
@@ -136,10 +152,35 @@ fun SessionScreen(
     var grid by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var opened by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
-    val draft = remember(id, shell) { LiveDraft() }
-    var field by remember(id, shell) { mutableStateOf(TextFieldValue("")) }
+    // What was typed since the last send or key; its edits reach the agent's box as they
+    // happen (refine-phone-typing-and-links D1).
+    val typed = remember(id, shell) { TextFieldState() }
     val typing = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val sending = remember(version) { phone.sending() }
+    var imageProblem by remember { mutableStateOf<String?>(null) }
+    // Sends an image, then its path lands in the agent's box (add-image-upload D6).
+    val sendImage = { load: () -> ByteArray ->
+        imageProblem = null
+        core.io {
+            try {
+                phone.sendImage(load())
+                core.scope.launch { typed.clearText() }
+            } catch (error: ImageProblem) {
+                imageProblem = error.message
+            } catch (error: MobileException) {
+                imageProblem = error.ownerText()
+            } catch (_: IOException) {
+                imageProblem = "The image couldn't be opened"
+            } catch (_: SecurityException) {
+                imageProblem = "The image couldn't be opened"
+            }
+        }
+    }
+    val picker =
+        rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            uri?.let { sendImage { prepareImage(context, it) } }
+        }
 
     DisposableEffect(id, shell) {
         onDispose {
@@ -187,10 +228,7 @@ fun SessionScreen(
     // the core.
     val connected = status == LinkStatus.Connected
     // The agent's box may have changed while the link was down (D2).
-    LaunchedEffect(connected) {
-        draft.reset()
-        field = TextFieldValue("")
-    }
+    LaunchedEffect(connected) { typed.clearText() }
     LaunchedEffect(grid != null, connected, problem) {
         val size = grid
         if (size != null && !opened && connected && problem == null) {
@@ -204,10 +242,14 @@ fun SessionScreen(
         if (status is LinkStatus.Reconnecting) Banner("Reconnecting…", info = false)
         problem?.let { Banner(it, info = false, action = "Try again") { problem = null } }
         if (ended) Banner("The agent exited.", info = true)
+        sending?.let {
+            val percent = if (it.total > 0uL) (it.sent * 100uL / it.total).toInt() else 0
+            Banner("Sending image… $percent%", info = true)
+        }
+        imageProblem?.let { Banner(it, info = false, action = "OK") { imageProblem = null } }
         // Every key starts the next edit afresh: it may change or clear the agent's box (D2).
         val sendKey = { key: Key ->
-            draft.reset()
-            field = TextFieldValue("")
+            typed.clearText()
             core.input { runCatching { phone.sendKey(key) } }
         }
         val linkAt = { row: Int, col: Int -> phone.linkAt(row.toUShort(), col.toUShort()) }
@@ -229,6 +271,10 @@ fun SessionScreen(
                     if (link != null) {
                         openLink(context, link)
                     } else {
+                        // On the agent's input line, the cursor goes where the owner tapped
+                        // (add-phone-cursor-movement D2); typing then starts there afresh.
+                        typed.clearText()
+                        core.input { runCatching { phone.moveCursorTo(row.toUShort(), col.toUShort()) } }
                         typing.requestFocus()
                         keyboard?.show()
                     }
@@ -237,17 +283,10 @@ fun SessionScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             LiveInput(
-                value = field,
+                state = typed,
                 shell = shell,
                 enterSends = enterSends(row?.agent, shell),
-                onValue = { next ->
-                    // The cursor stays at the end: only the end of the agent's box is edited (D1).
-                    val pinned = next.copy(selection = TextRange(next.text.length))
-                    draft.change(pinned.text)?.let { edit ->
-                        core.input { runCatching { phone.edit(edit.erase.toUInt(), edit.text) } }
-                    }
-                    field = pinned
-                },
+                onEdit = { edit -> core.input { runCatching { phone.edit(edit.erase.toUInt(), edit.text) } } },
                 onEmptyBackspace = { core.input { runCatching { phone.edit(1u, "") } } },
                 onEnter = { sendKey(Key.ENTER) },
                 modifier = Modifier.align(Alignment.BottomStart).focusRequester(typing),
@@ -255,10 +294,16 @@ fun SessionScreen(
         }
         val keys = if (shell) ShellKeys else SessionKeys
         Column(Modifier.background(LocalTokens.current.page).navigationBarsPadding().padding(bottom = 10.dp)) {
+            val pickImage =
+                if (shell) {
+                    null
+                } else {
+                    { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                }
             if (WindowInsets.isImeVisible) {
-                FoldedKeys(keys, sendKey)
+                FoldedKeys(keys, sendKey, pickImage)
             } else {
-                KeyGrid(keys, if (shell) keys.size else 5, sendKey)
+                KeyGrid(keys, if (shell) SHELL_COLUMNS else SESSION_COLUMNS, sendKey, pickImage)
             }
         }
     }
@@ -345,6 +390,7 @@ private fun KeyGrid(
     keys: List<Pair<String, Key>>,
     columns: Int,
     onKey: (Key) -> Unit,
+    onImage: (() -> Unit)?,
 ) {
     val tokens = LocalTokens.current
     Row(
@@ -356,10 +402,14 @@ private fun KeyGrid(
         horizontalArrangement = Arrangement.spacedBy(KeyGap),
     ) {
         Column(Modifier.weight(columns.toFloat()), verticalArrangement = Arrangement.spacedBy(KeyGap)) {
-            keys.chunked(columns).forEach { line ->
+            val lines = keys.chunked(columns)
+            lines.forEachIndexed { index, line ->
+                // The image key takes the last row's free place (add-image-upload D6).
+                val image = onImage.takeIf { index == lines.lastIndex && line.size < columns }
                 Row(horizontalArrangement = Arrangement.spacedBy(KeyGap)) {
                     line.forEach { (label, key) -> KeyButton(label, Modifier.weight(1f)) { onKey(key) } }
-                    repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
+                    image?.let { ImageKey(Modifier.weight(1f), it) }
+                    repeat(columns - line.size - (if (image != null) 1 else 0)) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
@@ -372,6 +422,7 @@ private fun KeyGrid(
 private fun FoldedKeys(
     keys: List<Pair<String, Key>>,
     onKey: (Key) -> Unit,
+    onImage: (() -> Unit)?,
 ) {
     val tokens = LocalTokens.current
     Row(
@@ -387,22 +438,24 @@ private fun FoldedKeys(
         ) {
             keys.forEach { (label, key) -> KeyButton(label, Modifier.widthIn(min = 48.dp)) { onKey(key) } }
         }
+        // Pinned beside Enter, so it never scrolls out of sight (add-image-upload D6).
+        onImage?.let { ImageKey(Modifier.width(56.dp), it) }
         EnterKey(Modifier.width(56.dp)) { onKey(Key.ENTER) }
     }
 }
 
 /**
- * The field the keyboard types into, never seen: its edits reach the agent's own box as they
- * happen (refine-phone-typing-and-links D1). Where Enter starts a new line it holds several
- * lines; where Enter sends, it is one line and Enter is its action (D3). A shell gets exact
- * keys: no autocorrect, no capitals.
+ * The field the keyboard types into, never seen: each edit reaches the agent's own box as it
+ * happens (refine-phone-typing-and-links D1), and the cursor stays at the end. Where Enter
+ * starts a new line it holds several lines; where Enter sends, it is one line and Enter is its
+ * action (D3). A shell gets exact keys: no autocorrect, no capitals.
  */
 @Composable
 private fun LiveInput(
-    value: TextFieldValue,
+    state: TextFieldState,
     shell: Boolean,
     enterSends: Boolean,
-    onValue: (TextFieldValue) -> Unit,
+    onEdit: (Edit) -> Unit,
     onEmptyBackspace: () -> Unit,
     onEnter: () -> Unit,
     modifier: Modifier,
@@ -427,12 +480,19 @@ private fun LiveInput(
                 KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Default)
             }
         }
+    // Each edit, in order, as the keyboard makes it: the text before and after it.
+    val mirror =
+        InputTransformation {
+            val edit = mirrorEdit(originalText.toString(), asCharSequence().toString())
+            if (edit.erase > 0 || edit.text.isNotEmpty()) onEdit(edit)
+            placeCursorAtEnd()
+        }
     BasicTextField(
-        value = value,
-        onValueChange = onValue,
-        singleLine = enterSends,
+        state = state,
+        inputTransformation = mirror,
+        lineLimits = if (enterSends) TextFieldLineLimits.SingleLine else TextFieldLineLimits.MultiLine(),
         keyboardOptions = options,
-        keyboardActions = KeyboardActions(onGo = { onEnter() }, onSend = { onEnter() }),
+        onKeyboardAction = if (enterSends) KeyboardActionHandler { onEnter() } else null,
         modifier =
             modifier
                 .size(1.dp)
@@ -443,11 +503,31 @@ private fun LiveInput(
                     val erase =
                         event.type == KeyEventType.KeyDown &&
                             event.key == KeyboardKey.Backspace &&
-                            value.text.isEmpty()
+                            state.text.isEmpty()
                     if (erase) onEmptyBackspace()
                     erase
                 }.semantics { contentDescription = if (shell) "Type a command" else "Type to the agent" },
     )
+}
+
+/** Opens the photo picker to send an image to the session (add-image-upload D6). */
+@Composable
+private fun ImageKey(
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    val tokens = LocalTokens.current
+    Box(
+        modifier
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(tokens.card)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "Send an image" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(painterResource(R.drawable.ic_image), null, tint = tokens.text, modifier = Modifier.size(20.dp))
+    }
 }
 
 /** Opens a web link in the phone's browser (D4). */

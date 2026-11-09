@@ -127,6 +127,15 @@ struct State {
     holder: Option<Holder>,
     /// The owner looks at the open terminal: replies arriving there are read.
     watching: bool,
+    /// An image on its way to the computer (add-image-upload D6).
+    sending: Option<Sending>,
+}
+
+/// How far an image being sent has got, in bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct Sending {
+    pub sent: u64,
+    pub total: u64,
 }
 
 pub(crate) struct Shared {
@@ -196,6 +205,11 @@ impl Shared {
 
     pub(crate) fn usage(&self, agents: Vec<AgentUsage>) {
         self.lock().mirror.usage = agents;
+        self.changed();
+    }
+
+    fn set_sending(&self, sending: Option<Sending>) {
+        self.lock().sending = sending;
         self.changed();
     }
 
@@ -438,6 +452,7 @@ impl Phone {
                     ended: false,
                     holder: None,
                     watching: false,
+                    sending: None,
                 }),
             }),
             key: SecretKey::from_bytes(&bytes),
@@ -777,6 +792,75 @@ impl Phone {
         self.follow_output();
         tx.send(Command::Input(bytes))
             .map_err(|_| MobileError::NotConnected)
+    }
+
+    /// Sends an image to the computer for the open session, on a stream of its own, then
+    /// pastes the path the computer answers into the open terminal, as a drop of a file
+    /// pastes it (add-image-upload D5, D6). Progress shows through `sending`. The image is
+    /// held only in memory.
+    pub fn send_image(&self, image: Vec<u8>) -> Result<(), MobileError> {
+        let (session, connection) = {
+            let state = self.shared.lock();
+            let session = state
+                .open
+                .as_ref()
+                .map(|open| open.session.clone())
+                .ok_or_else(|| failed("no session is open"))?;
+            let connection = state.connection.clone().ok_or(MobileError::NotConnected)?;
+            (session, connection)
+        };
+        let total = image.len() as u64;
+        self.shared.set_sending(Some(Sending { sent: 0, total }));
+        let shared = Arc::clone(&self.shared);
+        let saved = self
+            .runtime
+            .block_on(link::upload(&connection, &session, &image, |sent| {
+                shared.set_sending(Some(Sending { sent, total }));
+            }));
+        self.shared.set_sending(None);
+        let path = saved?;
+        let bracketed = self
+            .shared
+            .lock()
+            .terminal
+            .as_ref()
+            .is_some_and(Terminal::bracketed_paste);
+        let bytes = hq_protocol::paste::paste(&hq_protocol::paste::typed_paths(&[path]), bracketed);
+        let tx = self.link_tx()?;
+        self.follow_output();
+        tx.send(Command::Input(bytes))
+            .map_err(|_| MobileError::NotConnected)
+    }
+
+    /// Moves the agent's cursor to a tapped cell on its own row with arrow presses
+    /// (add-phone-cursor-movement D2). Returns whether the tap was on the cursor's row.
+    pub fn move_cursor_to(&self, row: u16, col: u16) -> Result<bool, MobileError> {
+        let (steps, left, right) = {
+            let state = self.shared.lock();
+            let Some(terminal) = state.terminal.as_ref() else {
+                return Ok(false);
+            };
+            let Some(steps) = terminal.cursor_steps(row, col) else {
+                return Ok(false);
+            };
+            (
+                steps,
+                terminal.key_bytes(Key::Left).to_vec(),
+                terminal.key_bytes(Key::Right).to_vec(),
+            )
+        };
+        if steps != 0 {
+            let arrow = if steps < 0 { left } else { right };
+            self.link_tx()?
+                .send(Command::Input(arrow.repeat(steps.unsigned_abs() as usize)))
+                .map_err(|_| MobileError::NotConnected)?;
+        }
+        Ok(true)
+    }
+
+    /// How far the image being sent has got; none while nothing is sent.
+    pub fn sending(&self) -> Option<Sending> {
+        self.shared.lock().sending
     }
 
     /// The web address at a cell of the open terminal as drawn, if any (D4).

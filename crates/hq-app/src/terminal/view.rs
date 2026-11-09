@@ -20,6 +20,7 @@ use gpui::{
 
 use super::copy;
 use super::frame::{self, Frame, TextStyle, Underline};
+use super::images;
 use super::keys::{self, Binding, KeyModes, KeyPress};
 use super::model::GridSize;
 use super::session::TerminalSession;
@@ -216,10 +217,14 @@ pub struct TerminalView {
     link_press: Option<LinkPress>,
 }
 
-/// Files were dropped on a remote host's session and not typed (add-remote-desktop-client D8).
-pub struct DropRefused;
+/// Something the pane tells the owner through the window's notice: an image on its way to
+/// another computer, or why one was not sent (add-image-upload D7).
+pub struct PaneNotice {
+    pub text: String,
+    pub error: bool,
+}
 
-impl gpui::EventEmitter<DropRefused> for TerminalView {}
+impl gpui::EventEmitter<PaneNotice> for TerminalView {}
 
 impl TerminalView {
     pub fn new(
@@ -413,33 +418,126 @@ impl TerminalView {
         .detach();
     }
 
+    /// Pastes the clipboard's text. On a session on another computer, an image on the
+    /// clipboard with no text is sent there and its path pasted (add-image-upload D7).
     fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        if let Some(text) = item.text() {
             self.paste(&text, cx);
+            return;
+        }
+        if !crate::hosts::is_remote() {
+            return;
+        }
+        let image = item.entries().iter().find_map(|entry| match entry {
+            gpui::ClipboardEntry::Image(image) => Some(image),
+            _ => None,
+        });
+        if let Some(image) = image {
+            match images::pasted(image) {
+                Ok(bytes) => self.send_images(vec![bytes], cx),
+                Err(reason) => self.tell(reason, true, cx),
+            }
         }
     }
 
     fn paste(&mut self, text: &str, cx: &mut Context<Self>) {
         let bracketed = self.mode(cx).contains(TermMode::BRACKETED_PASTE);
-        let bytes = keys::paste(text, bracketed);
+        let bytes = hq_protocol::paste::paste(text, bracketed);
         self.session
             .update(cx, |session, cx| session.input(&bytes, cx));
     }
 
     /// Files dropped on the pane are typed as their paths, as a paste (add-terminal-file-drop).
-    /// On a remote host's session they are refused: the files are on this computer, and the
-    /// paths would name nothing on the host (add-remote-desktop-client D8).
+    /// On a session on another computer the files are not there: images are sent to it and
+    /// their paths pasted, and other files are refused (add-image-upload D7).
     fn drop_paths(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
-        if crate::hosts::is_remote() {
-            cx.emit(DropRefused);
-            return;
-        }
-        let text = keys::dropped_paths(paths.paths());
-        if text.is_empty() {
-            return;
-        }
         window.focus(&self.focus, cx);
-        self.paste(&text, cx);
+        if crate::hosts::is_remote() {
+            let mut sendable = Vec::new();
+            let mut refused = None;
+            for path in paths.paths() {
+                match images::dropped(path) {
+                    Ok(bytes) => sendable.push(bytes),
+                    Err(reason) => refused = Some(reason),
+                }
+            }
+            if let Some(reason) = refused {
+                self.tell(reason, sendable.is_empty(), cx);
+            }
+            if !sendable.is_empty() {
+                self.send_images(sendable, cx);
+            }
+            return;
+        }
+        let text = hq_protocol::paste::typed_paths(
+            &paths
+                .paths()
+                .iter()
+                .map(|path| path.to_string_lossy())
+                .collect::<Vec<_>>(),
+        );
+        if !text.is_empty() {
+            self.paste(&text, cx);
+        }
+    }
+
+    fn tell(&self, text: &str, error: bool, cx: &mut Context<Self>) {
+        cx.emit(PaneNotice {
+            text: text.to_owned(),
+            error,
+        });
+    }
+
+    /// Sends images to the session's computer, then pastes their paths there as a drop
+    /// pastes paths (D5). The pane stays usable meanwhile.
+    fn send_images(&mut self, images: Vec<Vec<u8>>, cx: &mut Context<Self>) {
+        let session = self.session.read(cx).info.id.clone();
+        let host = match crate::hosts::current() {
+            Ok(host) => host,
+            Err(error) => {
+                self.tell(&error.to_string(), true, cx);
+                return;
+            }
+        };
+        let count = images.len();
+        self.tell(
+            if count == 1 {
+                "Sending image…"
+            } else {
+                "Sending images…"
+            },
+            false,
+            cx,
+        );
+        let sending = cx.background_executor().spawn(async move {
+            images
+                .iter()
+                .map(|image| hq_client::upload_image(&host, &session, image, |_| {}))
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let results = sending.await;
+            let _ = this.update(cx, |this, cx| {
+                let mut paths = Vec::new();
+                let mut failure = None;
+                for result in results {
+                    match result {
+                        Ok(path) => paths.push(path),
+                        Err(error) => failure = Some(error.to_string()),
+                    }
+                }
+                if !paths.is_empty() {
+                    this.paste(&hq_protocol::paste::typed_paths(&paths), cx);
+                }
+                if let Some(reason) = failure {
+                    this.tell(&format!("The image wasn't sent: {reason}"), true, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     /// The half of the cell under the pointer; past the grid's left or right edge, the

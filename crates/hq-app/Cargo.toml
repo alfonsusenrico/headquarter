@@ -46,6 +46,9 @@ hq-links = { path = "../hq-links" }
 hq-protocol = { path = "../hq-protocol" }
 hq-remote = { path = "../hq-remote" }
 hq-signals = { path = "../hq-signals" }
+# Converts a clipboard image the agents cannot read (a Windows bitmap, a macOS TIFF) to PNG
+# before it is sent to another computer (add-image-upload D7). GPUI already builds it.
+image = { version = "0.25", default-features = false, features = ["bmp", "ico", "png", "tiff"] }
 # The pairing QR code in the Remote Control window (`workspace/remote.rs`).
 qrcode = { version = "0.14", default-features = false }
 # The paired hosts file (`hosts.rs`).

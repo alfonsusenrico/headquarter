@@ -43,6 +43,8 @@ remote hosts (no host there).
   conversation the owner chose in Add sessions: Claude Code's transcript (and the folder
   beside it) goes to the system Trash, Codex only through its own `archive` and
   `delete`; agy is never changed (`host/remove.rs`).
+- **Images the owner sends (2026-11-06):** kept owner-only in the data folder's
+  `images/<session id>/`, deleted after 7 days or with the session (`host/images.rs`).
 
 Capabilities: database, deployed
 Design surface: desktop application (session sidebar, terminal pane, quota footer), and a phone

@@ -9,7 +9,9 @@ the behaviour.
   helpers, and read-only history readers (`history.rs`).
 - `crates/hq-store`: SQLite session index and its migrations
   (`crates/hq-store/migrations/`).
-- `crates/hq-protocol`: client and host frames and messages, group labels, and
+- `crates/hq-protocol`: client and host frames and messages, group labels, `paste.rs`
+  (pasted text and typed paths, shared by the app and the phone), `image.rs` (what the host
+  takes as an image), and
   `sidebar.rs`: the sidebar's order, the owner's groups and folder labels, shared by
   `hq ls` and the app;
   `usage.rs`: how usage readings are shown, shared by `hq usage` and the app.
@@ -24,7 +26,8 @@ the behaviour.
   history every 60 s (`HQ_HISTORY_INTERVAL_SECS` shortens it in tests), `host/outside.rs` links outside agents every 5 s,
   `host/close.rs` closes a session with the agent's own keys, and `host/usage.rs`
   reads usage only while a client shows it (`HQ_USAGE_INTERVAL_SECS` shortens the 5-minute Codex interval in tests).
-  `host/remote.rs` is remote control's gateway: running only while a device is paired or a code is shown, an iroh endpoint
+  `host/images.rs` keeps images sent to a session (checked, owner-only, deleted with the
+  session or after 7 days). `host/remote.rs` is remote control's gateway: running only while a device is paired or a code is shown, an iroh endpoint
   on its own thread that passes each paired phone or desktop to `agentd.sock` as an ordinary
   client through an allow-list for its kind; a desktop may open up to 64 streams
   (add-remote-gateway, add-remote-desktop-client). `host/folders.rs` lists and finds the

@@ -7,6 +7,7 @@ mod close;
 mod details;
 mod folders;
 mod history;
+mod images;
 mod outside;
 mod remote;
 mod remove;
@@ -225,6 +226,12 @@ pub fn run(options: HostOptions) -> Result<(), HostError> {
     {
         let host = Arc::clone(&host);
         thread::spawn(move || host.agent_check_loop());
+    }
+    // Before any client: images past keeping never reach one (add-image-upload D4).
+    host.sweep_images();
+    {
+        let host = Arc::clone(&host);
+        thread::spawn(move || host.images_loop());
     }
     {
         let order = host.queue_starts();
@@ -456,6 +463,9 @@ impl Host {
         };
 
         let mut attached: Option<(Arc<Hosted>, u64)> = None;
+        // An image arriving on this connection, which then attaches to nothing
+        // (add-image-upload D1). Dropped unfinished, its partial file goes.
+        let mut upload: Option<images::Upload> = None;
         // The paired phone behind this connection, when the remote gateway names one.
         let mut device: Option<String> = None;
         let mut stop_requested = false;
@@ -473,7 +483,13 @@ impl Host {
             };
             match frame {
                 Frame::Input(bytes) => {
-                    if let Some((hosted, viewer)) = &attached {
+                    if let Some(mut current) = upload.take() {
+                        match current.write(&bytes) {
+                            Ok(images::Progress::More) => upload = Some(current),
+                            Ok(images::Progress::Whole) => send(self.finish_upload(current)),
+                            Err(refusal) => send(*self.refused_upload(current.session(), &refusal)),
+                        }
+                    } else if let Some((hosted, viewer)) = &attached {
                         self.tracking_phone(hosted, || {
                             hosted.input_from(*viewer, &bytes, now_ms());
                         });
@@ -495,6 +511,13 @@ impl Host {
                             break;
                         }
                     };
+                    if let Some(current) = upload.take() {
+                        self.cut_short(current);
+                        send(Response::error(
+                            ErrorCode::BadRequest,
+                            "The image was cut short by another request",
+                        ));
+                    }
                     match request {
                         Request::Hello { .. } => {
                             send(Response::error(ErrorCode::BadRequest, "already greeted"));
@@ -518,6 +541,15 @@ impl Host {
                                 .map(|session| Response::Created { session })
                                 .unwrap_or_else(|error| *error),
                         ),
+                        Request::Upload { session, size } => {
+                            match self.start_upload(&session, size, attached.is_some()) {
+                                Ok(started) => {
+                                    upload = Some(started);
+                                    send(Response::UploadReady {});
+                                }
+                                Err(error) => send(*error),
+                            }
+                        }
                         Request::Attach {
                             session,
                             cols,
@@ -1282,6 +1314,7 @@ impl Host {
             .line(&format!("sidebar removed ids={}", ids.join(",")));
         for id in &ids {
             self.end_shell(id);
+            self.delete_images(id);
             self.settle_start(id);
             self.clear_start_error(id);
             self.broadcast(id);
