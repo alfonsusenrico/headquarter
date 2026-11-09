@@ -1,7 +1,8 @@
 //! A desktop app's connection to a host on another computer (add-remote-desktop-client D4):
 //! one QUIC connection, a control stream that carries the pairing and the gateway's
 //! welcome, and one stream per host client. Streams are read and written with blocking
-//! calls, so `hq-client` keeps its blocking code; the link runs its own small runtime.
+//! calls, so `hq-client` keeps its blocking code. Every link of the app dials through one
+//! shared endpoint with one runtime (add-shared-host-endpoint D1).
 
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -9,7 +10,7 @@ use std::time::Duration;
 
 use hq_protocol::{DeviceKind, ErrorCode, Frame, PROTOCOL_VERSION, Request, Response};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
-use iroh::{Endpoint, EndpointAddr, PublicKey, RelayUrl, SecretKey};
+use iroh::{Endpoint, EndpointAddr, PublicKey, SecretKey};
 use tokio::runtime::{Handle, Runtime};
 
 use crate::{ALPN, PairingCode, Relays};
@@ -47,22 +48,6 @@ impl HostAddress {
             addr = addr.with_ip_addr(ip);
         }
         Some(addr)
-    }
-
-    /// The relays to bind with to reach this host: its home relay, or none.
-    /// `HQ_REMOTE_RELAYS=none` keeps tests on direct addresses.
-    fn relays(&self) -> Relays {
-        if std::env::var("HQ_REMOTE_RELAYS").is_ok_and(|value| value == "none") {
-            return Relays::Disabled;
-        }
-        match self
-            .relay
-            .as_deref()
-            .and_then(|relay| relay.parse::<RelayUrl>().ok())
-        {
-            Some(url) => Relays::Custom(vec![url]),
-            None => Relays::Disabled,
-        }
     }
 }
 
@@ -150,6 +135,61 @@ pub fn client_key(path: &std::path::Path) -> io::Result<SecretKey> {
     }
 }
 
+/// The one endpoint every link of the app dials through (add-shared-host-endpoint D1): this
+/// computer's key, one runtime, and an endpoint bound on first use with n0's relays (none
+/// under `HQ_REMOTE_RELAYS=none`, which keeps tests on direct addresses). Two endpoints with
+/// one key on the same relay push each other off, so there is only this one. A host on
+/// another relay is still reached by the relay its address names.
+pub struct ClientEndpoint {
+    runtime: Runtime,
+    key: SecretKey,
+    endpoint: Mutex<Option<Endpoint>>,
+}
+
+impl ClientEndpoint {
+    pub fn new(key: SecretKey) -> io::Result<Arc<ClientEndpoint>> {
+        Ok(Arc::new(ClientEndpoint {
+            runtime: runtime()?,
+            key,
+            endpoint: Mutex::new(None),
+        }))
+    }
+
+    fn relays() -> Relays {
+        if std::env::var("HQ_REMOTE_RELAYS").is_ok_and(|value| value == "none") {
+            Relays::Disabled
+        } else {
+            Relays::Default
+        }
+    }
+
+    /// The endpoint, bound now if there is none or it closed.
+    fn endpoint(&self) -> Result<Endpoint, LinkError> {
+        let mut bound = lock(&self.endpoint);
+        if let Some(endpoint) = bound.as_ref()
+            && !endpoint.is_closed()
+        {
+            return Ok(endpoint.clone());
+        }
+        let endpoint = self
+            .runtime
+            .block_on(crate::bind(self.key.clone(), &Self::relays(), &[]))
+            .map_err(LinkError::Unreachable)?;
+        *bound = Some(endpoint.clone());
+        Ok(endpoint)
+    }
+}
+
+impl Drop for ClientEndpoint {
+    fn drop(&mut self) {
+        if let Some(endpoint) = lock(&self.endpoint).take() {
+            self.runtime.block_on(async {
+                let _ = tokio::time::timeout(Duration::from_secs(1), endpoint.close()).await;
+            });
+        }
+    }
+}
+
 /// A connection to one host, made on first use and again after it breaks. Cloning shares
 /// it.
 #[derive(Clone)]
@@ -158,19 +198,10 @@ pub struct Link {
 }
 
 struct Inner {
-    runtime: Runtime,
-    key: SecretKey,
+    shared: Arc<ClientEndpoint>,
     address: Mutex<HostAddress>,
-    /// One endpoint per link, kept across redials: a second endpoint with the same key
-    /// would take the relay's place from the first.
-    endpoint: Mutex<Option<Bound>>,
     live: Mutex<Option<Live>>,
     welcome: Mutex<Option<Welcome>>,
-}
-
-struct Bound {
-    endpoint: Endpoint,
-    relays: Relays,
 }
 
 struct Live {
@@ -180,42 +211,11 @@ struct Live {
 }
 
 impl Inner {
-    /// Closes the connection and the endpoint, so this computer's key is free again.
+    /// Closes this link's connection; the shared endpoint stays for the other links (D2).
     fn shut(&self) {
         if let Some(live) = lock(&self.live).take() {
             live.connection.close(0u32.into(), b"bye");
         }
-        if let Some(bound) = lock(&self.endpoint).take() {
-            self.runtime.block_on(async {
-                let _ = tokio::time::timeout(Duration::from_secs(1), bound.endpoint.close()).await;
-            });
-        }
-    }
-
-    /// The link's endpoint, bound with `relays` when there is none yet or the host's
-    /// relay changed.
-    fn endpoint(&self, relays: Relays) -> Result<Endpoint, LinkError> {
-        let mut bound = lock(&self.endpoint);
-        if let Some(current) = bound.as_ref()
-            && current.relays == relays
-            && !current.endpoint.is_closed()
-        {
-            return Ok(current.endpoint.clone());
-        }
-        if let Some(old) = bound.take() {
-            self.runtime.block_on(async {
-                let _ = tokio::time::timeout(Duration::from_secs(1), old.endpoint.close()).await;
-            });
-        }
-        let endpoint = self
-            .runtime
-            .block_on(crate::bind(self.key.clone(), &relays, &[]))
-            .map_err(LinkError::Unreachable)?;
-        *bound = Some(Bound {
-            endpoint: endpoint.clone(),
-            relays,
-        });
-        Ok(endpoint)
     }
 }
 
@@ -240,29 +240,27 @@ fn runtime() -> io::Result<Runtime> {
 }
 
 impl Link {
-    /// A link to a paired host; nothing is dialled until the first stream is opened.
-    pub fn new(key: SecretKey, address: HostAddress) -> io::Result<Link> {
-        Ok(Link {
+    /// A link to a paired host through the app's endpoint; nothing is dialled until the
+    /// first stream is opened.
+    pub fn new(shared: &Arc<ClientEndpoint>, address: HostAddress) -> Link {
+        Link {
             inner: Arc::new(Inner {
-                runtime: runtime()?,
-                key,
+                shared: Arc::clone(shared),
                 address: Mutex::new(address),
-                endpoint: Mutex::new(None),
                 live: Mutex::new(None),
                 welcome: Mutex::new(None),
             }),
-        })
+        }
     }
 
     /// Pairs with the host that showed `code`, as a desktop named `name`, and keeps the
     /// connection.
     pub fn pair(
-        key: SecretKey,
+        shared: &Arc<ClientEndpoint>,
         code: &PairingCode,
         name: &str,
     ) -> Result<(Link, Welcome), LinkError> {
-        let link = Link::new(key, HostAddress::from_code(code))
-            .map_err(|error| LinkError::Unreachable(error.to_string()))?;
+        let link = Link::new(shared, HostAddress::from_code(code));
         let first = Request::Pair {
             secret: code.secret.clone(),
             name: name.to_owned(),
@@ -292,7 +290,7 @@ impl Link {
     /// A new stream to the host, as one host client, dialling first when needed.
     pub fn open(&self) -> Result<(Reader, Writer), LinkError> {
         let connection = self.connection()?;
-        let handle = self.inner.runtime.handle().clone();
+        let handle = self.inner.shared.runtime.handle().clone();
         match handle.block_on(connection.open_bi()) {
             Ok((send, recv)) => Ok(stream(&handle, send, recv)),
             Err(_) => {
@@ -309,7 +307,7 @@ impl Link {
         }
     }
 
-    /// Ends the connection and lets go of the endpoint; the next `open` dials again.
+    /// Ends this link's connection; the next `open` dials again.
     pub fn close(&self) {
         self.inner.shut();
     }
@@ -340,9 +338,12 @@ impl Link {
         let addr = address
             .endpoint_addr()
             .ok_or_else(|| LinkError::Unreachable("the host's key is not valid".into()))?;
-        let endpoint = self.inner.endpoint(address.relays())?;
-        let (connection, control, welcome) =
-            self.inner.runtime.block_on(greet(&endpoint, addr, first))?;
+        let endpoint = self.inner.shared.endpoint()?;
+        let (connection, control, welcome) = self
+            .inner
+            .shared
+            .runtime
+            .block_on(greet(&endpoint, addr, first))?;
         let live = Live {
             connection,
             _control: control,

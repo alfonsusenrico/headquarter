@@ -4290,8 +4290,9 @@ fn the_client_works_over_a_remote_link_and_dials_again() {
     env.start_daemon();
     let (_shower, code) = env.remote_on_and_pair();
     let code = hq_remote::PairingCode::parse(&code).unwrap();
-    let key = hq_remote::client::ClientKey::generate();
-    let (link, welcome) = hq_client::Link::pair(key, &code, "Studio PC").unwrap();
+    let shared =
+        hq_remote::client::ClientEndpoint::new(hq_remote::client::ClientKey::generate()).unwrap();
+    let (link, welcome) = hq_client::Link::pair(&shared, &code, "Studio PC").unwrap();
     assert!(!welcome.host.is_empty());
     let host = hq_client::Host::Remote(link.clone());
 
@@ -5620,4 +5621,56 @@ fn an_empty_codex_session_starts_fresh_with_the_host() {
         "{}",
         env.log()
     );
+}
+
+/// Two hosts on two computers, both linked through this app's one endpoint
+/// (add-shared-host-endpoint D1, D2): both answer at once, and closing one link leaves the
+/// other working.
+#[test]
+fn one_endpoint_links_two_hosts_at_once() {
+    let mut mac = TestEnv::new("twomac");
+    mac.stub("agy", INTERACTIVE_STUB);
+    mac.start_daemon();
+    let mut server = TestEnv::new("twosrv");
+    server.stub("agy", INTERACTIVE_STUB);
+    server.start_daemon();
+    let shared =
+        hq_remote::client::ClientEndpoint::new(hq_remote::client::ClientKey::generate()).unwrap();
+    let pair = |env: &TestEnv| {
+        let (_shower, code) = env.remote_on_and_pair();
+        let code = hq_remote::PairingCode::parse(&code).unwrap();
+        hq_client::Link::pair(&shared, &code, "Studio PC")
+            .unwrap()
+            .0
+    };
+    let to_mac = pair(&mac);
+    let to_server = pair(&server);
+    let mac_host = hq_client::Host::Remote(to_mac.clone());
+    let server_host = hq_client::Host::Remote(to_server.clone());
+    assert!(
+        to_mac.connected(),
+        "pairing the server kept the Mac connected"
+    );
+
+    let on_mac = hq_client::create_session(&mac_host, Agent::Agy, &mac.work(), None).unwrap();
+    let on_server =
+        hq_client::create_session(&server_host, Agent::Agy, &server.work(), None).unwrap();
+    // Both feeds open together on the one endpoint.
+    let (_mac_feed, mac_list) = hq_client::SessionFeed::open(&mac_host, false).unwrap();
+    let (_server_feed, server_list) = hq_client::SessionFeed::open(&server_host, false).unwrap();
+    let ids = |list: &hq_client::Catalog| -> Vec<String> {
+        list.sessions
+            .iter()
+            .map(|session| session.id.clone())
+            .collect()
+    };
+    assert!(ids(&mac_list).contains(&on_mac.id) && !ids(&mac_list).contains(&on_server.id));
+    assert!(ids(&server_list).contains(&on_server.id) && !ids(&server_list).contains(&on_mac.id));
+
+    // Closing the Mac's link leaves the server's working; the Mac's dials again on use.
+    to_mac.close();
+    assert!(to_server.connected());
+    assert!(hq_client::usage(&server_host).is_ok());
+    assert!(hq_client::usage(&mac_host).is_ok());
+    assert!(to_mac.connected() && to_server.connected());
 }

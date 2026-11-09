@@ -1,6 +1,6 @@
 # One connection point for every paired host
 
-Status: proposed 2026-11-09, waiting for the owner's approval (phase 2, step 1 of
+Status: approved by the owner 2026-11-09 ("ok"; phase 2, step 1 of
 `research/notes/2026-11-09-roadmap-plan.md`).
 
 ## Why
