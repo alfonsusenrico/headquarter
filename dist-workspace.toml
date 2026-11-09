@@ -27,9 +27,12 @@ global-artifacts-jobs = ["./build-android"]
 github-action-commits = { "actions/checkout" = "d23441a48e516b6c34aea4fa41551a30e30af803", "actions/upload-artifact" = "cf430e030ddbb5b0abf93d22962f4752f3646cd9", "actions/download-artifact" = "9000827ccba6bdab643e8b6fd33ac0654aef8333" }
 
 [dist.github-custom-runners]
-# Cross-built on Apple Silicon: the Intel runner took 1411 s, twice the next slowest build
-# (2026-11-03), and `macos-15-intel` is GitHub's last Intel image.
-x86_64-apple-darwin = "macos-14"
+# Both Macs build on Apple Silicon `macos-15`: GitHub retired `macos-14` on 2026-11-02 (its jobs
+# are cancelled before they start), and dist still defaults to it. The Intel build is cross-built
+# there: the Intel runner took 1411 s, twice the next slowest build (2026-11-03), and
+# `macos-15-intel` is GitHub's last Intel image.
+aarch64-apple-darwin = "macos-15"
+x86_64-apple-darwin = "macos-15"
 aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
 x86_64-unknown-linux-gnu = "ubuntu-24.04"
 
