@@ -5508,12 +5508,11 @@ fn the_host_deletes_images_past_a_week_when_it_starts() {
     }
 
     env.start_daemon();
+    // The socket listens a moment before the start's sweep is done.
+    wait_until("the start's sweep", || {
+        env.log().contains("images deleted count=2")
+    });
     assert!(!old.exists(), "a week old");
     assert!(fresh.exists());
     assert!(!gone.exists(), "its session left the sidebar");
-    assert!(
-        env.log().contains("images deleted count=2"),
-        "{}",
-        env.log()
-    );
 }
