@@ -1,0 +1,34 @@
+# Verification: add-merged-host-list
+
+Revision: `feat/merged-host-list` 50f0b4e, on `feat/shared-host-endpoint` (6572a9d).
+
+| Check | Result |
+| --- | --- |
+| Unit tests `merged::tests` (names merge across hosts, display ids kept), `sidebar::model` `another_computers_rows_carry_its_name_home_and_state`, `notifications` `a_notice_names_another_computer` | passed |
+| `./scripts/check` at 50f0b4e | passed: 643 tests (1 ignored), OpenSpec 20/20 |
+| On screen, 2026-11-09: this Mac's sandbox host A plus sandbox host B (own data, config and home; stand-in agents; relays off), the debug app on A | see below |
+
+On screen (debug app, synthetic sessions "fix login", "write docs" on A and "health check",
+"read logs" on B; each host has its own "ops" group):
+
+- Hosts menu: "This Mac · connected"; Connect to a Host paired B and the header read "2 hosts".
+- One list: B's sessions joined A's, a tag with B's name only on B's rows; both "ops" groups
+  showed as one group with 2 sessions.
+- B's session attached over the link; the footer named B; switching to A's session was
+  immediate.
+- B frozen (`kill -STOP`) about 40 s: "Reconnecting to <B>…" in the sidebar, B's rows dimmed, A's
+  unchanged. Resumed: B reconnected within about 1 s and its rows came back.
+- New Session with B's session selected: "Start on" offered This Mac and B, B chosen, B's folders
+  listed; Start session ran the agent in B's home and the new row carried B's tag.
+- Found and fixed on screen (50f0b4e): the host tag hid long titles (the tag now shares the title's
+  space and shrinks first); the header showed B's full path instead of `~/logs`; a stopped
+  session of another computer would have read "The folder … no longer exists" because its folder
+  was checked on this Mac.
+
+Not verified yet:
+- On screen: Forget's confirmation, moving a session into the merged group, a notification from
+  B. The owner took the Mac back before these.
+- The owner's server and Windows PC (4.3).
+- Test setup limit: with relays off, a restarted host comes back on new ports that the app cannot
+  learn; the app reached B again only after its addresses were edited. Relays (the default)
+  cover this.
