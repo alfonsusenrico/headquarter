@@ -1,7 +1,6 @@
 # Verification: add-image-upload
 
-Revision: `feat/image-upload`, on `main` d10dfeb. On-phone and on-screen checks (task 4.3) wait for
-the owner's go.
+Revision: `feat/image-upload` at 73e8167, on `main` d10dfeb.
 
 ## Automated (2026-11-09, macOS, JDK 17)
 
@@ -19,11 +18,18 @@ the owner's go.
 
 Compose's keyboard content check: `research/evidence/image-upload/2026-11-09-content-receiver.md`.
 
+## On the phone by adb (2026-11-09)
+
+TECNO CN7c, Android 16, debug build paired with an isolated test host
+(`research/evidence/image-upload/2026-11-09-phone-check.md`). Passed: the image key; typing on
+the moved field (erase, new line); a picked PNG to Claude Code (`[Image #1]` after the typed
+text) and to Codex; a HEIC photo converted to a 1200x800 JPEG (`[Image #2]`); the host stopped
+mid-send (no partial file, "The image didn't arrive", nothing pasted); closing a session deleted
+its images.
+
 ## Not verified yet
 
-- On the owner's phone with a test host: a picked screenshot to Claude Code and Codex
-  (`[Image #1]`), a HEIC photo, a keyboard screenshot, the link dropped mid-send, typing still
-  live after the field moved to `TextFieldState`.
+- Gboard's screenshot suggestion: the owner.
 - On screen, an isolated app instance paired with the test host: a PNG dropped and a screenshot
-  pasted.
+  pasted (once the Mac is free).
 - agy with a pasted image path.
