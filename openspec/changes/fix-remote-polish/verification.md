@@ -10,5 +10,7 @@ Revision: `fix/remote-polish`, on `main` a5d9ee4 (v0.3.0).
 | `./gradlew ktlintCheck assembleDebug lint testDebugUnitTest` | passed |
 | `./scripts/check` | passed: 635 tests |
 
-Not verified yet: the banner on the phone with a computer turned off; the coloured QR code read
-from a dark terminal by the phone app.
+| The real `hq remote pair` output from a scratch host, drawn as a dark terminal shows it, decoded with zxing-cpp | new black on white: decodes with and without inverted reading; old terminal colours: only with inverted reading; the app link printed |
+| Phone (TECNO CN7c, Android 16), debug build, paired computer unreachable | about 15 s: "Reconnecting to Alfonsuss-MacBook-Air…"; after 2 minutes: "Alfonsuss-MacBook-Air is offline" (no age: no list since the app started) |
+
+Not verified: the age after a list was current (unit of `ageText`, unchanged).

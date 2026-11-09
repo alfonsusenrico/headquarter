@@ -4,8 +4,9 @@
 
 ### D1. The banner names the computer and the list's age
 
-Before 10 s of failed tries: "Reconnecting to MacBook… · 1m"; after: "MacBook is offline · 5m"
-(owner's choice, 2026-11-09). The age is how long since the list was last current, as before; the
+While it retries: "Reconnecting to MacBook… · 1m"; after 2 minutes of failed tries (`CANT_REACH_MS`,
+unchanged): "MacBook is offline · 5m" (owner's choice, 2026-11-09). With no list yet since the app
+started, the age is left out. The age is how long since the list was last current, as before; the
 question about remote control goes, since the computers sheet and the state row already say it.
 
 ### D2. The QR code is dark on light by its own colours

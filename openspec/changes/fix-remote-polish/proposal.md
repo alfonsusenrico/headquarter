@@ -14,8 +14,8 @@ offline · 5m"). Phase 1 of `research/notes/2026-11-09-roadmap-plan.md`.
 
 ## Expected Outcome
 
-- The banner reads "MacBook is offline · 5m" (after 10 s of trying) or "Reconnecting to MacBook… ·
-  5m" before that; the age is how old the list is.
+- The banner reads "Reconnecting to MacBook… · 5m" while it retries, and "MacBook is offline ·
+  5m" after 2 minutes of trying; the age is how old the list is, left out while the phone has none.
 - `hq remote pair` draws the QR code dark on light in any terminal theme, and prints "Get the phone
   app:" with the latest APK's address under the code.
 

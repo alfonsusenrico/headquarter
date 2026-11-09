@@ -9,6 +9,6 @@
 ## 2. Verification and delivery
 
 - [x] 2.1 `./scripts/check`; `./gradlew ktlintCheck assembleDebug lint testDebugUnitTest`.
-- [ ] 2.2 The QR code from a dark terminal read by the phone app's scanner (owner, or on screen
-  once the Mac is free).
+- [x] 2.2 The QR code from a dark terminal decoded (zxing-cpp, with and without inverted
+  reading), and the banner on the phone. Evidence: `verification.md`.
 - [ ] 2.3 After the owner accepts: archive, push `fix/remote-polish`, open the PR, report its URL.
