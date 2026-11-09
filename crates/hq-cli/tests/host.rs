@@ -5120,6 +5120,11 @@ fn hq_remote_pairs_lists_and_removes() {
     std::io::Read::read_to_string(&mut out, &mut rest).unwrap();
     assert!(pair.wait().unwrap().success());
     assert!(rest.contains("Paired Pixel Test."), "{rest}");
+    assert!(
+        rest.contains("Get the phone app: https://github.com/alfonsusenrico/headquarter/releases/latest/download/headquarter-android.apk"),
+        "{rest}"
+    );
+    assert!(!rest.contains('\x1b'), "no colours when piped: {rest}");
     let on = env.hq(&["remote", "status"]);
     assert!(String::from_utf8_lossy(&on.stdout).contains("Remote control is on."));
 

@@ -330,12 +330,14 @@ private fun ConnectionBanner(
         val since = remember(version) { core.phone.currentAt() }
         val now = System.currentTimeMillis()
         val waited = now - status.sinceMs.toLong()
-        val age = since?.let { " The list shows what it knew ${ageText(now - it.toLong())} ago." } ?: ""
+        // How long the list has not been current, as the owner chose it short (owner, 2026-11-09).
+        val age = since?.let { " · ${ageText(now - it.toLong())}" } ?: ""
+        val name = current?.name ?: "The computer"
         val text =
             if (waited > CANT_REACH_MS) {
-                "Can't reach ${current?.name}. Is Headquarter running there with remote control on?$age"
+                "$name is offline$age"
             } else {
-                "Lost the connection to ${current?.name}. Reconnecting.$age"
+                "Reconnecting to $name…$age"
             }
         Banner(text, info = false)
     }
