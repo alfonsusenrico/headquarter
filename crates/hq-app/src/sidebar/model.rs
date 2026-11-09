@@ -97,6 +97,21 @@ pub struct Row {
     pub phone: Option<String>,
     /// "background" or "review" beside an idle session (add-background-work-status D4).
     pub beside: Option<sidebar::Beside>,
+    /// The computer the session runs on, when it is not this one (add-merged-host-list D7).
+    pub host: Option<String>,
+    /// Its host cannot be reached now: the row is greyed (add-merged-host-list D2).
+    pub away: bool,
+}
+
+/// Where a session's host shows in its row.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RowHost {
+    /// The host's name, for a session on another computer.
+    pub label: Option<String>,
+    /// That host's home folder, labelled `~` in the row's path.
+    pub home: Option<String>,
+    /// The host cannot be reached now.
+    pub away: bool,
 }
 
 impl Row {
@@ -200,26 +215,48 @@ impl Item {
 
 /// The sidebar's items from top to bottom. Rows of collapsed groups are left out;
 /// their sessions needing the owner still show in the "Needs you" section.
+#[cfg(test)]
 pub fn items(
     sessions: &[SessionInfo],
     groups: &[GroupInfo],
     home: Option<&str>,
     now_ms: u64,
 ) -> Vec<Item> {
+    items_on_hosts(sessions, groups, home, &HashMap::new(), now_ms)
+}
+
+/// The sidebar for sessions of several hosts: `hosts` gives each session's host as its row
+/// shows it; a session not in it is this computer's (add-merged-host-list D7).
+pub fn items_on_hosts(
+    sessions: &[SessionInfo],
+    groups: &[GroupInfo],
+    home: Option<&str>,
+    hosts: &HashMap<String, RowHost>,
+    now_ms: u64,
+) -> Vec<Item> {
     let layout = sidebar::layout(sessions, groups, home);
+    let here = RowHost::default();
     let row = |session: &SessionInfo, section: Section| {
+        let host = hosts.get(&session.id).unwrap_or(&here);
+        let row_home = if host.label.is_some() {
+            host.home.as_deref()
+        } else {
+            home
+        };
         Item::Row(Row {
             id: session.id.clone(),
             agent: session.agent,
             title: sidebar::display_title(session),
             folder: layout.folder(session).to_owned(),
-            path: sidebar::home_path(&session.cwd, home),
+            path: sidebar::home_path(&session.cwd, row_home),
             section,
             external: session.external.is_some(),
             age: age(now_ms.saturating_sub(session.last_activity_at)),
             glyph: Glyph::of(session),
             phone: session.phone.clone(),
             beside: sidebar::beside(session),
+            host: host.label.clone(),
+            away: host.away,
         })
     };
     let mut items = Vec::new();
@@ -782,6 +819,30 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn another_computers_rows_carry_its_name_home_and_state() {
+        let sessions = [
+            session("mine", "/Users/me/app", Status::Done, 1_000),
+            session("theirs", "/home/ops/infra", Status::Done, 2_000),
+        ];
+        let hosts = HashMap::from([(
+            "theirs".to_owned(),
+            RowHost {
+                label: Some("server".into()),
+                home: Some("/home/ops".into()),
+                away: true,
+            },
+        )]);
+        let items = items_on_hosts(&sessions, &[], Some("/Users/me"), &hosts, NOW);
+        let mine = &rows(&items, "mine")[0];
+        assert_eq!((mine.host.as_deref(), mine.away), (None, false));
+        assert_eq!(mine.path, "~/app");
+        let theirs = &rows(&items, "theirs")[0];
+        assert_eq!(theirs.host.as_deref(), Some("server"));
+        assert!(theirs.away, "its host is being reached again");
+        assert_eq!(theirs.path, "~/infra", "its own host's home");
     }
 
     #[test]

@@ -16,6 +16,7 @@ use gpui::{
     Subscription, Task, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use gpui_component::Disableable;
+use gpui_component::Sizable;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -169,6 +170,8 @@ pub enum NewEvent {
     Continue(String),
     /// Do not offer these sessions again (add-folder-sessions D4).
     NotAsked(Vec<String>),
+    /// Start on this host instead (add-merged-host-list D4).
+    Host(crate::hosts::HostId),
     Close,
 }
 
@@ -231,6 +234,10 @@ pub struct NewSession {
     /// The remote host on screen, whose folders the browser lists
     /// (add-remote-desktop-client D7); `None` for this computer.
     remote: Option<hq_client::Host>,
+    /// The hosts a session can start on, by name, and the chosen one (add-merged-host-list
+    /// D4); the choice shows only with more than one.
+    hosts: Vec<(crate::hosts::HostId, String)>,
+    on: crate::hosts::HostId,
     _walk: Task<()>,
 }
 
@@ -241,6 +248,9 @@ impl EventEmitter<NewEvent> for NewSession {}
 pub struct HostFolders {
     pub home: PathBuf,
     pub remote: Option<hq_client::Host>,
+    /// Every host a session can start on, and the one chosen.
+    pub hosts: Vec<(crate::hosts::HostId, String)>,
+    pub on: crate::hosts::HostId,
 }
 
 impl NewSession {
@@ -253,7 +263,12 @@ impl NewSession {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> NewSession {
-        let HostFolders { home, remote } = place;
+        let HostFolders {
+            home,
+            remote,
+            hosts,
+            on,
+        } = place;
         let source = match remote {
             Some(_) => Source::Remote(std::rc::Rc::new(RemoteFolders::default())),
             None => Source::Local,
@@ -298,6 +313,8 @@ impl NewSession {
             providers: Vec::new(),
             _field_changes: field_changes,
             remote,
+            hosts,
+            on,
             _walk: walk,
         };
         window_state.set_providers(providers, agent, cx);
@@ -914,6 +931,7 @@ impl Render for NewSession {
             .h_full()
             .flex()
             .flex_col()
+            .children(self.render_hosts(cx))
             .child(
                 div()
                     .flex_none()
@@ -949,6 +967,48 @@ impl Render for NewSession {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down));
         super::route_field_keys(frame, Self::handle_key, cx)
+    }
+}
+
+impl NewSession {
+    /// "Start on" with one button per host, the chosen one primary; only with more than one
+    /// host (add-merged-host-list D4).
+    fn render_hosts(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.hosts.len() < 2 {
+            return None;
+        }
+        let mut row = div()
+            .flex_none()
+            .mx(px(16.))
+            .mt(px(14.))
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(6.))
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(hsla(self.chrome.muted))
+                    .child("Start on"),
+            );
+        for (index, (host, name)) in self.hosts.iter().enumerate() {
+            let chosen = *host == self.on;
+            let pick = host.clone();
+            let button = Button::new(SharedString::from(format!("new-on-{index}")))
+                .small()
+                .label(name.clone())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if pick != this.on {
+                        cx.emit(NewEvent::Host(pick.clone()));
+                    }
+                }));
+            row = row.child(if chosen {
+                button.primary()
+            } else {
+                button.ghost()
+            });
+        }
+        Some(row.into_any_element())
     }
 }
 

@@ -32,10 +32,15 @@ impl Workspace {
         if self.followed.as_ref() == Some(&shown) {
             return;
         }
-        let Some(control) = self.feed_control.as_mut() else {
-            return;
-        };
-        if control.follow(shown.as_deref()).is_ok() {
+        // The shown session's host follows it; every other host follows nothing
+        // (add-merged-host-list D2).
+        let host = shown.as_deref().map(|id| self.host_of(id));
+        let mut told = false;
+        for (owner, control) in &mut self.hosts.controls {
+            let follow = shown.as_deref().filter(|_| host.as_ref() == Some(owner));
+            told |= control.follow(follow).is_ok() && follow.is_some() == shown.is_some();
+        }
+        if told || shown.is_none() {
             self.details_open = false;
             self.followed = Some(shown);
         }
@@ -77,7 +82,8 @@ impl Workspace {
         let background = super::translucent(self.theme.palette.background, self.appearance.opacity);
         let details = self.details.get(&session.id).cloned().unwrap_or_default();
         let title = hq_protocol::sidebar::display_title(session);
-        let full_folder = hq_protocol::sidebar::home_path(&session.cwd, self.home.as_deref());
+        let full_folder =
+            hq_protocol::sidebar::home_path(&session.cwd, self.home_of(&self.host_of(&session.id)));
         let line = HeaderLine::new(&title, &full_folder, &details).fitted(width);
         let separator = || div().flex_none().text_color(hsla(chrome.track)).child("·");
         let muted = |text: String| div().flex_none().text_color(hsla(chrome.muted)).child(text);

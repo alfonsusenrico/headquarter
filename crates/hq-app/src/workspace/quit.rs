@@ -49,9 +49,9 @@ impl Workspace {
         if self.quit.is_some() {
             return;
         }
-        // A remote host is never stopped from here: quit the app only, without asking
-        // (add-remote-desktop-client D8).
-        if crate::hosts::is_remote() {
+        // Only this computer's host is asked about; without one, quit the app only
+        // (add-remote-desktop-client D8, add-merged-host-list).
+        if !crate::hosts::has_local_host() {
             Self::keep_running(window, cx);
             return;
         }
@@ -140,7 +140,12 @@ impl Workspace {
     pub(super) fn render_quit(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let state = self.quit.clone()?;
         let chrome = self.theme.chrome;
-        let running = self.sessions.iter().filter(|session| session.live).count();
+        // Only this computer's host stops; other computers' sessions keep running.
+        let running = self
+            .local_sessions()
+            .iter()
+            .filter(|session| session.live)
+            .count();
         let remote = self.remote_on;
         let button = |id: &'static str, label: &'static str| {
             Button::new(id).label(label).w(px(BUTTON_WIDTH))

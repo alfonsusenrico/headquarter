@@ -14,6 +14,7 @@ use gpui::{App, ClipboardItem, Context, Task};
 use hq_protocol::{Frame, Holder, Request, Response, SessionInfo, read_frame, write_frame};
 
 use super::model::{GridSize, TerminalModel};
+use crate::hosts::HostId;
 use crate::theme::Palette;
 
 /// The size to attach at when the pane is never laid out (fix-reattach-redraw).
@@ -35,6 +36,8 @@ enum Incoming {
 
 pub struct TerminalSession {
     pub info: SessionInfo,
+    /// The host the session runs on (add-merged-host-list D4).
+    pub host: HostId,
     model: TerminalModel,
     writer: Option<Arc<Mutex<hq_client::Writer>>>,
     /// Why the pane shows no live agent: it ended, or the connection failed.
@@ -68,16 +71,32 @@ fn accepts_agent_copy(last_input: Option<Instant>, now: Instant) -> bool {
 }
 
 impl TerminalSession {
-    pub fn attach(info: SessionInfo, palette: Palette, cx: &mut Context<Self>) -> Self {
-        Self::connect(info, palette, false, cx)
+    pub fn attach(
+        info: SessionInfo,
+        host: HostId,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::connect(info, host, palette, false, cx)
     }
 
     /// Attaches to the session's shell, which the host starts if none runs.
-    pub fn attach_shell(info: SessionInfo, palette: Palette, cx: &mut Context<Self>) -> Self {
-        Self::connect(info, palette, true, cx)
+    pub fn attach_shell(
+        info: SessionInfo,
+        host: HostId,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::connect(info, host, palette, true, cx)
     }
 
-    fn connect(info: SessionInfo, palette: Palette, shell: bool, cx: &mut Context<Self>) -> Self {
+    fn connect(
+        info: SessionInfo,
+        host: HostId,
+        palette: Palette,
+        shell: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (tx, mut rx) = unbounded();
         let layout_wait = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(LAYOUT_WAIT).await;
@@ -95,6 +114,7 @@ impl TerminalSession {
         });
         TerminalSession {
             info,
+            host,
             model: TerminalModel::new(INITIAL_SIZE, palette),
             writer: None,
             ended: None,
@@ -114,9 +134,10 @@ impl TerminalSession {
             return;
         };
         let session_id = self.info.id.clone();
+        let host = self.host.clone();
         let shell = self.shell;
         let (cols, rows) = (clamp(size.columns), clamp(size.rows));
-        std::thread::spawn(move || run_connection(&session_id, shell, cols, rows, &tx));
+        std::thread::spawn(move || run_connection(&host, &session_id, shell, cols, rows, &tx));
     }
 
     fn receive(&mut self, incoming: Incoming, cx: &mut Context<Self>) {
@@ -255,6 +276,7 @@ fn clamp(value: usize) -> u16 {
 /// Runs on its own thread: connects, attaches, then forwards frames until the session
 /// ends or the connection closes.
 fn run_connection(
+    host: &HostId,
     session_id: &str,
     shell: bool,
     cols: u16,
@@ -264,7 +286,7 @@ fn run_connection(
     let fail = |message: String| {
         let _ = tx.unbounded_send(Incoming::Failed(message));
     };
-    let host = match crate::hosts::current() {
+    let host = match crate::hosts::host(host) {
         Ok(host) => host,
         Err(error) => return fail(format!("{error:#}")),
     };

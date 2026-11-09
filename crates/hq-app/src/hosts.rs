@@ -1,8 +1,7 @@
-//! The hosts this app shows (add-remote-desktop-client D5, D6): this computer's host, and
-//! paired hosts on other computers, one on screen at a time. Every paired host keeps its
-//! link, all through one endpoint (add-shared-host-endpoint D3). The paired hosts and the
-//! one on screen are kept in `<data folder>/hosts.json`, and this computer's key for them in
-//! `client.key` beside it.
+//! The hosts whose sessions the app lists together (add-merged-host-list D1): this computer's
+//! host, and paired hosts on other computers. Every paired host keeps its link, all through
+//! one endpoint (add-shared-host-endpoint D3). The paired hosts are kept in
+//! `<data folder>/hosts.json`, and this computer's key for them in `client.key` beside it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -43,20 +42,19 @@ impl KnownHost {
     }
 }
 
-/// Which host is on screen.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Shown {
+/// A host whose sessions the app lists.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub enum HostId {
     /// This computer's host.
+    #[default]
     Local,
-    /// A paired host, by id.
+    /// A paired host, by its endpoint id.
     Remote(String),
 }
 
+/// What `hosts.json` keeps. An older file's `shown` (the host once on screen) is ignored.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct File {
-    /// The id of the paired host on screen; none for this computer's.
-    #[serde(default)]
-    shown: Option<String>,
     #[serde(default)]
     hosts: Vec<KnownHost>,
 }
@@ -116,14 +114,6 @@ fn save(file: &File) {
     }
 }
 
-/// The host on screen.
-pub fn shown() -> Shown {
-    match &state().file.shown {
-        Some(id) => Shown::Remote(id.clone()),
-        None => Shown::Local,
-    }
-}
-
 /// Whether this computer runs a host the app can show: its `hq` is installed here
 /// (split-host-and-app-install D3). On Windows it never is: the app there is a client of
 /// remote hosts only (add-windows-client D2). Read once; installing changes it only
@@ -140,16 +130,53 @@ pub fn has_local_host() -> bool {
     }
 }
 
-/// Whether no host is on screen at all: a computer without a host of its own that has
-/// paired with none yet (add-windows-client D2).
-pub fn none_on_screen() -> bool {
-    !has_local_host() && shown_name().is_none()
+/// Whether there is no host at all: a computer without a host of its own that has paired
+/// with none yet (add-windows-client D2).
+pub fn none() -> bool {
+    !has_local_host() && state().file.hosts.is_empty()
 }
 
-/// Whether the host on screen is not this computer's: a paired host on another
-/// computer, or none yet on a computer without a host (add-windows-client D2).
-pub fn is_remote() -> bool {
-    shown() != Shown::Local || !has_local_host()
+/// Every host whose sessions the list shows: this computer's first when it has one, then the
+/// paired hosts in the order they were paired.
+pub fn all() -> Vec<HostId> {
+    let mut paired = state().file.hosts.clone();
+    paired.sort_by_key(|host| host.paired_at);
+    has_local_host()
+        .then_some(HostId::Local)
+        .into_iter()
+        .chain(paired.into_iter().map(|host| HostId::Remote(host.id)))
+        .collect()
+}
+
+/// What this computer is called in the Hosts menu.
+pub fn this_computer() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "This Mac"
+    } else {
+        "This computer"
+    }
+}
+
+/// A host's name as the owner reads it.
+pub fn name(id: &HostId) -> String {
+    match id {
+        HostId::Local => this_computer().to_owned(),
+        HostId::Remote(id) => state()
+            .file
+            .hosts
+            .iter()
+            .find(|host| &host.id == id)
+            .map_or_else(|| "A host".to_owned(), |host| host.name.clone()),
+    }
+}
+
+/// The host name a session's row shows (add-merged-host-list D7): none for this computer's
+/// own sessions; on a computer without a host, every host's name.
+pub fn label(id: &HostId) -> Option<String> {
+    match id {
+        HostId::Local => None,
+        HostId::Remote(_) => Some(name(id)),
+    }
 }
 
 /// The paired hosts, most recently paired first.
@@ -157,29 +184,6 @@ pub fn known() -> Vec<KnownHost> {
     let mut hosts = state().file.hosts.clone();
     hosts.sort_by_key(|host| std::cmp::Reverse(host.paired_at));
     hosts
-}
-
-/// The name of the host on screen: "this computer" or the host's own.
-pub fn shown_name() -> Option<String> {
-    let state = state();
-    let id = state.file.shown.as_ref()?;
-    state
-        .file
-        .hosts
-        .iter()
-        .find(|host| &host.id == id)
-        .map(|host| host.name.clone())
-}
-
-/// Puts `shown` on screen and remembers it. The other hosts stay connected, so showing one
-/// again does not dial (add-shared-host-endpoint D3).
-pub fn show(shown: Shown) {
-    let mut state = state();
-    state.file.shown = match shown {
-        Shown::Local => None,
-        Shown::Remote(id) => Some(id),
-    };
-    save(&state.file);
 }
 
 /// The app's one endpoint for paired hosts, made with this computer's key on first use.
@@ -194,25 +198,25 @@ fn shared_endpoint(state: &mut State) -> Result<Arc<ClientEndpoint>> {
     Ok(endpoint)
 }
 
-/// What clients connect to now: the paired host on screen, or this computer's.
-pub fn current() -> Result<Host> {
-    let mut state = state();
-    let Some(id) = state.file.shown.clone() else {
+/// What clients connect to for host `id`.
+pub fn host(id: &HostId) -> Result<Host> {
+    let HostId::Remote(id) = id else {
         return local();
     };
-    if let Some(link) = state.links.get(&id) {
+    let mut state = state();
+    if let Some(link) = state.links.get(id) {
         return Ok(Host::Remote(link.clone()));
     }
     let host = state
         .file
         .hosts
         .iter()
-        .find(|host| host.id == id)
+        .find(|host| &host.id == id)
         .cloned()
-        .ok_or_else(|| anyhow!("the host on screen is no longer paired"))?;
+        .ok_or_else(|| anyhow!("the host is no longer paired"))?;
     let shared = shared_endpoint(&mut state)?;
     let link = Link::new(&shared, host.address());
-    state.links.insert(id, link.clone());
+    state.links.insert(id.clone(), link.clone());
     Ok(Host::Remote(link))
 }
 
@@ -292,7 +296,7 @@ impl std::fmt::Display for PairError {
     }
 }
 
-/// Pairs with the host whose code the owner pasted, keeps it, and puts it on screen.
+/// Pairs with the host whose code the owner pasted and keeps it; its sessions join the list.
 /// Blocks while the host answers; run it off the main thread.
 pub fn pair(code: &str) -> Result<KnownHost, PairError> {
     let code = PairingCode::parse(code).map_err(|error| PairError::NotACode(error.to_string()))?;
@@ -321,7 +325,6 @@ pub fn pair(code: &str) -> Result<KnownHost, PairError> {
     let mut state = state();
     state.file.hosts.retain(|known| known.id != host.id);
     state.file.hosts.push(host.clone());
-    state.file.shown = Some(host.id.clone());
     state.links.insert(host.id.clone(), link);
     save(&state.file);
     Ok(host)
@@ -336,27 +339,13 @@ fn refusal(reason: &str) -> String {
     }
 }
 
-/// Forgets a paired host: it leaves the list, and this computer shows its own host when
-/// that one was on screen. The host keeps this computer in its device list until the owner
-/// removes it there.
+/// Forgets a paired host: it and its sessions leave the list. The host keeps this computer in
+/// its device list until the owner removes it there.
 pub fn forget(id: &str) {
     let mut state = state();
     state.file.hosts.retain(|host| host.id != id);
     if let Some(link) = state.links.remove(id) {
         link.close();
-    }
-    if state.file.shown.as_deref() == Some(id) {
-        // Without a host here, the most recently paired one left takes its place.
-        state.file.shown = if has_local_host() {
-            None
-        } else {
-            state
-                .file
-                .hosts
-                .iter()
-                .max_by_key(|host| host.paired_at)
-                .map(|host| host.id.clone())
-        };
     }
     save(&state.file);
 }
@@ -384,10 +373,9 @@ mod tests {
     #[test]
     fn the_hosts_file_keeps_unknown_hosts_fields_out_and_reads_old_ones() {
         let file: File = serde_json::from_str(
-            r#"{"hosts":[{"id":"abc","name":"server","relay":null,"later":1}]}"#,
+            r#"{"shown":"abc","hosts":[{"id":"abc","name":"server","relay":null,"later":1}]}"#,
         )
         .unwrap();
-        assert_eq!(file.shown, None);
         assert_eq!(file.hosts[0].name, "server");
         assert!(file.hosts[0].addrs.is_empty());
     }

@@ -84,7 +84,8 @@ impl Workspace {
             return;
         };
         let palette = self.theme.palette.clone();
-        let terminal = cx.new(|cx| TerminalSession::attach_shell(info, palette, cx));
+        let host = self.host_of(&info.id);
+        let terminal = cx.new(|cx| TerminalSession::attach_shell(info, host, palette, cx));
         let options = self.options.clone();
         let view = cx.new(|cx| TerminalView::new(terminal.clone(), options, window, cx));
         let holder = self.watch_holder(&terminal, &view, window, cx);
@@ -146,6 +147,7 @@ impl Workspace {
         if end {
             let session = session.to_owned();
             self.host_call(
+                self.host_of(&session),
                 window,
                 cx,
                 move |paths| hq_client::close_shell(paths, &session),

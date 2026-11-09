@@ -160,7 +160,7 @@ pub fn shade(chrome: Chrome) -> gpui::Hsla {
 }
 
 /// A small outlined label, such as "ext" or "Open here".
-pub fn tag(text: &'static str, chrome: Chrome) -> Div {
+pub fn tag(text: impl Into<gpui::SharedString>, chrome: Chrome) -> Div {
     div()
         .flex_none()
         .px(px(6.))
@@ -170,7 +170,7 @@ pub fn tag(text: &'static str, chrome: Chrome) -> Div {
         .text_size(px(11.5))
         .line_height(px(17.))
         .text_color(hsla(chrome.muted))
-        .child(text)
+        .child(text.into())
 }
 
 /// A list section heading, such as a day.

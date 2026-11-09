@@ -1,6 +1,6 @@
-//! The host switcher and Connect to a Host (add-remote-desktop-client D6): the sidebar
-//! header names the host on screen and lists this computer and the paired hosts; Connect
-//! to a Host pairs with a host on another computer from the code it shows.
+//! The Hosts menu and Connect to a Host (add-merged-host-list D6): the sidebar header lists
+//! this computer and the paired hosts with their state, and Forget asks in place; Connect to
+//! a Host pairs with a host on another computer from the code it shows.
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -14,11 +14,13 @@ use gpui_component::popover::Popover;
 use gpui_component::{Disableable, Icon, IconName, Sizable};
 
 use super::{Pane, Workspace, overlay};
-use crate::hosts::{self, Shown};
+use crate::hosts::{self, HostId};
 use crate::terminal::view::hsla;
 
 /// Buttons shown together share this width (owner, 2026-10-26).
 const BUTTON_WIDTH: f32 = 132.0;
+/// Cancel and Forget in the menu's narrower row, equal to each other.
+const FORGET_WIDTH: f32 = 96.0;
 
 pub(super) struct ConnectWindow {
     focus: FocusHandle,
@@ -34,49 +36,31 @@ enum Connecting {
     Failed(String),
 }
 
-/// What this computer is called in the switcher.
-pub(super) fn this_computer() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "This Mac"
+/// A host's state as the Hosts menu says it.
+fn state_word(workspace: &Workspace, host: &HostId) -> &'static str {
+    if workspace.hosts.failed.contains_key(host) {
+        "not reachable"
+    } else if workspace.hosts.away.contains_key(host) {
+        "reconnecting"
+    } else if workspace.hosts.listed.contains(host) {
+        "connected"
     } else {
-        "This computer"
+        "connecting"
     }
 }
 
 impl Workspace {
-    /// The name of the host on screen.
-    pub(super) fn host_name_shown(&self) -> String {
-        match hosts::shown_name() {
-            Some(name) => name,
-            None if hosts::has_local_host() => this_computer().to_owned(),
-            None => "No host yet".to_owned(),
-        }
-    }
-
-    /// Shows `shown` instead of the host on screen: the terminals close and the sidebar
-    /// lists the chosen host's sessions.
-    pub(super) fn switch_host(
-        &mut self,
-        shown: Shown,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.host_menu_open = false;
-        if hosts::shown() == shown {
+    /// Forget on a paired host's row: the first click asks in place, the second forgets
+    /// (add-merged-host-list D6).
+    pub(super) fn forget_host(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.hosts.forget_asked.as_deref() != Some(id.as_str()) {
+            self.hosts.forget_asked = Some(id);
             cx.notify();
             return;
         }
-        hosts::show(shown);
-        self.restart_feed(window, cx);
-    }
-
-    pub(super) fn forget_host(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let was_shown = hosts::shown() == Shown::Remote(id.clone());
+        self.hosts.forget_asked = None;
         hosts::forget(&id);
-        if was_shown {
-            self.restart_feed(window, cx);
-        }
-        cx.notify();
+        self.drop_host(&HostId::Remote(id), window, cx);
     }
 
     pub(super) fn open_connect_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -145,7 +129,7 @@ impl Workspace {
                         connect.state = Connecting::Idle;
                     }
                     this.close_connect_window(window, cx);
-                    this.restart_feed(window, cx);
+                    this.add_host(HostId::Remote(host.id.clone()), window, cx);
                     this.show_notice(format!("Paired with {}.", host.name), false, window, cx);
                 }
                 Err(error) => {
@@ -159,13 +143,12 @@ impl Workspace {
         .detach();
     }
 
-    /// The switcher at the top of the sidebar: the host on screen, opening the host list.
+    /// The Hosts menu at the top of the sidebar (D6).
     pub(super) fn render_host_switcher(&self, cx: &mut Context<Self>) -> AnyElement {
         let chrome = self.theme.chrome;
         let muted = hsla(chrome.muted);
-        let shown = hosts::shown();
         let known = hosts::known();
-        let row = |id: &'static str| {
+        let row = |id: SharedString| {
             div()
                 .id(id)
                 .flex()
@@ -174,70 +157,111 @@ impl Workspace {
                 .px(px(10.))
                 .py(px(6.))
                 .rounded(px(6.))
-                .cursor_pointer()
-                .hover(|style| style.bg(hsla(chrome.selected)))
         };
-        let tick = |on: bool| {
+        let state = |host: &HostId| {
             div()
                 .flex_none()
-                .w(px(12.))
-                .text_color(hsla(chrome.accent))
-                .child(if on { "✓" } else { "" })
+                .text_size(px(12.))
+                .text_color(muted)
+                .child(state_word(self, host))
         };
-        let mut list = div().w(px(260.)).p(px(4.)).flex().flex_col();
+        let mut list = div().w(px(300.)).p(px(4.)).flex().flex_col();
         if hosts::has_local_host() {
             list = list.child(
-                row("host-local")
-                    .child(tick(shown == Shown::Local))
-                    .child(div().flex_1().child(this_computer()))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.switch_host(Shown::Local, window, cx);
-                    })),
+                row("host-local".into())
+                    .child(div().flex_1().child(hosts::this_computer()))
+                    .child(state(&HostId::Local)),
             );
         }
         for (index, host) in known.into_iter().enumerate() {
-            let on = shown == Shown::Remote(host.id.clone());
-            let choose = host.id.clone();
+            let id = HostId::Remote(host.id.clone());
             let forget = host.id.clone();
+            if self.hosts.forget_asked.as_deref() == Some(host.id.as_str()) {
+                let keep = host.id.clone();
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .px(px(10.))
+                        .py(px(8.))
+                        .rounded(px(6.))
+                        .bg(hsla(chrome.selected))
+                        .child(format!("Forget {}?", host.name))
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .text_color(muted)
+                                .child("You'll need a new code from it to connect again."),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .justify_end()
+                                .gap(px(8.))
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "forget-cancel-{index}"
+                                    )))
+                                    .small()
+                                    .w(px(FORGET_WIDTH))
+                                    .label("Cancel")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if this.hosts.forget_asked.as_deref() == Some(keep.as_str())
+                                        {
+                                            this.hosts.forget_asked = None;
+                                        }
+                                        cx.notify();
+                                    })),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "forget-confirm-{index}"
+                                    )))
+                                    .small()
+                                    .danger()
+                                    .w(px(FORGET_WIDTH))
+                                    .label("Forget")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.forget_host(forget.clone(), window, cx);
+                                    })),
+                                ),
+                        ),
+                );
+                continue;
+            }
             list = list.child(
-                div()
-                    .id(SharedString::from(format!("host-remote-{index}")))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .px(px(10.))
-                    .py(px(6.))
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .hover(|style| style.bg(hsla(chrome.selected)))
-                    .child(tick(on))
+                row(SharedString::from(format!("host-remote-{index}")))
                     .child(div().flex_1().min_w_0().truncate().child(host.name.clone()))
+                    .child(state(&id))
                     .child(
                         Button::new(SharedString::from(format!("host-forget-{index}")))
                             .ghost()
                             .xsmall()
                             .label("Forget")
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
                                 this.forget_host(forget.clone(), window, cx);
                             })),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.switch_host(Shown::Remote(choose.clone()), window, cx);
-                    })),
+                    ),
             );
         }
         list = list.child(
-            row("host-connect")
+            row("host-connect".into())
+                .cursor_pointer()
+                .hover(|style| style.bg(hsla(chrome.selected)))
                 .border_t_1()
                 .border_color(hsla(chrome.sidebar_line))
-                .child(tick(false))
                 .child(div().flex_1().text_color(muted).child("Connect to a Host…"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.open_connect_window(window, cx);
                 })),
         );
-        let name = self.host_name_shown();
+        let count = hosts::all().len();
+        let name = if count == 1 {
+            "1 host".to_owned()
+        } else {
+            format!("{count} hosts")
+        };
         let trigger = Button::new("host-switcher").ghost().small().w_full().child(
             div()
                 .w_full()
@@ -245,7 +269,15 @@ impl Workspace {
                 .items_center()
                 .gap(px(6.))
                 .child(Icon::new(IconName::Globe).small().text_color(muted))
-                .child(div().flex_1().min_w_0().truncate().text_left().child(name))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_left()
+                        .child("Hosts"),
+                )
+                .child(div().text_color(muted).child(name))
                 .child(Icon::new(IconName::ChevronDown).small().text_color(muted)),
         );
         let this = cx.entity().downgrade();
@@ -259,6 +291,11 @@ impl Workspace {
                         let open = *open;
                         let _ = this.update(cx, |this, cx| {
                             this.host_menu_open = open;
+                            // Closing the menu (Escape, a click elsewhere) cancels a Forget
+                            // that waits for its second click.
+                            if !open {
+                                this.hosts.forget_asked = None;
+                            }
                             cx.notify();
                         });
                     })

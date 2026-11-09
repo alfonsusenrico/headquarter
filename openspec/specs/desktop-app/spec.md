@@ -6,15 +6,15 @@ Gives the owner one window that connects to the Headquarter host, lists sessions
 ## Requirements
 
 ### Requirement: Client of the host
-The system SHALL connect as a client to this computer's host, starting it when needed, or to a paired host on another computer, and SHALL leave every session running when the window or the app closes.
+The system SHALL connect as a client to this computer's host, starting it when needed, and to every paired host on another computer at once, and SHALL leave every session running when the window or the app closes.
 
 #### Scenario: App closed mid-turn
 - **WHEN** the owner quits the app while an agent is working
 - **THEN** the agent keeps working and `hq ls` shows it
 
 #### Scenario: Remote host on screen
-- **WHEN** the owner chooses a paired host in the host switcher
-- **THEN** the sidebar, terminals and usage show that host's sessions
+- **WHEN** the owner has paired a server
+- **THEN** the sidebar shows the server's sessions together with this computer's, and their terminals and usage come from the server
 
 ### Requirement: Choose and start sessions
 The system SHALL list running and recent sessions, keep the list current as sessions change, open the chosen session in the terminal pane, and start a new Claude Code, Codex, or agy session in a chosen folder.
@@ -284,42 +284,27 @@ The app SHALL pair with a host on another computer from a pairing code entered i
 - **WHEN** the owner enters a code that has expired
 - **THEN** the window says the code expired and asks for a new one, and nothing is added
 
-### Requirement: Host switcher
-The sidebar header SHALL name the host on screen and open the list of hosts: this computer when it has a host, each paired host with its state, Connect to a Host, and Forget for a paired host. Choosing one SHALL show it. Paired hosts SHALL stay connected while another host is on screen, so choosing one shows its sessions without dialling again.
-
-#### Scenario: Switching to this computer
-- **WHEN** the server is on screen and the owner chooses this computer in the switcher
-- **THEN** the terminals close and the sidebar shows this computer's sessions
-
-#### Scenario: Switching back without reconnecting
-- **WHEN** the owner switches from the server to this computer and back within a minute
-- **THEN** the server's sessions show without "Connecting to <host>…"
-
-#### Scenario: Pairing a second host
-- **WHEN** the server is paired and the owner pairs a second computer
-- **THEN** the server stays connected, and switching back to it does not dial again
-
 ### Requirement: Reconnecting to a remote host
-While a remote host is unreachable, the app SHALL say it is reconnecting, keep the last list greyed, retry by itself, and reattach the terminals when the host returns.
+While a host is unreachable, the app SHALL keep that host's sessions in the list greyed with "Reconnecting…", retry by itself, and reattach its terminals when it returns, leaving the other hosts' sessions as they are.
 
 #### Scenario: Network drop
-- **WHEN** the network drops for 20 seconds with the server on screen
-- **THEN** the sidebar says "Reconnecting to <host>…", and when the network returns the sessions and the open terminal come back without the owner acting
+- **WHEN** the network to the server drops for 20 seconds
+- **THEN** the server's sessions show greyed with "Reconnecting…", this computer's sessions stay as they are, and when the network returns the server's sessions and an open terminal on the server come back without the owner acting
 
 #### Scenario: Removed on the host
-- **WHEN** the owner removes this computer on the host while that host is on screen
-- **THEN** the app stops retrying and says the host no longer knows this computer and to pair it again with Connect to a Host
+- **WHEN** the owner removes this computer on the host
+- **THEN** the app stops retrying that host, its sessions leave the list, and the Hosts menu says the host no longer knows this computer and to pair it again with Connect to a Host
 
 #### Scenario: Opening with the host away
-- **WHEN** the app opens with a remote host on screen that cannot be reached yet
-- **THEN** the pane says "Connecting to <host>…" rather than that Headquarter is starting
+- **WHEN** the app opens and a paired host cannot be reached yet
+- **THEN** this computer's sessions show at once, and the Hosts menu says the host is connecting
 
 ### Requirement: A remote host is never stopped from the app
-Quitting or updating the app with a remote host on screen SHALL act on this computer only: quit without the stop question, and update without stopping the remote host.
+Quitting or updating the app SHALL act on this computer only: it SHALL never stop, or ask about stopping, a host on another computer.
 
 #### Scenario: Quit with the server on screen
-- **WHEN** the owner quits the app while the server's sessions are on screen
-- **THEN** the app quits without asking to stop the host, and the server's sessions keep running
+- **WHEN** the owner quits the app while the server's sessions are in the list
+- **THEN** the app asks only about this computer's running sessions, and the server's sessions keep running
 
 ### Requirement: Files stay on their computer
 With a remote host's session on screen, dropping images onto its terminal, or pasting an image copied to the clipboard, SHALL send each image to that host and paste the path it answers, as a dropped file's path is pasted on this computer. Dropping any other file SHALL show a notice that only images can be sent to another computer and type nothing. File links SHALL open only when the host is this computer.
@@ -348,7 +333,7 @@ On Windows the app SHALL be a client of remote hosts only: it SHALL open at Conn
 - **THEN** setup asks only how the app should look (no agents step), then Connect to a Host opens, and after a valid code the app shows that host's sessions
 
 #### Scenario: No local host
-- **WHEN** the owner opens the host switcher on Windows
+- **WHEN** the owner opens the Hosts menu on Windows
 - **THEN** it lists only paired hosts and Connect to a Host
 
 ### Requirement: Updates on Windows
@@ -375,3 +360,54 @@ The app's updater SHALL install the same parts the installer recorded: the host 
 #### Scenario: Updating an app-only laptop
 - **WHEN** the owner installs an update on an app-only laptop
 - **THEN** only the app is updated and restarted, and no host is installed
+
+### Requirement: Every host in one list
+The sidebar SHALL list the sessions of this computer's host and of every paired host together. A session on another computer SHALL show that computer's name; on a computer without its own host, every session SHALL show its host's name. Every action on a session SHALL go to its host.
+
+#### Scenario: The Mac and the server
+- **WHEN** the owner on the Mac has a server paired with a health agent running there
+- **THEN** the sidebar lists the Mac's sessions without a host name and the health agent with "server"
+
+#### Scenario: On Windows
+- **WHEN** the owner on a Windows PC has one server paired
+- **THEN** every session shows "server"
+
+#### Scenario: Renaming a server session
+- **WHEN** the owner renames the server's health agent from the Mac's sidebar
+- **THEN** the server renames it, and the phone paired with the server shows the new name
+
+### Requirement: Groups across hosts
+The app SHALL show groups of the same name on different hosts as one group. Moving a session into a group SHALL use that host's group of the name, making it there when missing. Renaming, recolouring, collapsing, moving and deleting a group SHALL apply on every host that has it.
+
+#### Scenario: A server session joins the Mac's group
+- **WHEN** the Mac has a group "ops" and the owner drags the server's health agent into it
+- **THEN** the server gets a group "ops" holding the agent, and the sidebar shows one "ops" with the Mac's sessions and the agent
+
+#### Scenario: Renaming a shared group
+- **WHEN** "ops" exists on the Mac and on the server and the owner renames it to "infra"
+- **THEN** both hosts rename their "ops" to "infra"
+
+### Requirement: Hosts menu
+The sidebar header SHALL open a Hosts menu listing this computer when it has a host and each paired host with its state (connected, reconnecting, not reachable), Connect to a Host, and Forget for each paired host. Forget SHALL ask in place before forgetting: the row SHALL read "Forget <host>? You'll need a new code from it to connect again." with Cancel and Forget buttons of equal width, Forget in the danger colour, and Escape or a click elsewhere SHALL cancel.
+
+#### Scenario: A misclick on Forget
+- **WHEN** the owner clicks Forget on the server's row by mistake and presses Escape
+- **THEN** the server stays paired and its sessions stay in the list
+
+#### Scenario: Forgetting a host
+- **WHEN** the owner clicks Forget, then Forget again in the confirmation
+- **THEN** the server leaves the Hosts menu and its sessions leave the list
+
+### Requirement: Usage follows the selected session
+The usage footer SHALL show the usage of the selected session's host, naming the host when it is not this computer, and this computer's usage when nothing is selected. The Usage window (CPU and memory) SHALL show the same host's sessions and name it when it is not this computer.
+
+#### Scenario: A server session selected
+- **WHEN** the owner selects the server's health agent
+- **THEN** the footer shows the server's Claude and Codex usage, named "server"
+
+### Requirement: New sessions on a chosen host
+When more than one host is connected, New Session SHALL ask which host starts the session, the selected session's host first, and its folder browser SHALL show that host's folders.
+
+#### Scenario: Starting on the server
+- **WHEN** the owner opens New Session, chooses the server and a folder there
+- **THEN** the session starts on the server and appears in the list with "server"

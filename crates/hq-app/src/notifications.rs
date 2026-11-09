@@ -20,6 +20,17 @@ pub struct Notice {
     pub body: String,
 }
 
+impl Notice {
+    /// Names the computer a session runs on when it is not this one
+    /// (add-merged-host-list, notifications from every host).
+    pub fn on_host(mut self, host: Option<&str>) -> Notice {
+        if let Some(host) = host {
+            self.title = format!("{} · {host}", self.title);
+        }
+        self
+    }
+}
+
 /// The notification for a session that changed from `previous` to `current`, if any.
 /// `watched` is true while it is shown in the focused pane of the active window.
 pub fn notice(
@@ -469,5 +480,16 @@ mod tests {
             }]
         );
         assert!(start_failures(&sessions, 2_000).is_empty(), "told already");
+    }
+
+    #[test]
+    fn a_notice_names_another_computer() {
+        let notice = Notice {
+            tag: "s1".into(),
+            title: "Fix login".into(),
+            body: "Needs you".into(),
+        };
+        assert_eq!(notice.clone().on_host(None).title, "Fix login");
+        assert_eq!(notice.on_host(Some("server")).title, "Fix login · server");
     }
 }

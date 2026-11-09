@@ -55,7 +55,8 @@ the behaviour.
   computer's (its socket; Unix only) or a paired remote one (a `Link`). On Windows the app
   builds with remote hosts only (add-windows-client); `HostPaths` lives in
   `hq_signals::paths`, so clients build without `hq-daemon`; the app's `hosts.rs` keeps the
-  paired hosts (`hosts.json`) and this computer's key (`client.key`, mode 600).
+  paired hosts (`hosts.json`), this computer's key (`client.key`, mode 600) and the one iroh
+  endpoint every link shares (`hq_remote::ClientEndpoint`).
 - `crates/hq-cli`: the `hq` and `headquarter` executables. They are thin entry points
   over `hq_cli::main`.
 - `crates/hq-app`: the desktop app `headquarter-app`, a GPUI client of the same
@@ -64,7 +65,10 @@ the behaviour.
   file; `settings.rs` applies the settings file and reloads it; `sidebar/` holds the
   sidebar model and the painted status glyphs; `modal/` holds the Open sessions (⌘O)
   and New session (⌘N) windows in one frame and the folder browser (`folders.rs`);
-  `workspace/groups.rs` draws the owner's groups and handles dragging sessions into them;
+  `workspace/several.rs` follows every host at once and merges their sessions into one
+  list, `merged.rs` merges the hosts' groups by name, `workspace/hosts.rs` is the Hosts
+  menu; `workspace/groups.rs` draws the owner's groups and handles dragging sessions into
+  them;
   `shortcuts.rs` keeps app shortcuts off the keys agents use; `menus.rs` (macOS menus),
   `notifications.rs` (when to notify); `setup.rs` is the first-run screen and
   `shell.rs` the root view that shows it before the workspace; `app_state.rs` keeps
