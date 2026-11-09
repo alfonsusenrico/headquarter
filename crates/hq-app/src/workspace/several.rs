@@ -143,6 +143,14 @@ impl Workspace {
             .unwrap_or_else(|| hosts::all().into_iter().next().unwrap_or(HostId::Local))
     }
 
+    /// A host's home folder, labelled `~` in its sessions' paths.
+    pub(super) fn home_of(&self, host: &HostId) -> Option<&str> {
+        match host {
+            HostId::Local => self.home.as_deref(),
+            remote => self.hosts.homes.get(remote).map(String::as_str),
+        }
+    }
+
     /// The host whose usage the footer shows: the selected session's, else this computer's,
     /// else the first host (D5).
     pub(super) fn usage_host(&self) -> HostId {

@@ -385,17 +385,8 @@ impl Workspace {
             .filter(|session| self.host_of(&session.id) == view.host)
             .cloned()
             .collect();
-        let home = match &view.host {
-            crate::hosts::HostId::Local => self.home.clone(),
-            remote => self.hosts.homes.get(remote).cloned(),
-        };
-        let lines = lines(
-            &measured,
-            &self.groups,
-            home.as_deref(),
-            view.reading.as_ref(),
-            sort,
-        );
+        let home = self.home_of(&view.host);
+        let lines = lines(&measured, &self.groups, home, view.reading.as_ref(), sort);
         let content = match view.shown {
             Shown::Popover => self.render_resources_popover(view, &lines, cx),
             Shown::Window => self.render_resources_window(view, &lines, window, cx),

@@ -82,7 +82,8 @@ impl Workspace {
         let background = super::translucent(self.theme.palette.background, self.appearance.opacity);
         let details = self.details.get(&session.id).cloned().unwrap_or_default();
         let title = hq_protocol::sidebar::display_title(session);
-        let full_folder = hq_protocol::sidebar::home_path(&session.cwd, self.home.as_deref());
+        let full_folder =
+            hq_protocol::sidebar::home_path(&session.cwd, self.home_of(&self.host_of(&session.id)));
         let line = HeaderLine::new(&title, &full_folder, &details).fitted(width);
         let separator = || div().flex_none().text_color(hsla(chrome.track)).child("·");
         let muted = |text: String| div().flex_none().text_color(hsla(chrome.muted)).child(text);

@@ -85,6 +85,10 @@ const RING_GAP: f32 = 6.0;
 const DISMISS_CLICK: Duration = Duration::from_millis(500);
 /// The widest a note in the pane runs before it wraps.
 const PANE_TEXT_WIDTH: f32 = 480.0;
+/// The widest a session row's host name runs before it is shortened with an ellipsis.
+const HOST_TAG_WIDTH: f32 = 96.0;
+/// How much faster the host name gives way than the title when the row is narrow.
+const HOST_TAG_SHRINK: f32 = 20.0;
 /// The usage details' narrowest width; they float over the pane past a narrow sidebar.
 const USAGE_PANEL_WIDTH: f32 = 300.0;
 /// Room for a usage window's name ("5h", "week") in the usage details.
@@ -1906,11 +1910,8 @@ impl Workspace {
 
     /// The home folder of the host a new session starts on.
     fn home_folder(&self) -> PathBuf {
-        let home = match &self.hosts.new_on {
-            crate::hosts::HostId::Local => self.home.as_ref(),
-            remote => self.hosts.homes.get(remote),
-        };
-        home.map_or_else(|| PathBuf::from("/"), PathBuf::from)
+        self.home_of(&self.hosts.new_on)
+            .map_or_else(|| PathBuf::from("/"), PathBuf::from)
     }
 
     /// Finds each enabled provider's executable and version as `hq agents` does, off
@@ -2202,8 +2203,6 @@ impl Workspace {
             .child(self.marks.element(row.agent, 18., chrome.muted))
             .child(title)
             .children(row.external.then(|| modal::tag("ext", chrome)))
-            // The computer it runs on, when not this one (add-merged-host-list D7).
-            .children(row.host.clone().map(|host| modal::tag(host, chrome)))
             // Its host is being reached again (D2).
             .when(row.away, |line| line.opacity(0.5))
             .children(row.phone.clone().map(|phone| {
@@ -2358,8 +2357,25 @@ impl Workspace {
         if row.bold() {
             title = title.font_weight(gpui::FontWeight::SEMIBOLD);
         }
+        // The computer it runs on, when not this one, after the title (add-merged-host-list
+        // D7). In a narrow row the name gives way first: the title says which session it is.
+        let host = row.host.clone().map(|host| {
+            modal::tag(host, self.theme.chrome)
+                .flex_shrink(HOST_TAG_SHRINK)
+                .min_w(px(28.))
+                .max_w(px(HOST_TAG_WIDTH))
+                .truncate()
+        });
         if !active {
-            return div().flex_1().min_w_0().child(title).into_any_element();
+            return div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .child(title.flex_shrink(1.))
+                .children(host)
+                .into_any_element();
         }
         let (id, key) = (row.id.clone(), row_key.to_owned());
         div()
@@ -2368,7 +2384,9 @@ impl Workspace {
             .min_w_0()
             .flex()
             .items_center()
-            .child(title.cursor_text())
+            .gap(px(6.))
+            .child(title.cursor_text().flex_shrink(1.))
+            .children(host)
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.start_rename(id.clone(), key.clone(), window, cx);
@@ -3251,10 +3269,14 @@ impl Workspace {
                             .as_ref()
                             .map(|error| format!("Couldn't start: {}", error.reason))
                     });
-                let folder = hq_protocol::sidebar::home_path(&session.cwd, self.home.as_deref());
+                let host = self.host_of(&id);
+                let folder = hq_protocol::sidebar::home_path(&session.cwd, self.home_of(&host));
                 // With its folder gone the agent cannot start there, so the pane offers
-                // to remove the session instead (owner, 2026-10-24).
-                let folder_gone = !std::path::Path::new(&session.cwd).is_dir();
+                // to remove the session instead (owner, 2026-10-24). Only this computer's
+                // folders can be checked here: another computer's host says why a start
+                // failed.
+                let folder_gone = host == crate::hosts::HostId::Local
+                    && !std::path::Path::new(&session.cwd).is_dir();
                 let reason = if folder_gone {
                     Some(format!("The folder {folder} no longer exists."))
                 } else {
