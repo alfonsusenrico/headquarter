@@ -36,6 +36,8 @@ the behaviour.
   phone's core: binding the iroh endpoint (relays), pairing codes, and `hq-protocol`
   frames over QUIC. `client` is the desktop's blocking `Link` to a paired host: one
   endpoint kept across redials, a control stream, and a new stream per host client.
+- `crates/hq-links`: the web link at a terminal cell (OSC 8 or a plain `http(s)` address,
+  across wrapped rows), shared by the desktop's panes and the phone's terminal.
 - `crates/hq-mobile`: the phone's core for the Android app, exposed to Kotlin with UniFFI:
   pairing, the computers it knows, the connection to the computer on screen, home as
   `hq_protocol::sidebar` arranges it, and open terminals (`alacritty_terminal`). Calls block,

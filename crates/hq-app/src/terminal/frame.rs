@@ -7,9 +7,9 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 
-use super::links::Link;
 use super::model::{TerminalModel, palette_color};
 use crate::theme::{Paint, Palette, readable};
+use hq_links::Link;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Underline {
@@ -346,8 +346,8 @@ mod tests {
             b"\x1b]8;;https://example.com/x\x07docs\x1b]8;;\x07\r\n  \x1b]8;;https://example.com/x\x07page\x1b]8;;\x07 end",
         );
         let term = model.term();
-        let point = crate::terminal::links::view_point(term, 0, 1);
-        let link = crate::terminal::links::LinkFinder::new().at(term, point);
+        let point = hq_links::view_point(term, 0, 1);
+        let link = hq_links::LinkFinder::new().at(term, point);
         assert!(link.is_some());
         let frame = build(&model, link.as_ref(), 1.0);
         let underlined = |row: usize, column: usize| {

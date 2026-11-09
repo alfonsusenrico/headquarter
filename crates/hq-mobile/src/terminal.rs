@@ -10,6 +10,7 @@ use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor, StdSyncHandler};
+use hq_links::LinkFinder;
 
 /// Lines of output kept above the screen.
 const SCROLLBACK_LINES: usize = 2000;
@@ -118,6 +119,7 @@ pub(crate) struct Terminal {
     processor: Processor<StdSyncHandler>,
     replies: Arc<Mutex<Vec<u8>>>,
     size: Size,
+    links: LinkFinder,
 }
 
 impl Terminal {
@@ -136,6 +138,7 @@ impl Terminal {
             processor: Processor::new(),
             replies,
             size,
+            links: LinkFinder::new(),
         }
     }
 
@@ -190,6 +193,15 @@ impl Terminal {
         }
         self.term.scroll_display(Scroll::Delta(lines));
         Vec::new()
+    }
+
+    /// The web address at a cell of the screen as drawn, scrolled back or not
+    /// (refine-phone-typing-and-links D4).
+    pub fn link_at(&mut self, row: u16, col: u16) -> Option<String> {
+        let point = hq_links::view_point(&self.term, usize::from(row), usize::from(col));
+        self.links
+            .at(&self.term, point)
+            .map(|link| link.address().to_owned())
     }
 
     pub fn scroll_to_bottom(&mut self) {
@@ -412,6 +424,38 @@ mod tests {
         // Mouse reports in the old encoding are not used, as on the desktop.
         terminal.feed(b"\x1b[?1000h");
         assert_eq!(terminal.scroll(1, 0, 0), b"\x1bOA");
+    }
+
+    #[test]
+    fn a_tapped_cell_gives_its_web_link() {
+        let mut terminal = Terminal::new(20, 4);
+        terminal.feed(b"go https://example.com/long/path ok\r\n");
+        terminal.feed(b"\x1b]8;;file:///etc/hosts\x07hosts\x1b]8;;\x07");
+        let whole = Some("https://example.com/long/path".to_owned());
+        assert_eq!(terminal.link_at(0, 10), whole);
+        assert_eq!(
+            terminal.link_at(1, 3),
+            whole,
+            "the row the terminal wrapped"
+        );
+        assert_eq!(terminal.link_at(0, 1), None, "beside the link");
+        assert_eq!(terminal.link_at(2, 1), None, "not a web link");
+    }
+
+    #[test]
+    fn a_link_is_found_where_it_is_drawn_while_scrolled_back() {
+        let mut terminal = Terminal::new(30, 3);
+        terminal.feed(b"\x1b]8;;https://example.com/docs\x07docs\x1b]8;;\x07\r\n");
+        for line in 0..4 {
+            terminal.feed(format!("line {line}\r\n").as_bytes());
+        }
+        assert_eq!(terminal.link_at(0, 1), None);
+        terminal.scroll(3, 0, 0);
+        assert_eq!(terminal.screen().scrolled_back, 3);
+        assert_eq!(
+            terminal.link_at(0, 1).as_deref(),
+            Some("https://example.com/docs")
+        );
     }
 
     #[test]
