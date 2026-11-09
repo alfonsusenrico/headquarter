@@ -2,6 +2,16 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.3.1 (2026-11-09)
+
+- A Codex session where nothing was sent now starts a new conversation when you resume it or the
+  host restarts, instead of showing Codex's list of your other conversations.
+- Codex's `/new` no longer marks a session "idle, not read yet": only a finished turn does.
+- The phone says "MacBook is offline · 5m" when it can't reach your computer, and "Reconnecting
+  to MacBook…" while it retries.
+- `hq remote pair` draws its QR code dark on light in any terminal theme, so phone cameras read
+  it, and prints the phone app's download link under it.
+
 ## 0.3.0 (2026-11-09)
 
 - Control another computer's sessions. `hq remote pair` on a server (or Remote Control ▸ Pair a
