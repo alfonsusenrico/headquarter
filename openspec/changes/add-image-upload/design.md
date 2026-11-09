@@ -40,7 +40,9 @@ then buffer up to 10 MiB per frame.
 
 ### D2. The host saves images in its data folder, one folder per session
 
-`<data folder>/images/<session id>/<unix ms>-<4 random hex>.<png|jpg|gif|webp>`. The `images`
+`<data folder>/images/<session id>/<unix ms>-<n>.<png|jpg|gif|webp>`, where `n` counts the
+images this host process saved, so two in one millisecond differ (the file is created with
+`create_new`, never over another). The `images`
 folder and each session folder are mode 700, files 600; on Windows the host does not run. The file
 is written to a `.part` name first and renamed when complete, so a dropped connection leaves no
 half image under a real name (the `.part` is removed when the connection ends).
@@ -60,6 +62,9 @@ not the owner's, and shared with other users on Linux.
 
 Errors are plain: "The image is larger than 10 MB", "Only PNG, JPEG, GIF or WebP images can be
 sent", "The session is no longer there".
+
+The format check and the 10 MiB limit live in `hq-protocol` (`image.rs`), so the desktop checks
+before sending what the host checks again.
 
 ### D4. Images are deleted after 7 days, or when their session leaves the sidebar
 
@@ -88,10 +93,13 @@ open (the agent or its shell) and how it pastes; the host would have to guess bo
   keyboard is open). The shell's keys do not.
 - The image key opens Android's photo picker (one image; no storage permission needed).
 - An image the keyboard offers (Gboard's screenshot suggestion, an image on the clipboard) is sent
-  the same way, through Compose's content receiver on the hidden typing field. Whether it works
-  with the field's current `TextFieldValue` form or needs the state-based field is checked first;
-  if it needs the state-based field, the field moves to it in this change, keeping
-  `refine-phone-typing-and-links`' behaviour and tests.
+  the same way, through Compose's content receiver on the hidden typing field. Checked first
+  (2026-11-09, Compose foundation 1.12.1): the receiver is wired only into the state-based text
+  field (`TextFieldState`); the `TextFieldValue` field's `commitContent` ignores it. So the field
+  moved to `TextFieldState`. Its input transformation sees each edit's text before and after,
+  in order, so the mirror needs no copy of its own and a key tapped right after typing cannot
+  drop letters; the cursor is placed at the end there. The receiver is still marked
+  experimental in Compose (`@OptIn`), so a Compose upgrade re-runs the keyboard image check.
 - An image that is not PNG, JPEG, GIF or WebP (HEIC from a camera), or that is larger than 10 MiB,
   is converted on the phone to JPEG at quality 90, scaled down so its longer side is at most 4096
   pixels, and smaller again until it fits. Agents scale images down further themselves.
@@ -104,7 +112,9 @@ open (the agent or its shell) and how it pastes; the host would have to guess bo
   MiB) is uploaded and its path pasted; other files are refused with the existing notice, now
   "Only images can be sent to another computer". A local session is unchanged.
 - The terminal's Paste key (as listed in the shortcuts window) with an image and no text on the
-  clipboard, in a remote session: the image is uploaded as PNG and its path pasted.
+  clipboard, in a remote session: a PNG, JPEG, GIF or WebP is uploaded as it is, anything else the
+  `image` crate reads (a Windows bitmap, a macOS TIFF) is converted to PNG first, and its path
+  pasted.
   With text on the clipboard, paste is unchanged. A local session is unchanged.
 - While it sends, the pane's notice says "Sending image…"; errors show there.
 
@@ -114,12 +124,24 @@ open (the agent or its shell) and how it pastes; the host would have to guess bo
 reason=<size|kind|session|cut short>`, `images deleted count=<n>`. Never a file name the owner
 chose, a path or a byte of the image.
 
+### D9. A phone may open a second stream for an upload
+
+The phone's one stream stays attached to the open session, and an upload needs a connection
+attached to nothing (D1). The gateway lets a phone open one more stream on its connection
+(`PHONE_STREAMS` = 2; a desktop keeps 64), proxied like a desktop's further streams. The phone's
+core opens it on its existing connection, greets, uploads and closes it.
+
+Rejected: uploading on the attached stream. Input frames would then mean the session's keys or
+the image's bytes depending on timing, and typing during an upload would land in the file.
+Rejected: a second QUIC connection. The gateway treats a device's newest connection as the one
+in use.
+
 ## Data, API and failure behaviour
 
 - Protocol 16. `Request::Upload { session: String, size: u64 }`; `Response::UploadReady {}`,
   `Response::Uploaded { path: String }`; errors through the existing `Response::Error` codes
   (`BadRequest`, `NotFound`, `TooLarge` new).
-- `allowed()`: `Upload` for phones and desktops.
+- `allowed()`: `Upload` for phones and desktops. A phone may have 2 streams (D9).
 - A dropped connection mid-upload: the `.part` file is removed and nothing is pasted; the client
   says "The image didn't arrive".
 
