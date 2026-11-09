@@ -208,7 +208,7 @@ fun SessionScreen(
         val sendKey = { key: Key ->
             draft.reset()
             field = TextFieldValue("")
-            core.io { runCatching { phone.sendKey(key) } }
+            core.input { runCatching { phone.sendKey(key) } }
         }
         val linkAt = { row: Int, col: Int -> phone.linkAt(row.toUShort(), col.toUShort()) }
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -244,11 +244,11 @@ fun SessionScreen(
                     // The cursor stays at the end: only the end of the agent's box is edited (D1).
                     val pinned = next.copy(selection = TextRange(next.text.length))
                     draft.change(pinned.text)?.let { edit ->
-                        core.io { runCatching { phone.edit(edit.erase.toUInt(), edit.text) } }
+                        core.input { runCatching { phone.edit(edit.erase.toUInt(), edit.text) } }
                     }
                     field = pinned
                 },
-                onEmptyBackspace = { core.io { runCatching { phone.edit(1u, "") } } },
+                onEmptyBackspace = { core.input { runCatching { phone.edit(1u, "") } } },
                 onEnter = { sendKey(Key.ENTER) },
                 modifier = Modifier.align(Alignment.BottomStart).focusRequester(typing),
             )

@@ -148,6 +148,16 @@ class Core(
         scope.launch(Dispatchers.IO) { block() }
     }
 
+    /**
+     * Runs input to the open session off the main thread, one call at a time in the order given:
+     * typed edits and keys must reach the agent as typed (refine-phone-typing-and-links D1).
+     */
+    fun input(block: () -> Unit) {
+        scope.launch(inputs) { block() }
+    }
+
+    private val inputs = Dispatchers.IO.limitedParallelism(1)
+
     private companion object {
         const val DISCONNECT_AFTER_MS = 30_000L
         const val LOCK_AFTER_MS = 60_000L
