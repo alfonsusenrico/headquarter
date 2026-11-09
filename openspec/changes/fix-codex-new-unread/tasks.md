@@ -10,5 +10,6 @@
 ## 2. Verification and delivery
 
 - [x] 2.1 `./scripts/check` passes; `verification.md` written.
-- [ ] 2.2 One real Codex 0.166.0 turn ("Reply with just OK.") ends with `done`, with the owner's go.
+- [x] 2.2 One real Codex 0.166.0 turn ("Reply with just OK.") ends with `done`, with the owner's go.
+  Evidence: `research/evidence/codex-new/2026-11-09.md` (working, done 14.6 s later).
 - [ ] 2.3 After the owner accepts: archive, push `fix/codex-sessions`, open the PR, report its URL.
