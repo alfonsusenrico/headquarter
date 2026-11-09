@@ -30,6 +30,9 @@ const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
 const RELAY_WAIT: Duration = Duration::from_secs(5);
 /// Streams a paired desktop may have open on one connection (add-remote-desktop-client D3).
 const MAX_STREAMS: usize = 64;
+/// Streams a paired phone may have open on one connection: its own, and one for sending an
+/// image while a session stays open (add-image-upload D9).
+const PHONE_STREAMS: usize = 2;
 
 /// How long a code works: [`PAIRING_VALID_SECS`], or `HQ_REMOTE_PAIR_SECS` in tests.
 fn pairing_valid() -> Duration {
@@ -112,7 +115,9 @@ fn allowed(kind: DeviceKind, request: &Request) -> bool {
         | Request::Seen { .. }
         | Request::Usage {}
         | Request::FollowDetails { .. }
-        | Request::Visible { .. } => true,
+        | Request::Visible { .. }
+        // An image for a session, which any client may send (add-image-upload D1).
+        | Request::Upload { .. } => true,
         // What the desktop app does on its own computer, a paired desktop may do too.
         Request::New { .. }
         | Request::Rename { .. }
@@ -638,18 +643,21 @@ async fn serve_device(
         kind.as_str()
     ));
     let streams = Arc::new(AtomicUsize::new(1));
-    let more = (kind == DeviceKind::Desktop).then(|| {
-        tokio::spawn(more_streams(
-            Arc::clone(&host),
-            connection.clone(),
-            Stream {
-                device: device.clone(),
-                name: name.clone(),
-                kind,
-            },
-            Arc::clone(&streams),
-        ))
-    });
+    let limit = match kind {
+        DeviceKind::Desktop => MAX_STREAMS,
+        DeviceKind::Phone => PHONE_STREAMS,
+    };
+    let more = tokio::spawn(more_streams(
+        Arc::clone(&host),
+        connection.clone(),
+        Stream {
+            device: device.clone(),
+            name: name.clone(),
+            kind,
+        },
+        Arc::clone(&streams),
+        limit,
+    ));
     let stream = Stream {
         device: device.clone(),
         name: name.clone(),
@@ -658,9 +666,7 @@ async fn serve_device(
     let ending = proxy(&host, &stream, first, send, recv).await;
     streams.fetch_sub(1, Ordering::SeqCst);
     if let Ending::Unpaired = ending {
-        if let Some(more) = more {
-            more.abort();
-        }
+        more.abort();
         lock(&shared.connections).remove(&device);
         unpaired(&host, &connection, &name).await;
         return;
@@ -670,9 +676,7 @@ async fn serve_device(
         // connection, or the device is removed or unpaired.
         connection.closed().await;
     }
-    if let Some(more) = more {
-        more.abort();
-    }
+    more.abort();
     let still_ours = {
         let mut connections = lock(&shared.connections);
         let ours = connections
@@ -707,23 +711,24 @@ struct Stream {
     kind: DeviceKind,
 }
 
-/// A desktop's further streams, each proxied to its own host connection, at most
-/// [`MAX_STREAMS`] at once.
+/// A device's further streams, each proxied to its own host connection, at most `limit`
+/// at once: [`MAX_STREAMS`] for a desktop, [`PHONE_STREAMS`] for a phone.
 async fn more_streams(
     host: Arc<Host>,
     connection: Connection,
     stream: Stream,
     streams: Arc<AtomicUsize>,
+    limit: usize,
 ) {
     while let Ok((mut send, recv)) = connection.accept_bi().await {
-        if streams.load(Ordering::SeqCst) >= MAX_STREAMS {
+        if streams.load(Ordering::SeqCst) >= limit {
             host.log.line(&format!(
-                "remote refused stream device={} streams={MAX_STREAMS}",
+                "remote refused stream device={} streams={limit}",
                 stream.name
             ));
             let refusal = Response::error(
                 ErrorCode::NotAllowed,
-                format!("at most {MAX_STREAMS} streams on one connection"),
+                format!("at most {limit} streams on one connection"),
             );
             let _ = hq_remote::write_frame(&mut send, &Frame::response(&refusal)).await;
             let _ = send.finish();
@@ -949,6 +954,10 @@ mod tests {
             Request::Resume {
                 session: "s".into(),
                 term: None,
+            },
+            Request::Upload {
+                session: "s".into(),
+                size: 1,
             },
         ];
         for request in &both {

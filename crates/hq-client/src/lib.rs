@@ -722,6 +722,40 @@ pub fn close_shell(host: &impl Connect, session: &str) -> Result<()> {
     )
 }
 
+/// Bytes in each input frame of an upload: small enough that progress moves often over a
+/// relay, well under `MAX_PAYLOAD`.
+const UPLOAD_CHUNK: usize = 256 * 1024;
+
+/// Sends an image for `session` to the host on a connection of its own and returns where
+/// the host saved it, as the host's computer names it (add-image-upload D1). `sent` hears the
+/// bytes sent so far.
+pub fn upload_image(
+    host: &impl Connect,
+    session: &str,
+    image: &[u8],
+    mut sent: impl FnMut(u64),
+) -> Result<String> {
+    let mut client = host.connect_or_start()?;
+    match expect_ok(client.request(&Request::Upload {
+        session: session.to_owned(),
+        size: image.len() as u64,
+    })?)? {
+        Response::UploadReady {} => {}
+        other => bail!("unexpected answer to upload: {other:?}"),
+    }
+    let mut done = 0u64;
+    for chunk in image.chunks(UPLOAD_CHUNK) {
+        write_frame(&mut client.writer, &Frame::Input(chunk.to_vec()))
+            .map_err(|error| anyhow!(error))?;
+        done += chunk.len() as u64;
+        sent(done);
+    }
+    match expect_ok(client.next_response()?)? {
+        Response::Uploaded { path } => Ok(path),
+        other => bail!("unexpected answer to upload: {other:?}"),
+    }
+}
+
 /// A folder's subfolders on the host's computer, and the host's home folder; an empty
 /// `path` lists the home folder (add-remote-desktop-client D7).
 pub struct Folder {

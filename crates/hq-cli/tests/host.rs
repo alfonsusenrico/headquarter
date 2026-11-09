@@ -5361,3 +5361,159 @@ fn a_new_agent_version_is_checked_once_and_a_failure_is_reported() {
         "nothing the agent showed is logged"
     );
 }
+
+/// A PNG's first bytes, then filler: enough for the host's format check.
+fn png(bytes: usize) -> Vec<u8> {
+    let mut image = b"\x89PNG\r\n\x1a\n".to_vec();
+    image.resize(bytes, 7);
+    image
+}
+
+/// Sends `image` on a new connection, in frames of `chunk` bytes, and returns the host's
+/// last answer.
+fn upload(env: &TestEnv, session: &str, image: &[u8], chunk: usize) -> Response {
+    let mut conn = env.connect();
+    match conn.request(&Request::Upload {
+        session: session.to_owned(),
+        size: image.len() as u64,
+    }) {
+        Response::UploadReady {} => {}
+        refused => return refused,
+    }
+    for part in image.chunks(chunk) {
+        conn.send_frame(&Frame::Input(part.to_vec()));
+    }
+    conn.next_response()
+}
+
+fn files_in(folder: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(folder)
+        .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn images_are_checked_saved_privately_and_go_with_their_session() {
+    let mut env = TestEnv::new("images");
+    env.stub("agy", INTERACTIVE_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    let folder = env.host_dir().join("images").join(&session.id);
+
+    // A screenshot in several frames: saved for the session, private, its path answered.
+    let image = png(600_000);
+    let Response::Uploaded { path } = upload(&env, &session.id, &image, 256 * 1024) else {
+        panic!("not saved");
+    };
+    let path = PathBuf::from(path);
+    assert_eq!(path.parent().unwrap(), folder);
+    assert!(path.extension().is_some_and(|extension| extension == "png"));
+    assert_eq!(std::fs::read(&path).unwrap(), image);
+    assert_eq!(mode(&path), 0o600);
+    assert_eq!(mode(&folder), 0o700);
+    assert_eq!(mode(&env.host_dir().join("images")), 0o700);
+
+    // Too large: refused before any byte.
+    let mut conn = env.connect();
+    let refused = conn.request(&Request::Upload {
+        session: session.id.clone(),
+        size: 10 * 1024 * 1024 + 1,
+    });
+    assert!(
+        matches!(&refused, Response::Error { code: ErrorCode::TooLarge, message } if message == "The image is larger than 10 MB"),
+        "{refused:?}"
+    );
+
+    // Not an image, whatever the client says.
+    let refused = upload(&env, &session.id, b"%PDF-1.7\n%%EOF", 1024);
+    assert!(
+        matches!(&refused, Response::Error { message, .. } if message == "Only PNG, JPEG, GIF or WebP images can be sent"),
+        "{refused:?}"
+    );
+
+    // An unknown session.
+    let refused = upload(&env, "no-such-session", &png(100), 1024);
+    assert!(
+        matches!(&refused, Response::Error { code: ErrorCode::NotFound, message } if message == "The session is no longer there"),
+        "{refused:?}"
+    );
+
+    // Cut short by the connection ending, and by another request: nothing kept.
+    let mut conn = env.connect();
+    conn.request(&Request::Upload {
+        session: session.id.clone(),
+        size: 1000,
+    });
+    conn.send_frame(&Frame::Input(png(500)));
+    conn.close();
+    let mut conn = env.connect();
+    conn.request(&Request::Upload {
+        session: session.id.clone(),
+        size: 1000,
+    });
+    conn.send_frame(&Frame::Input(png(500)));
+    let interrupted = conn.request(&Request::List {});
+    assert!(
+        matches!(&interrupted, Response::Error { message, .. } if message == "The image was cut short by another request"),
+        "{interrupted:?}"
+    );
+    wait_until("partial files removed", || files_in(&folder).len() == 1);
+
+    // The log names the session, size and kind, never the path.
+    let log = env.log();
+    assert!(
+        log.contains(&format!(
+            "image saved session={} bytes=600000 kind=png",
+            session.id
+        )),
+        "{log}"
+    );
+    assert!(log.contains("reason=size") && log.contains("reason=kind"));
+    assert!(log.contains("reason=cut short"));
+    assert!(!log.contains(&path.to_string_lossy().into_owned()), "{log}");
+
+    // Closing the session deletes its images.
+    assert!(matches!(
+        env.connect().request(&Request::Close {
+            session: session.id.clone()
+        }),
+        Response::Done
+    ));
+    assert!(!folder.exists());
+}
+
+#[test]
+fn the_host_deletes_images_past_a_week_when_it_starts() {
+    let mut env = TestEnv::new("old-images");
+    env.stub("agy", INTERACTIVE_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    assert!(matches!(
+        env.connect().request(&Request::Stop {}),
+        Response::Done
+    ));
+    assert!(env.daemons.pop().unwrap().wait().unwrap().success());
+
+    let images = env.host_dir().join("images");
+    let day = 24 * 60 * 60 * 1000;
+    let now = hq_signals::now_ms();
+    let kept = images.join(&session.id);
+    std::fs::create_dir_all(&kept).unwrap();
+    let old = kept.join(format!("{}-0.png", now - 8 * day));
+    let fresh = kept.join(format!("{}-1.png", now - day));
+    let gone = images.join("a-session-no-longer-there");
+    std::fs::create_dir_all(&gone).unwrap();
+    for file in [&old, &fresh, &gone.join(format!("{now}-2.png"))] {
+        std::fs::write(file, png(64)).unwrap();
+    }
+
+    env.start_daemon();
+    assert!(!old.exists(), "a week old");
+    assert!(fresh.exists());
+    assert!(!gone.exists(), "its session left the sidebar");
+    assert!(
+        env.log().contains("images deleted count=2"),
+        "{}",
+        env.log()
+    );
+}

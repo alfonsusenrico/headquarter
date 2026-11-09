@@ -4,6 +4,7 @@
 //! and the payload (at most [`MAX_PAYLOAD`]). Control frames carry one JSON
 //! [`Request`] or [`Response`]; output and input frames carry raw terminal bytes.
 
+pub mod paste;
 pub mod sidebar;
 pub mod usage;
 
@@ -16,7 +17,7 @@ pub use hq_signals::resources::Footprint;
 use hq_signals::status::Status;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 15;
+pub const PROTOCOL_VERSION: u32 = 16;
 pub const MAX_PAYLOAD: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -309,6 +310,13 @@ pub enum Request {
     /// Folders under the host's home folder, for finding one by name; answered with
     /// `FoundFolders` batches on the same connection, the last one `done`.
     FindFolders {},
+    /// An image for a session, `size` bytes, sent next as input frames on this connection,
+    /// which attaches to nothing (add-image-upload D1). Answered with `UploadReady`, then
+    /// `Uploaded` once the last byte is saved.
+    Upload {
+        session: String,
+        size: u64,
+    },
 }
 
 impl Request {
@@ -349,6 +357,8 @@ pub enum ErrorCode {
     /// The conversation is running in Claude Code's own background daemon, so resuming it
     /// would fail; the message names its process (fix-claude-conversations).
     RunningInBackground,
+    /// An image larger than the host takes (add-image-upload D3).
+    TooLarge,
 }
 
 /// How a past conversation leaves its agent (remove-conversations, owner 2026-10-23).
@@ -450,6 +460,12 @@ pub enum Response {
     FoundFolders {
         folders: Vec<String>,
         done: bool,
+    },
+    /// The host takes the image's bytes now.
+    UploadReady {},
+    /// The image is saved, at this absolute path on the host's computer.
+    Uploaded {
+        path: String,
     },
     SessionChanged {
         session: SessionInfo,
@@ -1211,6 +1227,10 @@ mod tests {
             Request::Unpair {},
             Request::ListFolder { path: "~/w".into() },
             Request::FindFolders {},
+            Request::Upload {
+                session: "c4f1".into(),
+                size: 2_000_000,
+            },
             Request::Device {
                 name: "Pixel 8".into(),
             },
@@ -1236,6 +1256,11 @@ mod tests {
                 folders: vec!["/home/me/work".into()],
                 done: true,
             },
+            Response::UploadReady {},
+            Response::Uploaded {
+                path: "/home/me/.local/share/headquarter/images/c4f1/1.png".into(),
+            },
+            Response::error(ErrorCode::TooLarge, "The image is larger than 10 MB"),
             Response::RemoteStatus {
                 enabled: true,
                 running: false,

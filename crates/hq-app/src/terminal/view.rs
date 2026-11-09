@@ -421,7 +421,7 @@ impl TerminalView {
 
     fn paste(&mut self, text: &str, cx: &mut Context<Self>) {
         let bracketed = self.mode(cx).contains(TermMode::BRACKETED_PASTE);
-        let bytes = keys::paste(text, bracketed);
+        let bytes = hq_protocol::paste::paste(text, bracketed);
         self.session
             .update(cx, |session, cx| session.input(&bytes, cx));
     }
@@ -434,7 +434,13 @@ impl TerminalView {
             cx.emit(DropRefused);
             return;
         }
-        let text = keys::dropped_paths(paths.paths());
+        let text = hq_protocol::paste::typed_paths(
+            &paths
+                .paths()
+                .iter()
+                .map(|path| path.to_string_lossy())
+                .collect::<Vec<_>>(),
+        );
         if text.is_empty() {
             return;
         }
