@@ -3447,7 +3447,7 @@ fn a_codex_turn_ending_reads_codex_usage_again() {
   read line
   printf '\033]7501;state=working\007'
   sleep 0.3
-  printf '\033]7501;state=idle\007'
+  printf '\033]7501;state=done\007'
   sleep 30
   exit 0
 fi"#,
