@@ -2,6 +2,36 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.4.0-rc.1 (2026-11-10)
+
+A release candidate for 0.4.0, and the first with a Windows setup. The app's update check skips
+it; install it with the line below, or on Windows with the setup.
+
+- Windows: `headquarter-setup-x86_64.exe` replaces the zip. It installs Headquarter for you
+  alone, with no administrator prompt, adds it to the Start menu (and, if you tick it, the
+  desktop), and updates in place when you run a newer one. Remove it in Settings ▸ Apps. Your
+  settings and paired hosts stay.
+- Windows: opening the app no longer flashes console windows. The app has its icon in Explorer,
+  the taskbar and Alt+Tab, and minimize, maximize and close buttons at its top right, with
+  Windows' snap layouts.
+- Windows: sessions on another computer no longer say their folder doesn't exist (a 0.3 bug,
+  fixed since 0.4.0-alpha.1).
+- When the app can't use one of your computers, the sidebar says why and what to do, for example
+  "server needs an update: it runs Headquarter 0.2.0-alpha.2, this app 0.4.0-rc.1." The Hosts
+  menu shows it on the computer's row.
+- After you update the older side, that computer's sessions come back within 30 seconds by
+  themselves. Reconnect all in the Hosts menu tries every computer that isn't connected at once.
+- A computer's name on a narrow row keeps its first four characters ("msig…") instead of
+  shrinking to "…".
+- Headquarter now includes SQLite 3.54.1, which fixes a security issue when a database file is
+  opened next to a mismatched write-ahead log.
+
+Try it:
+
+```sh
+curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/download/v0.4.0-rc.1/install.sh | HQ_VERSION=0.4.0-rc.1 sh
+```
+
 ## 0.4.0-alpha.1 (2026-11-09)
 
 A pre-release for trying every computer's sessions in one list. The app's update check skips it;
