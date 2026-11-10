@@ -180,14 +180,16 @@ const TAG_PADDING: f32 = 6.0;
 const TAG_KEPT: usize = 4;
 
 /// The narrowest a tag may get: its first four characters and an ellipsis, or its whole text
-/// when that is no longer. `advance` gives a character's width in the tag's font.
-pub fn tag_min_width(text: &str, advance: impl Fn(char) -> f32) -> f32 {
+/// when that is no longer. `width` gives a character's width in the tag's font. GPUI keeps a
+/// character only while the kept text and the ellipsis are strictly narrower than the box, hence
+/// the extra pixel.
+pub fn tag_min_width(text: &str, width: impl Fn(char) -> f32) -> f32 {
     let shown: f32 = if text.chars().count() <= TAG_KEPT {
-        text.chars().map(&advance).sum()
+        text.chars().map(&width).sum()
     } else {
-        text.chars().take(TAG_KEPT).map(&advance).sum::<f32>() + advance('…')
+        text.chars().take(TAG_KEPT).map(&width).sum::<f32>() + width('…')
     };
-    (shown + 2.0 * TAG_PADDING + 2.0).ceil()
+    shown.ceil() + 1.0 + 2.0 * TAG_PADDING + 2.0
 }
 
 /// A list section heading, such as a day.
@@ -255,14 +257,17 @@ mod tests {
 
     #[test]
     fn a_shortened_tag_keeps_four_characters() {
-        let advance = |ch: char| if ch == '…' { 8.0 } else { 7.0 };
-        // "msig" and the ellipsis, the padding, the border.
-        assert_eq!(tag_min_width("msigs63vr", advance), 4.0 * 7.0 + 8.0 + 14.0);
+        let width = |ch: char| if ch == '…' { 8.0 } else { 7.0 };
+        // "msig" and the ellipsis, a pixel for GPUI's strict fit, the padding, the border.
         assert_eq!(
-            tag_min_width("nas", advance),
-            3.0 * 7.0 + 14.0,
+            tag_min_width("msigs63vr", width),
+            4.0 * 7.0 + 8.0 + 1.0 + 14.0
+        );
+        assert_eq!(
+            tag_min_width("nas", width),
+            3.0 * 7.0 + 1.0 + 14.0,
             "short names show whole"
         );
-        assert_eq!(tag_min_width("mini", advance), 4.0 * 7.0 + 14.0);
+        assert_eq!(tag_min_width("mini", width), 4.0 * 7.0 + 1.0 + 14.0);
     }
 }

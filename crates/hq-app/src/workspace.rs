@@ -2393,9 +2393,9 @@ impl Workspace {
             // (fix-hosts-menu-reason D6).
             let text = cx.text_system();
             let font = text.resolve_font(&gpui::font(UI_FONT));
+            // Measured as GPUI measures when it shortens text.
             let narrowest = modal::tag_min_width(&host, |ch| {
-                text.advance(font, px(modal::TAG_TEXT_SIZE), ch)
-                    .map_or(modal::TAG_TEXT_SIZE * 0.6, |size| f32::from(size.width))
+                f32::from(text.layout_width(font, px(modal::TAG_TEXT_SIZE), ch))
             });
             modal::tag(host, self.theme.chrome)
                 .flex_shrink(HOST_TAG_SHRINK)
