@@ -11,6 +11,14 @@ on:
       plan:
         required: true
         type: string
+  # A dry run from a branch before tagging, so a broken job costs no release candidate:
+  # gh workflow run build-windows-installer.yml --ref <branch> -f plan='{"announcement_tag":"vX.Y.Z"}'
+  workflow_dispatch:
+    inputs:
+      plan:
+        description: The release plan; only announcement_tag is read.
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -33,7 +41,14 @@ jobs:
         env:
           PLAN: ${{ inputs.plan }}
         run: |
-          $version = (cargo pkgid -p hq-app).Split('@')[-1]
+          # From cargo metadata: `cargo pkgid` prints `…/hq-app#0.4.0` for a package named
+          # after its folder, with no `@` to split on (v0.4.0-rc.1 failed on it).
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($metadata.packages | Where-Object { $_.name -eq 'hq-app' }).version
+          if (-not $version) {
+            Write-Error "hq-app is not in the workspace metadata"
+            exit 1
+          }
           $tag = (ConvertFrom-Json $env:PLAN).announcement_tag
           if ("v$version" -ne $tag) {
             Write-Error "hq-app is $version but the release is $tag"

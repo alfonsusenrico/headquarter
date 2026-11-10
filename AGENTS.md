@@ -124,7 +124,8 @@ Where a standard does not fit, and what this project does instead:
   `--host-only`, `--app-only`), the Windows setup (unsigned), and the signed Android APK
 - Trigger: pushing a `v*` tag on `main` runs `release.yml` (`dist`). Its `custom-build-android`
   job (`build-android.yml`, environment `android-release`) builds and signs the APK, and
-  `custom-build-windows-installer` (`build-windows-installer.yml`) builds the Windows setup
+  `custom-build-windows-installer` (`build-windows-installer.yml`) builds the Windows setup. After
+  changing that job, dry-run it from its branch first (the command is in its header)
 - Versions: `vMAJOR.MINOR.PATCH`, one version for every crate and the APK (desktop and phone
   release together). A `-rc.N` pre-release goes first only when the release pipeline changed;
   an `-alpha.N` pre-release only on the owner's request (first: `v0.2.0-alpha.1`, 2026-11-02)
