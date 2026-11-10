@@ -48,6 +48,7 @@ use crate::terminal::view::{PaneOptions, TerminalView, hsla};
 use crate::theme::{Chrome, Mode, Paint, Theme};
 use crate::themes::{self, Library, Look, ThemeChoice, Token};
 
+mod caption;
 mod groups;
 mod header;
 mod hosts;
@@ -1290,12 +1291,18 @@ impl Workspace {
             .border_color(hsla(chrome.sidebar_line))
             .child(
                 // Room above the controls; also where the window is dragged from.
-                div().id("window-drag").h(top).flex_none().on_mouse_down(
-                    MouseButton::Left,
-                    |_, window, _| {
+                // On Windows it is the window's caption, so double-click maximizes and snap
+                // works (fix-windows-app D3).
+                div()
+                    .id("window-drag")
+                    .h(top)
+                    .flex_none()
+                    .when(cfg!(windows), |strip| {
+                        strip.window_control_area(gpui::WindowControlArea::Drag)
+                    })
+                    .on_mouse_down(MouseButton::Left, |_, window, _| {
                         window.start_window_move();
-                    },
-                ),
+                    }),
             )
             .children(switcher)
             .children(header)
@@ -3522,6 +3529,8 @@ impl Render for Workspace {
             // Last, so it covers every window: quitting can be asked from anywhere
             // (fix-quit-over-windows D1).
             .children(self.render_quit(cx))
+            // Over everything, as the system's own title bar would be.
+            .children(self.render_caption_buttons(window, cx))
     }
 }
 

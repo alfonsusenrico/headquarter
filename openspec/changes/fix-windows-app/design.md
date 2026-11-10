@@ -27,20 +27,26 @@ to start without one. `CREATE_NO_WINDOW` gives a hidden one.
 
 ### D2. The icon is a build resource
 
-`assets/icon/headquarter.ico` holds 16, 24, 32, 48, 64 and 256 px images rendered from
-`headquarter.svg` and is committed, so the build needs no image tool. `crates/hq-app/build.rs`
-embeds it with `winresource` only when the target is Windows. The window takes the same icon from
-the executable.
+`assets/icon/headquarter.ico` packs the existing renders in `assets/icon/png` (16, 32, 64, 128
+and 256 px, PNG-compressed entries, which Windows Vista and later read) and is committed, so the
+build needs no image tool. `crates/hq-app/build.rs`
+embeds it with `winresource` as resource 1 only when the target is Windows. GPUI loads resource 1
+for the window, so the window, the taskbar and Explorer show the same icon.
 
 ### D3. Windows 11 caption buttons
 
 The owner chose the Windows 11 style (2026-11-10). On Windows only:
-- Three buttons at the window's top right, each 46 × 32 px, over the pane header: minimize (─),
-  maximize (☐), or restore (two squares) while maximized, and close (✕).
+- Three buttons at the window's top right, each 46 px wide and as tall as the pane header (38 px),
+  so they line up with it: minimize (─), maximize (☐), or restore (two squares) while maximized,
+  and close (✕). They are drawn over everything, as the system's title bar would be.
 - The glyphs use Segoe Fluent Icons where present, else Segoe MDL2 Assets, else plain shapes.
 - Hover uses the theme's hover colour, and close turns `#C42B1C` with a white glyph.
-- Each button is marked as its window control area. The pane header's empty space is the `Drag`
-  area, so dragging moves the window and double-clicking maximizes it.
+- Each button is marked as its window control area. GPUI's Windows platform answers the hit test
+  and acts on the click itself (minimize, maximize or restore, and close through the app's own
+  close handling).
+- The sidebar's top strip, which already moves the window, is the `Drag` area on Windows, so
+  double-clicking it maximizes and dragging it to an edge snaps. The pane header is not: it holds
+  clickable items (the context meter, the folder), which a drag area would swallow.
 - The pane header leaves 138 px on the right for the buttons.
 
 macOS keeps its traffic lights, and Linux is unchanged.

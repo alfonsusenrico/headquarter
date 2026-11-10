@@ -24,5 +24,5 @@ On Windows the app SHALL be a client of remote hosts only: it SHALL open at Conn
 - **THEN** Windows shows its snap layouts on hover, and close closes the window as the app's close does (the quit question where it applies)
 
 #### Scenario: Moving the window
-- **WHEN** the owner drags the empty part of the pane header, then double-clicks it
+- **WHEN** the owner drags the strip above the sidebar's Hosts menu, then double-clicks it
 - **THEN** the window moves, then maximizes

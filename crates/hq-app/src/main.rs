@@ -14,6 +14,7 @@ mod menus;
 mod merged;
 mod modal;
 mod notifications;
+mod process;
 mod settings;
 mod setup;
 mod shell;

@@ -35,11 +35,11 @@ checks it with the alpha.
 
 - Every helper process the app starts (`curl` today, any later one through the same helper) asks
   Windows for no window (`CREATE_NO_WINDOW`).
-- A Windows icon (`.ico`, 16 to 256 px, made from `assets/icon/headquarter.svg`) is built into the
+- A Windows icon (`.ico`, 16 to 256 px, from the icon's existing renders) is built into the
   executable at build time on Windows only.
 - On Windows only, three caption buttons are drawn at the window's top right, marked as the
   window's minimize, maximize and close areas so Windows handles them (snap layouts, keyboard,
-  accessibility). The empty part of the pane header is the window's drag area.
+  accessibility). The strip above the sidebar's Hosts menu is the window's drag area.
 
 ## Non-goals
 

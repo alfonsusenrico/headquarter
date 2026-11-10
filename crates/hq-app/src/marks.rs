@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use alacritty_terminal::vte::ansi::Rgb;
 use gpui::{AnyElement, IntoElement, ParentElement, Styled, div, img, px, svg};
@@ -289,7 +288,7 @@ fn zip_entry(archive: &[u8], name: &str) -> Result<Vec<u8>, String> {
 /// send a compressed body unasked (antigravity.google did, 2026-10-20), and curl then
 /// unpacks it.
 fn curl(url: &str, out: &Path) -> Result<(), String> {
-    let status = Command::new("curl")
+    let status = crate::process::quiet("curl")
         .args([
             "--fail",
             "--silent",

@@ -357,7 +357,7 @@ fn computer_name() -> String {
     {
         return name.trim().to_owned();
     }
-    std::process::Command::new("hostname")
+    crate::process::quiet("hostname")
         .output()
         .ok()
         .and_then(|output| String::from_utf8(output.stdout).ok())
