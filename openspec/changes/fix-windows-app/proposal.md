@@ -1,6 +1,6 @@
 # The Windows app: no console windows, its icon, and window buttons
 
-Status: proposed 2026-11-10, waiting for the owner's approval. Decisions: owner, 2026-11-10
+Status: approved by the owner 2026-11-10 ("approve both windows plans"). Decisions: owner, 2026-11-10
 (window buttons in the Windows 11 style).
 
 ## Why
