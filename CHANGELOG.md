@@ -2,7 +2,7 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
-## 0.4.0-rc.1 (2026-11-10)
+## 0.4.0-rc.2 (2026-11-10)
 
 A release candidate for 0.4.0, and the first with a Windows setup. The app's update check skips
 it; install it with the line below, or on Windows with the setup.
@@ -17,7 +17,7 @@ it; install it with the line below, or on Windows with the setup.
 - Windows: sessions on another computer no longer say their folder doesn't exist (a 0.3 bug,
   fixed since 0.4.0-alpha.1).
 - When the app can't use one of your computers, the sidebar says why and what to do, for example
-  "server needs an update: it runs Headquarter 0.2.0-alpha.2, this app 0.4.0-rc.1." The Hosts
+  "server needs an update: it runs Headquarter 0.2.0-alpha.2, this app 0.4.0-rc.2." The Hosts
   menu shows it on the computer's row.
 - After you update the older side, that computer's sessions come back within 30 seconds by
   themselves. Reconnect all in the Hosts menu tries every computer that isn't connected at once.
@@ -29,8 +29,12 @@ it; install it with the line below, or on Windows with the setup.
 Try it:
 
 ```sh
-curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/download/v0.4.0-rc.1/install.sh | HQ_VERSION=0.4.0-rc.1 sh
+curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/download/v0.4.0-rc.2/install.sh | HQ_VERSION=0.4.0-rc.2 sh
 ```
+
+## 0.4.0-rc.1 (2026-11-10)
+
+Not released: the new Windows setup job stopped at its version check, before building the setup.
 
 ## 0.4.0-alpha.1 (2026-11-09)
 
