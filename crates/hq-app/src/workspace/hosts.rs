@@ -80,7 +80,12 @@ impl Workspace {
         }
         self.hosts.forget_asked = None;
         hosts::forget(&id);
-        self.drop_host(&HostId::Remote(id), window, cx);
+        let host = HostId::Remote(id);
+        // A forgotten host's usage is never shown again (fix-usage-host D3).
+        if self.hosts.usage_choice.as_ref() == Some(&host) {
+            self.keep_usage_choice(None);
+        }
+        self.drop_host(&host, window, cx);
     }
 
     pub(super) fn open_connect_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {

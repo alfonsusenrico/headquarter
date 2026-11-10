@@ -19,7 +19,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{Disableable, Icon, IconName, Sizable};
+use gpui_component::{Disableable, Icon, IconName, Selectable, Sizable};
 use hq_client::{Change, FeedControl, SessionFeed};
 use hq_config::{AgentMarks, Appearance, SettingsWatcher};
 use hq_protocol::sidebar::Beside;
@@ -417,7 +417,7 @@ impl Workspace {
             pending_shown: crate::app_state::path()
                 .and_then(|path| crate::app_state::load_shown(&path)),
             details: HashMap::new(),
-            hosts: several::Hosts::default(),
+            hosts: several::Hosts::kept(),
             followed: None,
             details_open: false,
             copied_at: None,
@@ -1621,7 +1621,7 @@ impl Workspace {
             return;
         }
         // The selected session's host first (add-merged-host-list D4).
-        let host = self.usage_host();
+        let host = self.selected_host();
         self.open_new_session_on(host, window, cx);
     }
 
@@ -2674,10 +2674,13 @@ impl Workspace {
         if self.usage_refreshing {
             return;
         }
+        let Some(host) = self.usage_host() else {
+            return;
+        };
         self.usage_refreshing = true;
         cx.notify();
         self.host_call(
-            self.usage_host(),
+            host,
             window,
             cx,
             |paths| Ok(hq_client::refresh_usage(paths)),
@@ -2745,7 +2748,9 @@ impl Workspace {
             rings = rings.child(chip);
         }
         // Another computer's usage says whose it is (add-merged-host-list D5).
-        let host = crate::hosts::label(&self.usage_host());
+        let host = self
+            .usage_host()
+            .and_then(|host| crate::hosts::label(&host));
         let label = match (usage::label(self.shown_usage(), now), host) {
             (Some(label), Some(host)) => Some(format!("{host} · {label}")),
             (None, Some(host)) => Some(host),
@@ -2903,7 +2908,8 @@ impl Workspace {
         .max_h(px(560.))
         .overflow_y_scroll()
         // Presses inside the details stay with them, not the backdrop that closes them.
-        .occlude();
+        .occlude()
+        .children(self.render_usage_from(cx));
         for (index, usage) in shown.into_iter().enumerate() {
             if index > 0 {
                 panel = panel.child(div().h(px(1.)).bg(hsla(chrome.sidebar_line)));
@@ -2927,6 +2933,44 @@ impl Workspace {
                         ),
                 ),
             ),
+        )
+    }
+
+    /// "Usage from" and one button per host, when more than one host is known
+    /// (fix-usage-host D2). The shown host is selected; a host without a current reading
+    /// cannot be chosen.
+    fn render_usage_from(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let all = crate::hosts::all();
+        if all.len() < 2 {
+            return None;
+        }
+        let shown = self.usage_host();
+        let mut buttons = div().flex().flex_wrap().gap(px(4.));
+        for (index, host) in all.into_iter().enumerate() {
+            let selected = shown.as_ref() == Some(&host);
+            let button = Button::new(SharedString::from(format!("usage-from-{index}")))
+                .ghost()
+                .xsmall()
+                .selected(selected)
+                .disabled(!self.holds_usage(&host))
+                .label(crate::hosts::name(&host))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.choose_usage_host(host.clone(), cx);
+                }));
+            buttons = buttons.child(button);
+        }
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(hsla(self.theme.chrome.muted))
+                        .child("Usage from"),
+                )
+                .child(buttons),
         )
     }
 

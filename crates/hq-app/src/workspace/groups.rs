@@ -210,7 +210,7 @@ impl Workspace {
             Naming::New { session } => {
                 let host = session
                     .as_deref()
-                    .map_or_else(|| self.usage_host(), |id| self.host_of(id));
+                    .map_or_else(|| self.selected_host(), |id| self.host_of(id));
                 self.host_call(
                     host,
                     window,
