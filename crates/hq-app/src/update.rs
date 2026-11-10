@@ -7,7 +7,7 @@
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -408,7 +408,7 @@ fn run_installer(folder: &Path, version: Version, installed: &Installed) -> Resu
     let log = folder.join("install.log");
     let output = std::fs::File::create(&log).context("cannot write the installer's log")?;
     let errors = output.try_clone()?;
-    let mut command = Command::new("sh");
+    let mut command = crate::process::quiet("sh");
     command
         .arg(&script)
         .env("HQ_VERSION", version.to_string())
@@ -472,7 +472,7 @@ pub fn read_log(path: &Path) -> String {
 }
 
 fn curl(args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("curl")
+    let output = crate::process::quiet("curl")
         .args(args)
         .stdin(Stdio::null())
         .output()
@@ -514,7 +514,7 @@ pub fn relaunch_after_exit(app: &Path) -> Result<()> {
         "while kill -0 {} 2>/dev/null; do sleep 0.2; done; {open}",
         std::process::id()
     );
-    let mut command = Command::new("sh");
+    let mut command = crate::process::quiet("sh");
     command
         .args(["-c", &script, "relaunch"])
         .arg(app)

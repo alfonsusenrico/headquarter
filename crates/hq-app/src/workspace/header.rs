@@ -20,7 +20,7 @@ use crate::header::{self, HeaderLine};
 use crate::terminal::view::hsla;
 
 /// One line with room (refresh-pane-and-status D3).
-const HEADER_HEIGHT: f32 = 38.0;
+pub(super) const HEADER_HEIGHT: f32 = 38.0;
 /// How long "Copied" shows after the folder is copied.
 const COPIED_FOR: Duration = Duration::from_secs(1);
 const LEFT_NOTE: &str = "Context left in the model's window. Automatic compaction runs near the end of it unless its threshold was changed.";
@@ -56,7 +56,10 @@ impl Workspace {
         let Some(session) = self.shown_id().and_then(|id| self.session(id)).cloned() else {
             return body;
         };
-        let pane_width = f32::from(window.viewport_size().width) - self.sidebar_width();
+        // The window's buttons sit over the header's right end on Windows.
+        let pane_width = f32::from(window.viewport_size().width)
+            - self.sidebar_width()
+            - super::caption::caption_reserved();
         let header = self.render_session_header(&session, pane_width, cx);
         div()
             .size_full()
@@ -208,7 +211,8 @@ impl Workspace {
             .flex()
             .items_center()
             .gap(px(16.))
-            .px(px(16.))
+            .pl(px(16.))
+            .pr(px(16. + super::caption::caption_reserved()))
             .text_size(px(12.5))
             .bg(background)
             .border_b_1()
