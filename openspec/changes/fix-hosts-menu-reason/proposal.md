@@ -1,6 +1,6 @@
 # Say why a paired host gave up, reconnect it, and keep its tag readable
 
-Status: proposed 2026-11-09, waiting for the owner's approval.
+Status: approved by the owner 2026-11-10 ("ok"), with Reconnect all as one menu row (owner, 2026-11-09).
 
 ## Why
 

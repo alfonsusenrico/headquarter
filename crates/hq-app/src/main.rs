@@ -23,6 +23,7 @@ mod sidebar;
 mod terminal;
 mod theme;
 mod themes;
+mod trouble;
 mod update;
 mod workspace;
 

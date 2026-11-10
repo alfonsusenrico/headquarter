@@ -38,8 +38,8 @@ enum Connecting {
 
 /// A host's state as the Hosts menu says it.
 fn state_word(workspace: &Workspace, host: &HostId) -> &'static str {
-    if workspace.hosts.failed.contains_key(host) {
-        "not reachable"
+    if let Some(trouble) = workspace.hosts.failed.get(host) {
+        trouble.state_word()
     } else if workspace.hosts.away.contains_key(host) {
         "reconnecting"
     } else if workspace.hosts.listed.contains(host) {
@@ -50,6 +50,26 @@ fn state_word(workspace: &Workspace, host: &HostId) -> &'static str {
 }
 
 impl Workspace {
+    /// The paired hosts that are not connected: connecting, reconnecting, or given up on.
+    fn hosts_not_connected(&self) -> Vec<HostId> {
+        hosts::known()
+            .into_iter()
+            .map(|host| HostId::Remote(host.id))
+            .filter(|host| state_word(self, host) != "connected")
+            .collect()
+    }
+
+    /// Reconnect all: each paired host that is not connected is tried again at once
+    /// (fix-hosts-menu-reason D5).
+    fn reconnect_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for host in self.hosts_not_connected() {
+            self.hosts.failed.remove(&host);
+            self.hosts.away.remove(&host);
+            self.follow_host_feed(host, window, cx);
+        }
+        cx.notify();
+    }
+
     /// Forget on a paired host's row: the first click asks in place, the second forgets
     /// (add-merged-host-list D6).
     pub(super) fn forget_host(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -230,27 +250,53 @@ impl Workspace {
                 );
                 continue;
             }
-            list = list.child(
-                row(SharedString::from(format!("host-remote-{index}")))
-                    .child(div().flex_1().min_w_0().truncate().child(host.name.clone()))
-                    .child(state(&id))
-                    .child(
-                        Button::new(SharedString::from(format!("host-forget-{index}")))
-                            .ghost()
-                            .xsmall()
-                            .label("Forget")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.forget_host(forget.clone(), window, cx);
-                            })),
-                    ),
-            );
+            // Why the app gave up on it, under its row (fix-hosts-menu-reason D3).
+            let reason = self.hosts.failed.get(&id).map(|trouble| {
+                div()
+                    .px(px(10.))
+                    .pb(px(6.))
+                    .text_size(px(12.))
+                    .text_color(muted)
+                    .child(trouble.line(&host.name))
+            });
+            list = list
+                .child(
+                    row(SharedString::from(format!("host-remote-{index}")))
+                        .child(div().flex_1().min_w_0().truncate().child(host.name.clone()))
+                        .child(state(&id))
+                        .child(
+                            Button::new(SharedString::from(format!("host-forget-{index}")))
+                                .ghost()
+                                .xsmall()
+                                .label("Forget")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.forget_host(forget.clone(), window, cx);
+                                })),
+                        ),
+                )
+                .children(reason);
         }
-        list = list.child(
-            row("host-connect".into())
+        let any_waiting = !self.hosts_not_connected().is_empty();
+        let reconnect = any_waiting.then(|| {
+            row("host-reconnect-all".into())
                 .cursor_pointer()
                 .hover(|style| style.bg(hsla(chrome.selected)))
                 .border_t_1()
                 .border_color(hsla(chrome.sidebar_line))
+                .child(div().flex_1().text_color(muted).child("Reconnect all"))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.reconnect_all(window, cx);
+                }))
+        });
+        list = list.children(reconnect);
+        list = list.child(
+            row("host-connect".into())
+                .cursor_pointer()
+                .hover(|style| style.bg(hsla(chrome.selected)))
+                // One separator above the actions: Reconnect all has it when shown.
+                .when(!any_waiting, |connect| {
+                    connect.border_t_1().border_color(hsla(chrome.sidebar_line))
+                })
                 .child(div().flex_1().text_color(muted).child("Connect to a Host…"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.open_connect_window(window, cx);

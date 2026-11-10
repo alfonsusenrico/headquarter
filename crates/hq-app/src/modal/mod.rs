@@ -163,14 +163,31 @@ pub fn shade(chrome: Chrome) -> gpui::Hsla {
 pub fn tag(text: impl Into<gpui::SharedString>, chrome: Chrome) -> Div {
     div()
         .flex_none()
-        .px(px(6.))
+        .px(px(TAG_PADDING))
         .rounded(px(5.))
         .border_1()
         .border_color(hsla(chrome.track))
-        .text_size(px(11.5))
+        .text_size(px(TAG_TEXT_SIZE))
         .line_height(px(17.))
         .text_color(hsla(chrome.muted))
         .child(text.into())
+}
+
+/// A tag's text size and side padding; its border is 1 px.
+pub const TAG_TEXT_SIZE: f32 = 11.5;
+const TAG_PADDING: f32 = 6.0;
+/// The characters a shortened tag keeps before its ellipsis (fix-hosts-menu-reason D6).
+const TAG_KEPT: usize = 4;
+
+/// The narrowest a tag may get: its first four characters and an ellipsis, or its whole text
+/// when that is no longer. `advance` gives a character's width in the tag's font.
+pub fn tag_min_width(text: &str, advance: impl Fn(char) -> f32) -> f32 {
+    let shown: f32 = if text.chars().count() <= TAG_KEPT {
+        text.chars().map(&advance).sum()
+    } else {
+        text.chars().take(TAG_KEPT).map(&advance).sum::<f32>() + advance('…')
+    };
+    (shown + 2.0 * TAG_PADDING + 2.0).ceil()
 }
 
 /// A list section heading, such as a day.
@@ -230,4 +247,22 @@ pub fn route_field_keys<V: 'static>(
     let element = routed::<V, Enter>(element, "enter", handle, cx);
     let element = routed::<V, Escape>(element, "escape", handle, cx);
     routed::<V, Backspace>(element, "backspace", handle, cx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shortened_tag_keeps_four_characters() {
+        let advance = |ch: char| if ch == '…' { 8.0 } else { 7.0 };
+        // "msig" and the ellipsis, the padding, the border.
+        assert_eq!(tag_min_width("msigs63vr", advance), 4.0 * 7.0 + 8.0 + 14.0);
+        assert_eq!(
+            tag_min_width("nas", advance),
+            3.0 * 7.0 + 14.0,
+            "short names show whole"
+        );
+        assert_eq!(tag_min_width("mini", advance), 4.0 * 7.0 + 14.0);
+    }
 }

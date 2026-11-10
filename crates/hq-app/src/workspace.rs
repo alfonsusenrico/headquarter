@@ -47,6 +47,7 @@ use crate::terminal::session::{TerminalSession, in_use_page};
 use crate::terminal::view::{PaneOptions, TerminalView, hsla};
 use crate::theme::{Chrome, Mode, Paint, Theme};
 use crate::themes::{self, Library, Look, ThemeChoice, Token};
+use crate::trouble::{HostTrouble, TroubleKind};
 
 mod caption;
 mod groups;
@@ -88,6 +89,8 @@ const DISMISS_CLICK: Duration = Duration::from_millis(500);
 const PANE_TEXT_WIDTH: f32 = 480.0;
 /// The widest a session row's host name runs before it is shortened with an ellipsis.
 const HOST_TAG_WIDTH: f32 = 96.0;
+/// GPUI's default interface font, which the sidebar's text uses.
+const UI_FONT: &str = ".SystemUIFont";
 /// How much faster the host name gives way than the title when the row is narrow.
 const HOST_TAG_SHRINK: f32 = 20.0;
 /// The usage details' narrowest width; they float over the pane past a narrow sidebar.
@@ -114,7 +117,8 @@ enum ListEvent {
     Reconnecting(String),
     /// The remote host's home folder, labelled `~` (add-remote-desktop-client D7).
     Home(String),
-    Failed(String),
+    /// The feed gave up on its host, or (versions differ) waits for an update (D1).
+    Failed(HostTrouble),
 }
 
 /// The session window shown over the workspace; opening one replaces the other.
@@ -844,20 +848,21 @@ impl Workspace {
             ListEvent::Details { session, details } => {
                 self.details.insert(session, details);
             }
-            ListEvent::Failed(message) => {
+            ListEvent::Failed(trouble) => {
                 self.listed = true;
                 self.hosts.away.remove(&host);
-                // This computer's failure, or the only host's, is said under the sidebar;
-                // a paired host's shows in the Hosts menu.
-                if host == crate::hosts::HostId::Local || crate::hosts::all().len() == 1 {
-                    self.message = Some(message.clone());
-                }
-                // A paired host that gave up (it removed this computer, or versions differ)
-                // takes its sessions out of the list; the Hosts menu says why.
-                if host != crate::hosts::HostId::Local {
+                if host == crate::hosts::HostId::Local {
+                    // This computer's own host: said under the sidebar, as before.
+                    self.message = Some(match trouble.kind {
+                        TroubleKind::Other => trouble.message.clone(),
+                        _ => trouble.line(&crate::hosts::name(&host)),
+                    });
+                } else {
+                    // A paired host the owner has to act on leaves the list; the sidebar and
+                    // the Hosts menu say why (fix-hosts-menu-reason D2, D3).
                     self.forget_sessions_of(&host, window, cx);
                 }
-                self.hosts.failed.insert(host, message);
+                self.hosts.failed.insert(host, trouble);
             }
             ListEvent::Reconnecting(reason) => {
                 self.hosts.away.insert(host, reason);
@@ -1255,6 +1260,22 @@ impl Workspace {
                 .text_color(hsla(chrome.amber))
                 .child(format!("Reconnecting to {}…", away.join(", ")))
         });
+        // Each paired host the owner has to act on, by name, with what to do
+        // (fix-hosts-menu-reason D2).
+        let troubles = (!rail).then(|| {
+            div()
+                .px(px(8.))
+                .pb(px(8.))
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .children(self.trouble_lines().into_iter().map(|line| {
+                    div()
+                        .text_size(px(13.))
+                        .text_color(hsla(chrome.amber))
+                        .child(line)
+                }))
+        });
         // While the host starts, the pane shows it; the sidebar stays quiet.
         let empty_state = (empty && !rail && self.listed)
             .then(|| self.render_empty_sidebar(cx).into_any_element());
@@ -1307,6 +1328,7 @@ impl Workspace {
             .children(switcher)
             .children(header)
             .children(reconnecting)
+            .children(troubles)
             .child(
                 // A scrollbar shows when the rows do not all fit.
                 div()
@@ -2367,9 +2389,17 @@ impl Workspace {
         // The computer it runs on, when not this one, after the title (add-merged-host-list
         // D7). In a narrow row the name gives way first: the title says which session it is.
         let host = row.host.clone().map(|host| {
+            // Never narrower than the name's first four characters: "msig…", not "…"
+            // (fix-hosts-menu-reason D6).
+            let text = cx.text_system();
+            let font = text.resolve_font(&gpui::font(UI_FONT));
+            let narrowest = modal::tag_min_width(&host, |ch| {
+                text.advance(font, px(modal::TAG_TEXT_SIZE), ch)
+                    .map_or(modal::TAG_TEXT_SIZE * 0.6, |size| f32::from(size.width))
+            });
             modal::tag(host, self.theme.chrome)
                 .flex_shrink(HOST_TAG_SHRINK)
-                .min_w(px(28.))
+                .min_w(px(narrowest.min(HOST_TAG_WIDTH)))
                 .max_w(px(HOST_TAG_WIDTH))
                 .truncate()
         });
@@ -3553,29 +3583,39 @@ enum Followed {
     Ended(String),
     /// It never got the list.
     Failed(String),
-    /// Trying again cannot help: the host removed this computer, or versions differ.
-    Final(String),
+    /// The owner has to act: the host removed this computer, or versions differ.
+    Final(HostTrouble),
 }
 
 /// Runs on its own thread for one host: lists its sessions, then forwards every change. A
 /// remote host is reached again with backoff while the window listens; this computer's host
 /// is not, as before.
 fn watch_sessions(id: &crate::hosts::HostId, tx: &UnboundedSender<ListEvent>) {
-    let fail = |message: String| {
-        let _ = tx.unbounded_send(ListEvent::Failed(message));
+    let fail = |trouble: HostTrouble| {
+        let _ = tx.unbounded_send(ListEvent::Failed(trouble));
     };
     let mut delay = RECONNECT_FIRST;
     loop {
         let host = match crate::hosts::host(id) {
             Ok(host) => host,
-            Err(error) => return fail(format!("{error:#}")),
+            Err(error) => return fail(HostTrouble::other(format!("{error:#}"))),
         };
         let remote = host.link().is_some();
-        let reason = match follow_host(id, &host, tx) {
+        let reason = match follow_host(&host, tx) {
             Followed::Gone => return,
-            Followed::Final(message) => return fail(message),
+            // Versions differ: said once more each try, and tried again until the older side
+            // is updated (fix-hosts-menu-reason D4).
+            Followed::Final(trouble) if remote && trouble.retries() => {
+                if tx.unbounded_send(ListEvent::Failed(trouble)).is_err()
+                    || !wait_while_listened(tx, RECONNECT_MOST)
+                {
+                    return;
+                }
+                continue;
+            }
+            Followed::Final(trouble) => return fail(trouble),
             Followed::Failed(message) | Followed::Ended(message) if !remote => {
-                return fail(message);
+                return fail(HostTrouble::other(message));
             }
             Followed::Ended(message) => {
                 delay = RECONNECT_FIRST;
@@ -3583,29 +3623,35 @@ fn watch_sessions(id: &crate::hosts::HostId, tx: &UnboundedSender<ListEvent>) {
             }
             Followed::Failed(message) => message,
         };
-        if tx.unbounded_send(ListEvent::Reconnecting(reason)).is_err() {
+        if tx.unbounded_send(ListEvent::Reconnecting(reason)).is_err()
+            || !wait_while_listened(tx, delay)
+        {
             return;
-        }
-        let until = Instant::now() + delay;
-        while Instant::now() < until {
-            if tx.is_closed() {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(250));
         }
         delay = (delay * 2).min(RECONNECT_MOST);
     }
 }
 
-/// What a failure to reach a remote host means for the owner.
-fn link_failure(error: &anyhow::Error, host: &str) -> Option<String> {
+/// Waits `delay`, or less if the window stops listening; false then.
+fn wait_while_listened(tx: &UnboundedSender<ListEvent>, delay: Duration) -> bool {
+    let until = Instant::now() + delay;
+    while Instant::now() < until {
+        if tx.is_closed() {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    true
+}
+
+/// A failure only the owner can resolve; `None` when trying again may help.
+fn link_failure(error: &anyhow::Error) -> Option<HostTrouble> {
     match link_error(error)? {
-        hq_client::LinkError::NotKnown => Some(format!(
-            "{host} no longer knows this computer. Pair it again with Connect to a Host."
-        )),
-        mismatch @ hq_client::LinkError::Mismatch { .. } => Some(format!(
-            "{mismatch}. Update the older side so both run the same release."
-        )),
+        hq_client::LinkError::NotKnown => Some(HostTrouble::pair_again()),
+        hq_client::LinkError::Mismatch {
+            host_protocol,
+            host_version,
+        } => Some(HostTrouble::update(*host_protocol, host_version.clone())),
         _ => None,
     }
 }
@@ -3622,17 +3668,12 @@ fn link_error(error: &anyhow::Error) -> Option<&hq_client::LinkError> {
     })
 }
 
-fn follow_host(
-    id: &crate::hosts::HostId,
-    host: &hq_client::Host,
-    tx: &UnboundedSender<ListEvent>,
-) -> Followed {
-    let name = crate::hosts::name(id);
+fn follow_host(host: &hq_client::Host, tx: &UnboundedSender<ListEvent>) -> Followed {
     let (mut feed, catalog) = match SessionFeed::open(host, true) {
         Ok(opened) => opened,
         Err(error) => {
-            if let Some(message) = link_failure(&error, &name) {
-                return Followed::Final(message);
+            if let Some(trouble) = link_failure(&error) {
+                return Followed::Final(trouble);
             }
             return Followed::Failed(format!("cannot reach the Headquarter host: {error:#}"));
         }
@@ -3730,34 +3771,21 @@ mod tests {
     }
 
     #[test]
-    fn a_host_on_another_release_says_which_side_to_update() {
-        let message = link_failure(
-            &from_a_call(LinkError::Mismatch {
-                host_protocol: 14,
-                host_version: "0.1.24".into(),
-            }),
-            "server",
-        )
-        .expect("a final message");
-        assert!(
-            message.contains("Headquarter 0.1.24 (protocol 14)"),
-            "{message}"
-        );
-        assert!(
-            message.contains(&format!("protocol {}", hq_protocol::PROTOCOL_VERSION)),
-            "{message}"
-        );
-        assert!(message.contains("Update the older side"), "{message}");
+    fn a_host_on_another_release_needs_an_update_and_is_tried_again() {
+        let trouble = link_failure(&from_a_call(LinkError::Mismatch {
+            host_protocol: 14,
+            host_version: "0.1.24".into(),
+        }))
+        .expect("the owner has to act");
+        assert_eq!(trouble, HostTrouble::update(14, "0.1.24".into()));
+        assert!(trouble.retries());
     }
 
     #[test]
     fn a_host_that_removed_this_computer_asks_to_pair_again_and_a_drop_retries() {
-        let removed = link_failure(&from_a_call(LinkError::NotKnown), "server");
-        assert_eq!(
-            removed.as_deref(),
-            Some("server no longer knows this computer. Pair it again with Connect to a Host.")
-        );
+        let removed = link_failure(&from_a_call(LinkError::NotKnown));
+        assert_eq!(removed, Some(HostTrouble::pair_again()));
         let dropped = from_a_call(LinkError::Unreachable("timed out".into()));
-        assert_eq!(link_failure(&dropped, "server"), None, "reconnects instead");
+        assert_eq!(link_failure(&dropped), None, "reconnects instead");
     }
 }
