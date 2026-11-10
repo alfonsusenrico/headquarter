@@ -1,6 +1,6 @@
 # A Windows installer
 
-Status: proposed 2026-11-10, waiting for the owner's approval. Decisions: owner, 2026-11-10 (per
+Status: approved by the owner 2026-11-10 ("approve both windows plans"). Decisions: owner, 2026-11-10 (per
 user, an `.exe` setup wizard, installer only).
 
 ## Why
