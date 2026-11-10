@@ -21,9 +21,9 @@ remove it from Settings ▸ Apps.
 
 ## What Changes
 
-- An Inno Setup script (`packaging/windows/headquarter.iss`) and a release job that builds the
-  setup from the Windows build and adds it, with its `.sha256`, to the release and `sha256.sum`.
-- The Windows zip is no longer offered (D3).
+- An Inno Setup script (`packaging/windows/headquarter.iss`) and a release job that builds the app
+  and the setup and adds the setup, with its `.sha256`, to the release (D2).
+- Windows leaves `dist`'s targets, so the Windows zip is no longer built or offered (D3).
 - The app's update notice on Windows links to the release page, as now, where the setup is.
 - README's Windows section and `AGENTS.md`'s release kind and verify list name the setup.
 - A `-rc.1` goes first, because the release pipeline changes.

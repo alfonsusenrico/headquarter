@@ -26,4 +26,4 @@ The release SHALL offer the Windows app as `headquarter-setup-x86_64.exe`: a set
 
 #### Scenario: Checksums
 - **WHEN** the release is published
-- **THEN** `sha256.sum` and `headquarter-setup-x86_64.exe.sha256` match the setup
+- **THEN** `headquarter-setup-x86_64.exe.sha256` matches the setup, and the release carries no Windows zip

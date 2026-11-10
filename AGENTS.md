@@ -120,10 +120,11 @@ Where a standard does not fit, and what this project does instead:
 ## Release
 
 - Who: the agent on the owner's go
-- Kind: installer: host and app archives (Windows app `.zip`, unsigned), `install.sh` (full,
-  `--host-only`, `--app-only`), and the signed Android APK
+- Kind: installer: host and app archives for macOS and Linux, `install.sh` (full,
+  `--host-only`, `--app-only`), the Windows setup (unsigned), and the signed Android APK
 - Trigger: pushing a `v*` tag on `main` runs `release.yml` (`dist`). Its `custom-build-android`
-  job (`build-android.yml`, environment `android-release`) builds and signs the APK
+  job (`build-android.yml`, environment `android-release`) builds and signs the APK, and
+  `custom-build-windows-installer` (`build-windows-installer.yml`) builds the Windows setup
 - Versions: `vMAJOR.MINOR.PATCH`, one version for every crate and the APK (desktop and phone
   release together). A `-rc.N` pre-release goes first only when the release pipeline changed;
   an `-alpha.N` pre-release only on the owner's request (first: `v0.2.0-alpha.1`, 2026-11-02)
@@ -136,8 +137,8 @@ Where a standard does not fit, and what this project does instead:
   `git push origin vX.Y.Z`, then watch the `release.yml` run until every job succeeds
 - Staging and soak: none
 - Verify: every job succeeded; `releases/latest` is the new tag (not for a pre-release); the
-  assets (4 host and 5 app archives, `install.sh`, `source.tar.gz`, `sha256.sum`, the APK and
-  its `.sha256`) match their checksums, and no app archive holds `hq`. `apksigner verify
+  assets (4 host and 4 app archives, `install.sh`, `source.tar.gz`, `sha256.sum`, the APK, the
+  Windows setup, and their `.sha256`) match their checksums, and no app archive holds `hq`. `apksigner verify
   --print-certs` shows `CN=Headquarter`, SHA-256
   `7c64a1f2b6ba540fda5e93dc663b23dc6fb3e5bd19811b09dae1293e25ed5f64`, and the version name
   and code. The released `hq --version` prints the version

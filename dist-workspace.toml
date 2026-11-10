@@ -7,12 +7,11 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.32.0"
 ci = "github"
-# Windows builds the desktop app only, a client of remote hosts (add-windows-client D7);
-# each package names its own targets.
-targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# Each package names its own targets. Windows is not one of them: its setup is built by
+# ./build-windows-installer (add-windows-installer D2), so no Windows zip is published.
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
 # gzip, not xz: minimal Linux systems (Debian slim, Alpine) have no xz.
 unix-archive = ".tar.gz"
-windows-archive = ".zip"
 # Our own installer replaces dist's per-package ones (D1); it ships beside the archives.
 installers = []
 # Releases run only on version tags (D5); nothing runs on pull requests.
@@ -20,7 +19,8 @@ pr-run-mode = "skip"
 install-updater = false
 # The signed Android APK, built and signed in the same run (add-android-release D1). The
 # release is published only when it succeeds.
-global-artifacts-jobs = ["./build-android"]
+# The Windows setup (add-windows-installer D2), likewise.
+global-artifacts-jobs = ["./build-android", "./build-windows-installer"]
 # Actions pinned to commits, so a moved tag cannot change what a release runs; `dist generate`
 # writes them into release.yml. checkout v6.1.0, upload-artifact v7.0.2, download-artifact
 # v8.0.2. Update them together with the hand-written workflows.

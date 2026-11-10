@@ -24,28 +24,33 @@ The owner chose an `.exe` wizard and a per-user install (2026-11-10). Inno Setup
 Rejected: an `.msi` from `dist` (WiX). Its dialog is plainer, and per-user MSI installs are awkward
 (the owner chose the wizard). NSIS: equally capable, but its scripts are harder to read and keep.
 
-### D2. A release job builds the setup from the Windows build
+### D2. A release job builds the app and the setup
 
-`build-windows-installer.yml` runs as one more global artifacts job on `windows-2022`:
-1. It takes the Windows build's zip from the run's artifacts. If `dist` gives global jobs no
-   access to the local builds, it builds `headquarter-app.exe` itself with the same profile.
-2. It runs `ISCC`. Inno Setup is installed with Chocolatey when the runner image lacks it, pinned
-   to one version.
-3. It writes `headquarter-setup-x86_64.exe` and its `.sha256`.
+Windows leaves `dist`'s targets (the workspace's and the app's), so `dist` builds and publishes
+no Windows zip. `build-windows-installer.yml` runs as one more global artifacts job, like the
+APK's, on `windows-2022`:
+1. It builds `headquarter-app.exe` as `dist` did: `--profile dist`, no default features, locked.
+2. It checks that the app's version is the release's tag.
+3. It runs `ISCC` from the runner image, which lists Inno Setup 6.7.1 (2026-11-10). It stops if
+   Inno Setup is missing rather than install an unpinned copy.
+4. It writes `headquarter-setup-x86_64.exe` and its `.sha256` in `sha256sum`'s format.
 
-Both files join the release, and the setup's checksum joins `sha256.sum`. Which of the two ways
-step 1 can work is checked first, on the `-rc.1`.
+`dist` writes `sha256.sum` before custom jobs run, so the setup is checked by its own
+`.sha256`, as the APK is. The release waits for the job (`dist generate` adds it to `host`'s
+needs).
+
+Rejected: packing the zip that `dist` built. Every published file comes from the run's
+artifacts, so the zip would still be on the release page. Removing it afterwards would leave
+`sha256.sum` naming a missing file.
 
 ### D3. Installer only
 
-The owner chose a single Windows download (2026-11-10). If `dist` can keep the zip as an internal
-artifact without publishing it, it is dropped from the release. Otherwise the zip stays on the
-release page, unlinked from every document and from the app, and this is recorded as debt.
-Checked on `-rc.1`.
+The owner chose a single Windows download (2026-11-10). D2 gives it: the release carries the
+setup and no zip. `dist plan` for a tag lists no Windows artifact.
 
 ### D4. Verify list
 
-`AGENTS.md`'s verify list gets the setup and its checksum, and loses the zip if D3 drops it. On
+`AGENTS.md`'s verify list gets the setup and its checksum, and 4 app archives instead of 5. On
 the owner's PC: install, Start menu, open, update over an older setup, uninstall from Settings ▸
 Apps, data kept.
 

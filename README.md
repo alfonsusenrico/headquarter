@@ -128,7 +128,7 @@ curl -fsSL https://github.com/alfonsusenrico/headquarter/releases/latest/downloa
 ```
 
 On macOS and Linux this installs the app alone; on Windows, use the
-[zip](#on-windows-alpha). With no host on the computer, the app opens **Connect to a Host**
+[setup](#on-windows-alpha). With no host on the computer, the app opens **Connect to a Host**
 and shows the hosts you pair with. Prefer the archives? Each release has them:
 
 | Platform | Host | App |
@@ -137,7 +137,7 @@ and shows the hosts you pair with. Prefer the archives? Each release has them:
 | macOS, Intel | `hq-cli-x86_64-apple-darwin.tar.gz` | `hq-app-x86_64-apple-darwin.tar.gz` |
 | Linux, arm64 | `hq-cli-aarch64-unknown-linux-gnu.tar.gz` | `hq-app-aarch64-unknown-linux-gnu.tar.gz` |
 | Linux, x86-64 | `hq-cli-x86_64-unknown-linux-gnu.tar.gz` | `hq-app-x86_64-unknown-linux-gnu.tar.gz` |
-| Windows, x86-64 | none: no host on Windows | `hq-app-x86_64-pc-windows-msvc.zip` |
+| Windows, x86-64 | none: no host on Windows | `headquarter-setup-x86_64.exe` (a setup, below) |
 
 ### Changing, updating, removing
 
@@ -211,14 +211,19 @@ Headquarter host on your Mac, a Linux machine or a server, and the agents keep r
 Windows runs no host of its own.
 
 1. From the [releases page](https://github.com/alfonsusenrico/headquarter/releases), download
-   `hq-app-x86_64-pc-windows-msvc.zip`, unzip it and run `headquarter-app.exe`.
-2. The app is not signed yet, so Windows SmartScreen says it protected your PC. Choose
-   **More info**, then **Run anyway**. It asks once.
-3. On the host, show a pairing code (Remote Control… on a Mac, or `hq remote pair` on a
+   `headquarter-setup-x86_64.exe` and run it.
+2. The setup is not signed yet, so Windows SmartScreen says it protected your PC. Choose
+   **More info**, then **Run anyway**.
+3. The setup installs Headquarter for you alone, with no administrator prompt, into
+   `%LOCALAPPDATA%\Programs\Headquarter`, and adds it to the Start menu (and, if you tick
+   it, the desktop).
+4. On the host, show a pairing code (Remote Control… on a Mac, or `hq remote pair` on a
    server) and paste it into Connect to a Host, which the app opens on its first launch.
 
 The app keeps its settings, key and paired hosts in `%APPDATA%\Headquarter`. When a newer
-release is out it says so, with a link to download it.
+release is out it says so, with a link to its page: run the new setup over the old one, and
+it closes the app and updates it in place. Remove Headquarter in Settings ▸ Apps: your
+settings and paired hosts stay in `%APPDATA%\Headquarter` until you delete that folder.
 
 ## How light is it
 
