@@ -14,6 +14,7 @@ use super::{Pane, Workspace, watch_sessions};
 use crate::hosts::{self, HostId};
 use crate::merged::{self, DisplayIds, MergedGroups};
 use crate::sidebar::model::RowHost;
+use crate::trouble::HostTrouble;
 
 /// What the workspace knows per host.
 #[derive(Default)]
@@ -32,8 +33,8 @@ pub(super) struct Hosts {
     pub controls: HashMap<HostId, FeedControl>,
     /// Hosts being reached again, and why.
     pub away: HashMap<HostId, String>,
-    /// Hosts whose feed gave up, and why: removed there, versions differ, not installed.
-    pub failed: HashMap<HostId, String>,
+    /// Hosts the owner has to act on, and why: removed there, versions differ, not readable.
+    pub failed: HashMap<HostId, HostTrouble>,
     /// Hosts that answered with their list at least once.
     pub listed: Vec<HostId>,
     feeds: HashMap<HostId, Task<()>>,
@@ -243,6 +244,18 @@ impl Workspace {
         }
     }
 
+    /// What the sidebar says about each paired host the owner has to act on, in name order
+    /// (fix-hosts-menu-reason D2).
+    pub(super) fn trouble_lines(&self) -> Vec<String> {
+        trouble_lines(
+            self.hosts
+                .failed
+                .iter()
+                .filter(|(host, _)| **host != HostId::Local)
+                .map(|(host, trouble)| (hosts::name(host), trouble)),
+        )
+    }
+
     /// How each session's host shows in its row (D7).
     pub(super) fn row_hosts(&self) -> HashMap<String, RowHost> {
         let mut labels: HashMap<HostId, RowHost> = HashMap::new();
@@ -261,5 +274,36 @@ impl Workspace {
                 (id.clone(), shown)
             })
             .collect()
+    }
+}
+
+/// The lines for `(host name, trouble)` pairs, sorted by host name.
+fn trouble_lines<'a>(troubles: impl Iterator<Item = (String, &'a HostTrouble)>) -> Vec<String> {
+    let mut named: Vec<(String, &HostTrouble)> = troubles.collect();
+    named.sort_by_key(|(name, _)| name.to_lowercase());
+    named
+        .into_iter()
+        .map(|(name, trouble)| trouble.line(&name))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trouble_lines_follow_the_host_names() {
+        let update = HostTrouble::update(1, "0.1.0".into());
+        let removed = HostTrouble::pair_again();
+        let lines = trouble_lines(
+            [
+                ("server".to_owned(), &update),
+                ("Laptop".to_owned(), &removed),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("Laptop no longer knows"), "{lines:?}");
+        assert!(lines[1].starts_with("server needs an update"), "{lines:?}");
     }
 }
