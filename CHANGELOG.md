@@ -2,6 +2,47 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.4.0 (2026-11-13)
+
+Every computer's sessions in one list, a Windows setup, and clearer word when a computer can't be
+used. Only the desktop app talks differently to other computers, and it still speaks protocol 16:
+hosts on 0.3 keep working with it, and phones need no update.
+
+- One list for every computer. The sidebar shows this computer's sessions and every paired host's
+  together, with no switching between hosts. Sessions from another computer carry its name; this
+  computer's carry none.
+- Groups with the same name merge: an "ops" group on your Mac and one on your server show as one
+  "ops". Dragging a session into a group its computer doesn't have yet makes that group there.
+  Renaming, colouring, folding, ordering and deleting a group apply on every computer that has it.
+- The Hosts menu at the top of the sidebar lists each computer with its state, Connect to a
+  Host…, and Forget, which now asks first.
+- When a computer can't be reached, only its sessions dim and the sidebar says "Reconnecting to
+  <name>…". The others keep working.
+- When the app can't use one of your computers, the sidebar says why and what to do, for example
+  "server needs an update: it runs Headquarter 0.2.0-alpha.2, this app 0.4.0." The Hosts menu
+  shows it on the computer's row. After you update the older side, that computer's sessions come
+  back within 30 seconds by themselves, and Reconnect all in the Hosts menu tries every computer
+  that isn't connected at once.
+- New Session asks where to start: "Start on" lists your computers, starts on the selected
+  session's computer, and shows that computer's folders.
+- The usage rings show one computer's usage: this computer's when it runs a host, else the first
+  computer you paired. Choose another under "Usage from" in the usage details; the app remembers
+  it. Selecting a session no longer switches the rings, so another computer's unreadable usage no
+  longer looks like this one's. The Usage window (⌘U) still shows the selected session's computer.
+- Notifications from another computer name it in their title, for example "fix login · server".
+- A computer's name on a narrow row keeps its first four characters ("msig…") instead of
+  shrinking to "…".
+- Windows: `headquarter-setup-x86_64.exe` replaces the zip. It installs Headquarter for you alone,
+  with no administrator prompt, adds it to the Start menu (and, if you tick it, the desktop), and
+  updates in place when you run a newer one. Remove it in Settings ▸ Apps. Your settings and
+  paired hosts stay. SmartScreen asks once (More info ▸ Run anyway).
+- Windows: opening the app no longer flashes console windows. The app has its icon in Explorer,
+  the taskbar and Alt+Tab, and minimize, maximize and close buttons at its top right, with
+  Windows' snap layouts.
+- Windows: sessions on another computer no longer say their folder doesn't exist.
+- Headquarter now includes SQLite 3.54.1, which fixes a security issue when a database file is
+  opened next to a mismatched write-ahead log, and `rustix` 1.1.6 (RUSTSEC-2026-0486).
+
 ## 0.4.0-rc.2 (2026-11-10)
 
 A release candidate for 0.4.0, and the first with a Windows setup. The app's update check skips
