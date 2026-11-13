@@ -38,7 +38,7 @@ Rejected:
 
 The usage details (opened from a ring, the "more" chip or the rail) start with a "Usage from" row
 when more than one host is known: one small button per host, this computer first and then the
-paired hosts oldest first, named as in the Hosts menu, with the shown host filled. A host the app
+paired hosts oldest first, named as in the Hosts menu, with the shown host as the primary button, as in New Session's "Start on". A host the app
 holds no current usage for is disabled. Choosing one keeps the details open and shows that host's
 agents at once.
 
