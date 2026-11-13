@@ -448,16 +448,43 @@ Forget SHALL ask in place before forgetting: the row SHALL read "Forget <host>? 
 - **WHEN** the server needs an update and the owner forgets it
 - **THEN** its line leaves the sidebar and the app stops trying it
 
-### Requirement: Usage follows the selected session
-The usage footer SHALL show the usage of the selected session's host, naming the host when it is not this computer, and this computer's usage when nothing is selected. The Usage window (CPU and memory) SHALL show the same host's sessions and name it when it is not this computer.
-
-#### Scenario: A server session selected
-- **WHEN** the owner selects the server's health agent
-- **THEN** the footer shows the server's Claude and Codex usage, named "server"
-
 ### Requirement: New sessions on a chosen host
 When more than one host is connected, New Session SHALL ask which host starts the session, the selected session's host first, and its folder browser SHALL show that host's folders.
 
 #### Scenario: Starting on the server
 - **WHEN** the owner opens New Session, chooses the server and a folder there
 - **THEN** the session starts on the server and appears in the list with "server"
+
+### Requirement: Usage from one host
+The usage footer SHALL show one host's usage and SHALL NOT change when the owner selects a session. The host SHALL be the one the owner chose in the usage details while the app holds its usage, else this computer when it runs a host, else the first paired host the app holds usage for. The footer SHALL name the host when it is not this computer. The app SHALL remember the choice between runs and drop it when that host is forgotten.
+
+#### Scenario: Selecting a server session
+- **WHEN** this Mac runs a host and the owner selects a session on the paired server
+- **THEN** the footer keeps showing this Mac's usage, with no host name
+
+#### Scenario: Choosing the server
+- **WHEN** the owner opens the usage details and chooses the server under "Usage from"
+- **THEN** the footer shows the server's rings named "server", and still does after the app is reopened
+
+#### Scenario: A client without its own host
+- **WHEN** the app runs on Windows with two paired servers and no choice made
+- **THEN** the footer shows the first paired server's usage, named
+
+#### Scenario: The chosen host is away
+- **WHEN** the owner chose the server and the server stops answering
+- **THEN** the footer shows this Mac's usage, and the server's when it lists its sessions again
+
+#### Scenario: Forgetting the chosen host
+- **WHEN** the owner chose the server and then forgets it
+- **THEN** the footer shows this Mac's usage, and the app no longer keeps the choice
+
+#### Scenario: One host
+- **WHEN** only one host is known to the app
+- **THEN** the usage details show no "Usage from" row
+
+### Requirement: Usage window follows the selected session
+The Usage window (CPU and memory) SHALL measure the selected session's host, else the first host, and SHALL name the host when it is not this computer.
+
+#### Scenario: A server session selected
+- **WHEN** the owner selects the server's health agent and opens the Usage window
+- **THEN** the window measures the server and lists the server's sessions, named "host on server"

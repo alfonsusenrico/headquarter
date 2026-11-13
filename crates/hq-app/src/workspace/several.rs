@@ -42,7 +42,57 @@ pub(super) struct Hosts {
     pub forget_asked: Option<String>,
     /// The host New Session starts a session on (D4).
     pub new_on: HostId,
+    /// The host the owner chose for the usage footer, kept in `app-state.json`
+    /// (fix-usage-host D3).
+    pub usage_choice: Option<HostId>,
 }
+
+impl Hosts {
+    /// No host followed yet, with the usage host choice kept from the last run.
+    pub(super) fn kept() -> Hosts {
+        Hosts {
+            usage_choice: crate::app_state::path()
+                .and_then(|path| crate::app_state::load_usage_host(&path))
+                .map(|key| usage_host_from_key(&key)),
+            ..Hosts::default()
+        }
+    }
+}
+
+/// The footer's host (fix-usage-host D1): the chosen host while the app holds its usage,
+/// else this computer when it runs a host (`hosts` then starts with it), else the first host
+/// in pairing order the app holds usage for.
+pub(super) fn footer_host(
+    chosen: Option<&HostId>,
+    hosts: &[HostId],
+    holds: impl Fn(&HostId) -> bool,
+) -> Option<HostId> {
+    if let Some(chosen) = chosen.filter(|chosen| holds(chosen)) {
+        return Some(chosen.clone());
+    }
+    if hosts.contains(&HostId::Local) {
+        return Some(HostId::Local);
+    }
+    hosts.iter().find(|host| holds(host)).cloned()
+}
+
+/// How `app-state.json` names a host: `"local"` or the paired host's id.
+pub(super) fn usage_host_key(host: &HostId) -> String {
+    match host {
+        HostId::Local => LOCAL_KEY.to_owned(),
+        HostId::Remote(id) => id.clone(),
+    }
+}
+
+fn usage_host_from_key(key: &str) -> HostId {
+    if key == LOCAL_KEY {
+        HostId::Local
+    } else {
+        HostId::Remote(key.to_owned())
+    }
+}
+
+const LOCAL_KEY: &str = "local";
 
 impl Workspace {
     /// Starts following every host the app lists.
@@ -152,13 +202,53 @@ impl Workspace {
         }
     }
 
-    /// The host whose usage the footer shows: the selected session's, else this computer's,
-    /// else the first host (D5).
-    pub(super) fn usage_host(&self) -> HostId {
+    /// The selected session's host, else the first host: where New Session starts, a group
+    /// made empty goes, and the Usage window measures (fix-usage-host D4).
+    pub(super) fn selected_host(&self) -> HostId {
         if let Some(id) = self.selected.as_deref().or_else(|| self.shown_id()) {
             return self.host_of(id);
         }
         hosts::all().into_iter().next().unwrap_or(HostId::Local)
+    }
+
+    /// The host whose usage the footer shows (fix-usage-host D1); `None` before any host
+    /// reports usage.
+    pub(super) fn usage_host(&self) -> Option<HostId> {
+        footer_host(self.hosts.usage_choice.as_ref(), &hosts::all(), |host| {
+            self.holds_usage(host)
+        })
+    }
+
+    /// Whether the app has a current usage reading from `host`: it reported one and is
+    /// neither being reached again nor given up on.
+    pub(super) fn holds_usage(&self, host: &HostId) -> bool {
+        self.hosts.usage.contains_key(host)
+            && !self.hosts.away.contains_key(host)
+            && !self.hosts.failed.contains_key(host)
+    }
+
+    /// Shows `host`'s usage in the footer from now on and keeps the choice (D3).
+    pub(super) fn choose_usage_host(&mut self, host: HostId, cx: &mut Context<Self>) {
+        self.keep_usage_choice(Some(host));
+        // Details open on one agent stay open on the new host's first agent when it lacks
+        // that one.
+        if let Some(open) = self.usage_open {
+            let shown = self.shown_usage();
+            if !shown.iter().any(|usage| usage.agent == open) {
+                self.usage_open = shown.first().map(|usage| usage.agent);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Sets the usage host choice and writes it to `app-state.json`.
+    pub(super) fn keep_usage_choice(&mut self, choice: Option<HostId>) {
+        let key = choice.as_ref().map(usage_host_key);
+        self.hosts.usage_choice = choice;
+        if let Some(path) = crate::app_state::path() {
+            // The choice still holds for this run when the file cannot be written.
+            let _ = crate::app_state::save_usage_host(&path, key.as_deref());
+        }
     }
 
     /// This computer's sessions: the only ones quitting or updating may stop.
@@ -172,9 +262,8 @@ impl Workspace {
 
     /// The usage the footer shows.
     pub(super) fn shown_usage(&self) -> &[AgentUsage] {
-        self.hosts
-            .usage
-            .get(&self.usage_host())
+        self.usage_host()
+            .and_then(|host| self.hosts.usage.get(&host))
             .map_or(&[], Vec::as_slice)
     }
 
@@ -290,6 +379,70 @@ fn trouble_lines<'a>(troubles: impl Iterator<Item = (String, &'a HostTrouble)>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn remote(id: &str) -> HostId {
+        HostId::Remote(id.to_owned())
+    }
+
+    #[test]
+    fn the_footer_stays_on_one_host() {
+        let mac_and_server = [HostId::Local, remote("server")];
+        let all = |_: &HostId| true;
+        assert_eq!(
+            footer_host(None, &mac_and_server, all),
+            Some(HostId::Local),
+            "this computer when it runs a host"
+        );
+        assert_eq!(
+            footer_host(Some(&remote("server")), &mac_and_server, all),
+            Some(remote("server")),
+            "the chosen host"
+        );
+        let only_local = |host: &HostId| *host == HostId::Local;
+        assert_eq!(
+            footer_host(Some(&remote("server")), &mac_and_server, only_local),
+            Some(HostId::Local),
+            "a chosen host that is away falls back"
+        );
+        assert_eq!(
+            footer_host(Some(&remote("forgotten")), &mac_and_server, |host| {
+                *host != remote("forgotten")
+            }),
+            Some(HostId::Local),
+            "an unknown choice is no choice"
+        );
+    }
+
+    #[test]
+    fn a_client_without_a_host_shows_its_first_paired_host() {
+        let two_servers = [remote("first"), remote("second")];
+        assert_eq!(
+            footer_host(None, &two_servers, |_| true),
+            Some(remote("first"))
+        );
+        assert_eq!(
+            footer_host(None, &two_servers, |host| *host == remote("second")),
+            Some(remote("second")),
+            "the first one the app holds usage for"
+        );
+        assert_eq!(
+            footer_host(Some(&remote("second")), &two_servers, |_| true),
+            Some(remote("second"))
+        );
+        assert_eq!(
+            footer_host(None, &two_servers, |_| false),
+            None,
+            "no host yet"
+        );
+    }
+
+    #[test]
+    fn usage_host_keys_round_trip() {
+        for host in [HostId::Local, remote("b2f0c1")] {
+            assert_eq!(usage_host_from_key(&usage_host_key(&host)), host);
+        }
+        assert_eq!(usage_host_key(&HostId::Local), "local");
+    }
 
     #[test]
     fn trouble_lines_follow_the_host_names() {

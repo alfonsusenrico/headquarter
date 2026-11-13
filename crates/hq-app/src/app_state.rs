@@ -2,8 +2,8 @@
 //! width and whether it is the icon rail (`openspec/changes/add-sidebar-rail/design.md`,
 //! D4), the theme the owner chose (add-theme-switcher D4), the window's place and the
 //! session it showed (add-session-restore D3), and the sessions New session no longer
-//! offers (add-folder-sessions D4). Other keys in the file are kept as they are, so
-//! later state can join it.
+//! offers (add-folder-sessions D4), and the host the usage footer shows (fix-usage-host D3).
+//! Other keys in the file are kept as they are, so later state can join it.
 
 use std::path::{Path, PathBuf};
 
@@ -117,6 +117,25 @@ pub fn load_theme(path: &Path) -> Option<String> {
 /// Writes the theme choice's name, keeping the file's other keys.
 pub fn save_theme(path: &Path, name: &str) -> std::io::Result<()> {
     save_entry(path, "theme", json!(name))
+}
+
+/// The host the owner chose for the usage footer (fix-usage-host D3): `"local"` or a paired
+/// host's id, if one is kept.
+pub fn load_usage_host(path: &Path) -> Option<String> {
+    read(path)?
+        .get("usage_host")?
+        .as_str()
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)
+}
+
+/// Writes the usage host choice, or clears it with `None`, keeping the file's other keys.
+pub fn save_usage_host(path: &Path, key: Option<&str>) -> std::io::Result<()> {
+    save_entry(
+        path,
+        "usage_host",
+        key.map_or(Value::Null, |key| json!(key)),
+    )
 }
 
 /// Where the window was, in screen points.
@@ -386,6 +405,27 @@ mod tests {
         assert_eq!(load_sidebar(&path), SidebarState::default());
         std::fs::write(&path, r#"{"theme":7}"#).unwrap();
         assert_eq!(load_theme(&path), None, "an odd value is no choice");
+    }
+
+    #[test]
+    fn the_usage_host_is_kept_and_cleared_beside_the_rest() {
+        let path = file("usage-host");
+        assert_eq!(load_usage_host(&path), None, "no file, no choice");
+        save_theme(&path, "dark").unwrap();
+        save_usage_host(&path, Some("b2f0c1")).unwrap();
+        assert_eq!(load_usage_host(&path).as_deref(), Some("b2f0c1"));
+        assert_eq!(
+            load_theme(&path).as_deref(),
+            Some("dark"),
+            "the rest is kept"
+        );
+        save_usage_host(&path, None).unwrap();
+        assert_eq!(load_usage_host(&path), None, "cleared");
+        assert_eq!(load_theme(&path).as_deref(), Some("dark"));
+        std::fs::write(&path, r#"{"usage_host":3}"#).unwrap();
+        assert_eq!(load_usage_host(&path), None, "an odd value is no choice");
+        std::fs::write(&path, r#"{"usage_host":""}"#).unwrap();
+        assert_eq!(load_usage_host(&path), None, "an empty value is no choice");
     }
 
     #[test]

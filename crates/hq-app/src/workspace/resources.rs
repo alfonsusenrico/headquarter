@@ -304,7 +304,7 @@ impl Workspace {
         }
         self.usage_open = None;
         let sampler = Arc::new(Mutex::new(Sampler::new()));
-        let host = self.usage_host();
+        let host = self.selected_host();
         let measuring = host.clone();
         let refresh = cx.spawn_in(window, async move |this, cx| {
             loop {
