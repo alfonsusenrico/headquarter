@@ -19,7 +19,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{Disableable, Icon, IconName, Selectable, Sizable};
+use gpui_component::{Disableable, Icon, IconName, Sizable};
 use hq_client::{Change, FeedControl, SessionFeed};
 use hq_config::{AgentMarks, Appearance, SettingsWatcher};
 use hq_protocol::sidebar::Beside;
@@ -2937,27 +2937,30 @@ impl Workspace {
     }
 
     /// "Usage from" and one button per host, when more than one host is known
-    /// (fix-usage-host D2). The shown host is selected; a host without a current reading
-    /// cannot be chosen.
+    /// (fix-usage-host D2). The shown host is the primary button; a host without a current
+    /// reading cannot be chosen.
     fn render_usage_from(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let all = crate::hosts::all();
         if all.len() < 2 {
             return None;
         }
         let shown = self.usage_host();
-        let mut buttons = div().flex().flex_wrap().gap(px(4.));
+        let mut buttons = div().flex().flex_wrap().gap(px(6.));
         for (index, host) in all.into_iter().enumerate() {
-            let selected = shown.as_ref() == Some(&host);
+            let shown_here = shown.as_ref() == Some(&host);
             let button = Button::new(SharedString::from(format!("usage-from-{index}")))
-                .ghost()
-                .xsmall()
-                .selected(selected)
+                .small()
                 .disabled(!self.holds_usage(&host))
                 .label(crate::hosts::name(&host))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.choose_usage_host(host.clone(), cx);
                 }));
-            buttons = buttons.child(button);
+            // Styled as New Session's "Start on": the shown host is the primary button.
+            buttons = buttons.child(if shown_here {
+                button.primary()
+            } else {
+                button.ghost()
+            });
         }
         Some(
             div()
