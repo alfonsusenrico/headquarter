@@ -2,6 +2,17 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.4.1 (2026-11-14)
+
+- A release candidate is now offered its own release. An app on 0.4.0-rc.2 said it was on the
+  latest version after 0.4.0 came out. From now on, a candidate offers its release once it's
+  published, with that release's notes in What's new. If you run 0.4.0-rc.2, this is the update
+  your app offers.
+- After an update, an app on a release finds a host still on that release's candidate and offers
+  Restart to finish update.
+- The update window and Check for Updates… name the version you run as it is, for example
+  "Headquarter 0.4.0-rc.2 is the latest version."
+
 ## 0.4.0 (2026-11-13)
 
 Every computer's sessions in one list, a Windows setup, and clearer word when a computer can't be
