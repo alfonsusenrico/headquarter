@@ -18,7 +18,7 @@ use hq_client::Connect;
 
 use super::{Pane, Workspace, overlay};
 use crate::terminal::view::hsla;
-use crate::update::{self, Installed, LogLine, ReleaseNotes, Step, Version};
+use crate::update::{self, Build, Installed, LogLine, ReleaseNotes, Step, Version};
 
 /// Buttons shown together share this width, so a pair reads as one choice (owner,
 /// 2026-10-26).
@@ -180,9 +180,9 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let found = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                let running = Version::running();
                 match found {
-                    Ok(latest) if latest > running => {
+                    // A pre-release build is offered its own release (fix-update-from-pre-release).
+                    Ok(latest) if Build::running().is_older_than(latest) => {
                         if this.updates.available != Some(latest) {
                             this.updates.notes = Notes::NotLoaded;
                         }
@@ -193,7 +193,7 @@ impl Workspace {
                     }
                     // A quiet notice, so the pane stays uncovered (add-quiet-notice D3).
                     Ok(_) if manual => {
-                        let text = format!("Headquarter {running} is the latest version.");
+                        let text = latest_version_text();
                         this.show_notice(text, false, window, cx);
                     }
                     Err(error) if manual => {
@@ -221,11 +221,12 @@ impl Workspace {
             hq_client::host_version(&host).ok()
         });
         cx.spawn_in(window, async move |this, cx| {
-            let Some(host) = task.await.as_deref().and_then(Version::parse) else {
+            // A host on this release's candidate is behind it too (fix-update-from-pre-release D2).
+            let Some(host) = task.await.as_deref().and_then(Build::parse) else {
                 return;
             };
             let _ = this.update_in(cx, |this, _, cx| {
-                this.updates.host_behind = host < Version::running();
+                this.updates.host_behind = host < Build::running();
                 cx.notify();
             });
         })
@@ -316,7 +317,7 @@ impl Workspace {
         self.updates.notes = Notes::Loading;
         let task = cx
             .background_executor()
-            .spawn(async move { update::notes_since(Version::running(), latest) });
+            .spawn(async move { update::notes_since(Build::running(), latest) });
         cx.spawn_in(window, async move |this, cx| {
             let found = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -409,7 +410,10 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .child(chip(format!("v{} installed", Version::running()), false))
+                        .child(chip(
+                            format!("v{} installed", update::running_text()),
+                            false,
+                        ))
                         .child(div().text_color(muted).child("→"))
                         .child(chip(format!("v{latest}"), true)),
                 ),
@@ -831,19 +835,19 @@ impl Workspace {
                 .label(label)
                 .on_click(cx.listener(|this, _, window, cx| this.close_update_window(window, cx)))
         };
-        let running = Version::running();
         let mut body = div().flex().flex_col().gap(px(12.));
         let mut buttons = div().flex().justify_end().gap(px(8.));
         match (&self.updates.phase, self.updates.available) {
             (Phase::Offer, None) if !self.updates.host_behind => {
-                body = body.child(muted(format!(
-                    "Headquarter {running} is the latest version."
-                )));
+                body = body.child(muted(latest_version_text()));
                 buttons = buttons.child(later("OK"));
             }
             (Phase::Offer, None) => {
                 body = body
-                    .child(heading(format!("Restart to finish updating to {running}")))
+                    .child(heading(format!(
+                        "Restart to finish updating to {}",
+                        update::running_text()
+                    )))
                     .child(muted(
                         "The background host still runs the version before. Restarting starts your running sessions again on their conversations."
                             .to_owned(),
@@ -1145,6 +1149,16 @@ fn at_log_end(offset_y: f32, max_y: f32) -> bool {
     -offset_y >= max_y - LOG_END_SLACK
 }
 
+/// What a check that finds nothing newer says, naming this build as it is: "Headquarter
+/// 0.4.0-rc.2 is the latest version." (fix-update-from-pre-release D3).
+fn latest_version_text() -> String {
+    latest_version_text_for(update::running_text())
+}
+
+fn latest_version_text_for(build: &str) -> String {
+    format!("Headquarter {build} is the latest version.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1185,5 +1199,13 @@ mod tests {
         assert!(!escape_closes(&Phase::Asking), "Wait or Restart Now only");
         assert!(!escape_closes(&Phase::Running(Step::Download)));
         assert!(!escape_closes(&Phase::Restarting));
+    }
+
+    #[test]
+    fn the_latest_version_text_names_the_build_as_it_is() {
+        assert_eq!(
+            latest_version_text_for("0.4.0-rc.2"),
+            "Headquarter 0.4.0-rc.2 is the latest version."
+        );
     }
 }
