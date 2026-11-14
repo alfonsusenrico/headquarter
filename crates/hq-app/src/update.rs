@@ -46,18 +46,57 @@ impl Version {
         );
         parts.next().is_none().then_some(version)
     }
+}
 
-    /// This app's own version. A pre-release build (0.1.14-rc.1) counts as the release it
-    /// leads to, so it runs, and that release is not offered to it as an update.
-    pub fn running() -> Version {
-        Version::of_build(env!("CARGO_PKG_VERSION"))
-            .expect("the crate version starts with major.minor.patch")
+/// A build's version: the release it leads to, and whether it is a pre-release of it
+/// (fix-update-from-pre-release D1). Builds order as semver orders versions: a pre-release
+/// comes just before its own release and after every earlier one, so `0.4.0-rc.2` is older
+/// than `0.4.0` and newer than `0.3.1`. Pre-releases are not ordered among themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Build {
+    release: Version,
+    /// False for a pre-release, so it sorts before the release with the same number.
+    released: bool,
+}
+
+impl Build {
+    /// Reads `0.1.14` or `0.1.14-rc.1`.
+    pub fn parse(text: &str) -> Option<Build> {
+        let text = text.trim();
+        match text.split_once('-') {
+            Some((release, suffix)) if !suffix.is_empty() => Some(Build {
+                release: Version::parse(release)?,
+                released: false,
+            }),
+            Some(_) => None,
+            None => Some(Build::from(Version::parse(text)?)),
+        }
     }
 
-    /// The release a build's version leads to: `0.1.14` from `0.1.14` or `0.1.14-rc.1`.
-    fn of_build(text: &str) -> Option<Version> {
-        Version::parse(text.split_once('-').map_or(text, |(release, _)| release))
+    /// This app's own build.
+    pub fn running() -> Build {
+        Build::parse(running_text()).expect("the crate version starts with major.minor.patch")
     }
+
+    /// Whether `release` is newer than this build, and so an update for it.
+    pub fn is_older_than(self, release: Version) -> bool {
+        self < Build::from(release)
+    }
+}
+
+impl From<Version> for Build {
+    fn from(release: Version) -> Build {
+        Build {
+            release,
+            released: true,
+        }
+    }
+}
+
+/// This app's version as built, such as `0.4.0` or `0.4.0-rc.2`, for the texts that name it
+/// (D3).
+pub fn running_text() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }
 
 impl fmt::Display for Version {
@@ -125,8 +164,8 @@ pub struct Change {
 }
 
 /// The notes of every release after `installed` up to `latest`, newest first, from
-/// one request for the recent releases.
-pub fn notes_since(installed: Version, latest: Version) -> Result<Vec<ReleaseNotes>> {
+/// one request for the recent releases. A pre-release build gets its own release's notes.
+pub fn notes_since(installed: Build, latest: Version) -> Result<Vec<ReleaseNotes>> {
     let releases = curl(&["-fsSL", &format!("{}/releases?per_page=30", api_base())])
         .context("couldn't read the release notes")?;
     releases_between(&releases, installed, latest)
@@ -134,7 +173,7 @@ pub fn notes_since(installed: Version, latest: Version) -> Result<Vec<ReleaseNot
 }
 
 /// Published releases newer than `installed` and not past `latest`, newest first.
-fn releases_between(json: &[u8], installed: Version, latest: Version) -> Option<Vec<ReleaseNotes>> {
+fn releases_between(json: &[u8], installed: Build, latest: Version) -> Option<Vec<ReleaseNotes>> {
     let releases: serde_json::Value = serde_json::from_slice(json).ok()?;
     let mut found: Vec<ReleaseNotes> = releases
         .as_array()?
@@ -142,7 +181,7 @@ fn releases_between(json: &[u8], installed: Version, latest: Version) -> Option<
         .filter(|release| release["draft"] != true && release["prerelease"] != true)
         .filter_map(|release| {
             let version = Version::parse(release["tag_name"].as_str()?)?;
-            (installed < version && version <= latest).then(|| ReleaseNotes {
+            (installed.is_older_than(version) && version <= latest).then(|| ReleaseNotes {
                 version,
                 date: release["published_at"].as_str().and_then(display_date),
                 changes: changes_in(release["body"].as_str().unwrap_or_default()),
@@ -548,7 +587,7 @@ mod tests {
 
     #[test]
     fn notes_list_the_releases_after_the_installed_one_newest_first() {
-        let installed = Version::parse("0.1.10").unwrap();
+        let installed = Build::parse("0.1.10").unwrap();
         let latest = Version::parse("0.1.12").unwrap();
         let notes = releases_between(RELEASES.as_bytes(), installed, latest).unwrap();
         let versions: Vec<String> = notes.iter().map(|n| n.version.to_string()).collect();
@@ -586,9 +625,28 @@ mod tests {
     fn notes_without_the_section_have_no_changes() {
         assert!(changes_in("Some text\n- a bullet").is_empty());
         assert_eq!(
-            releases_between(b"{}", Version(0, 1, 0), Version(0, 2, 0)),
+            releases_between(b"{}", Build::from(Version(0, 1, 0)), Version(0, 2, 0)),
             None
         );
+    }
+
+    #[test]
+    fn a_release_candidate_gets_its_release_notes() {
+        let versions = |installed: &str| -> Vec<String> {
+            let installed = Build::parse(installed).unwrap();
+            releases_between(RELEASES.as_bytes(), installed, Version(0, 1, 12))
+                .unwrap()
+                .iter()
+                .map(|notes| notes.version.to_string())
+                .collect()
+        };
+        assert_eq!(versions("0.1.12-rc.2"), ["0.1.12"]);
+        assert_eq!(
+            versions("0.1.12"),
+            Vec::<String>::new(),
+            "the release itself has none"
+        );
+        assert_eq!(versions("0.1.11-rc.1"), ["0.1.12", "0.1.11"]);
     }
 
     #[test]
@@ -609,13 +667,38 @@ mod tests {
             "pre-releases are skipped"
         );
         assert_eq!(Version::parse("0.2"), None);
-        // A build's own version may be a pre-release: it counts as the release it leads to.
-        assert_eq!(Version::of_build("0.1.14-rc.1"), Some(Version(0, 1, 14)));
-        assert_eq!(Version::of_build("0.1.14"), Some(Version(0, 1, 14)));
-        assert_eq!(Version::of_build("rc.1"), None);
         assert_eq!(Version::parse("0.1.9.1"), None);
         assert_eq!(Version(0, 1, 9).to_string(), "0.1.9");
-        assert!(Version::parse(&Version::running().to_string()).is_some());
+    }
+
+    #[test]
+    fn a_pre_release_comes_just_before_its_release() {
+        let build = |text| Build::parse(text).unwrap();
+        let rc = build("0.4.0-rc.2");
+        assert!(
+            rc.is_older_than(Version(0, 4, 0)),
+            "its own release is an update"
+        );
+        assert!(rc.is_older_than(Version(0, 4, 1)));
+        assert!(
+            !rc.is_older_than(Version(0, 3, 1)),
+            "an earlier release is not"
+        );
+        let release = build("0.4.0");
+        assert!(!release.is_older_than(Version(0, 4, 0)));
+        assert!(release.is_older_than(Version(0, 4, 1)));
+        assert!(
+            rc < release,
+            "a host on the candidate is behind an app on the release"
+        );
+        assert!(
+            !(build("0.4.0-rc.1") < build("0.4.0-rc.2")),
+            "pre-releases are not ordered among themselves"
+        );
+        assert_eq!(Build::parse("0.4.0-"), None);
+        assert_eq!(Build::parse("rc.1"), None);
+        assert_eq!(Build::parse("0.4"), None);
+        assert!(Build::parse(running_text()).is_some());
     }
 
     #[test]
