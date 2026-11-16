@@ -143,6 +143,9 @@ Where a standard does not fit, and what this project does instead:
   --print-certs` shows `CN=Headquarter`, SHA-256
   `7c64a1f2b6ba540fda5e93dc663b23dc6fb3e5bd19811b09dae1293e25ed5f64`, and the version name
   and code. The released `hq --version` prints the version
+- After (owner, 2026-11-16): remove what the work left behind: debug builds on the owner's phone
+  and their pairings on the host, sandbox hosts and folders, downloads, and scratch files holding
+  pairing codes or captures. Keep `research/evidence/`
 - Rollback: a published tag is never moved or reused; fix forward with the next patch release.
   Marking a broken release as a pre-release (the app's update check skips it) needs the owner
 

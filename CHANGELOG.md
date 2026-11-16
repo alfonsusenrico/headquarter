@@ -2,6 +2,19 @@
 
 All notable changes to Headquarter. Versions follow [Semantic Versioning](https://semver.org).
 
+## 0.4.2 (2026-11-16)
+
+Update the phone app, this computer and your servers together: the fixes are on both sides.
+
+- The phone no longer reconnects while you scroll. A command sent while a piece of output was
+  half received could cut it, and the phone then dropped the connection and dialled again.
+- Scrolling a fullscreen agent on the phone keeps up with your finger. The phone sends the next
+  scroll only once the one before it has come back, so a slow connection scrolls in bigger steps
+  instead of freezing behind a queue of repaints.
+- Opening a fullscreen session on the phone, or reconnecting to one, shows it laid out for the
+  phone within a moment, instead of replaying old screens drawn for another window first.
+- The phone app's log says why each connection ended, without any of your content.
+
 ## 0.4.1 (2026-11-14)
 
 - A release candidate is now offered its own release. An app on 0.4.0-rc.2 said it was on the
