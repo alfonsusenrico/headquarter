@@ -505,9 +505,8 @@ impl Hosted {
         }
     }
 
-    /// Adds a viewer: sends the catch-up buffer, then resizes the PTY so the agent
-    /// redraws at the viewer's size.
-    /// Adds a viewer, which is then in use: the agent redraws at its size.
+    /// Adds a viewer, which is then in use: sends the catch-up buffer (only the modes for a
+    /// full-screen agent), then has the agent redraw at the viewer's size.
     pub fn attach(self: &Arc<Self>, viewer: Viewer) {
         let (cols, rows) = (viewer.cols, viewer.rows);
         let id = viewer.id;
@@ -516,15 +515,28 @@ impl Hosted {
             // catch-up copy and live forwarding.
             let buffer = lock(&self.buffer);
             let preamble = buffer.modes.preamble();
-            if !preamble.is_empty() {
-                let _ = viewer.tx.send(Outgoing::Frame(Frame::Output(preamble)));
-            }
             let (front, back) = buffer.bytes.as_slices();
-            for part in [front, back] {
-                for chunk in part.chunks(CATCH_UP_CHUNK) {
-                    let _ = viewer
-                        .tx
-                        .send(Outgoing::Frame(Frame::Output(chunk.to_vec())));
+            let mut now = Modes::new();
+            for part in [preamble.as_slice(), front, back] {
+                now.observe(part);
+            }
+            if now.alternate_screen() {
+                // A full-screen agent repaints for this viewer just below. Its old frames are
+                // drawn for other sizes and over a slow link only hold that repaint up
+                // (fix-phone-scroll-link D6), so the viewer gets the modes in effect now.
+                let _ = viewer
+                    .tx
+                    .send(Outgoing::Frame(Frame::Output(now.preamble())));
+            } else {
+                if !preamble.is_empty() {
+                    let _ = viewer.tx.send(Outgoing::Frame(Frame::Output(preamble)));
+                }
+                for part in [front, back] {
+                    for chunk in part.chunks(CATCH_UP_CHUNK) {
+                        let _ = viewer
+                            .tx
+                            .send(Outgoing::Frame(Frame::Output(chunk.to_vec())));
+                    }
                 }
             }
             let viewers = &mut *lock(&self.viewers);
