@@ -21,9 +21,9 @@ const SCROLL_REPORTS: u32 = 10;
 /// How long a scroll batch counts as on its way without an answer, in case the answer never
 /// comes (fix-phone-scroll-link D5).
 const BATCH_STALE: Duration = Duration::from_secs(2);
-/// The most drag lines kept waiting for the next batch: two batches, so a drag that outruns the
-/// link scrolls in bigger steps and stops soon after the finger.
-const SCROLL_KEPT: i32 = 2 * SCROLL_REPORTS as i32;
+/// The most drag lines kept waiting for the next batch: one batch, so a drag that outruns the
+/// link scrolls in bigger steps and stops one answer after the finger.
+const SCROLL_KEPT: i32 = SCROLL_REPORTS as i32;
 
 /// What a drag on the terminal did (fix-phone-scroll-link D5).
 #[derive(Debug, PartialEq, Eq)]
@@ -525,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn a_batch_is_at_most_ten_reports_and_two_are_kept() {
+    fn a_batch_is_at_most_ten_reports_and_one_is_kept() {
         let mut terminal = full_screen();
         let start = Instant::now();
         let Dragged::Send(first) = terminal.drag(1, 5, 5, start) else {
@@ -536,9 +536,7 @@ mod tests {
             terminal.drag(1, 5, 5, start);
         }
         let second = terminal.batch_answered(start).unwrap();
-        assert_eq!(reports(&second), 10, "one batch is ten reports");
-        let third = terminal.batch_answered(start).unwrap();
-        assert_eq!(reports(&third), 10, "a second batch was kept");
+        assert_eq!(reports(&second), 10, "one batch is ten reports, kept");
         assert_eq!(
             terminal.batch_answered(start),
             None,
