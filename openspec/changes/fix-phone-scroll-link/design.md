@@ -72,8 +72,10 @@ which is too slow direct or too fast relayed.
 ### D6. A full-screen session reattaches without its old frames
 
 When the session is on the alternate screen, the host sends the attaching viewer the terminal
-modes (as now) but not the catch-up buffer, then resizes so the agent repaints for that viewer. An
-inline session keeps the replay, since its history is the phone's scrollback. Rejected: capping the
+modes (as now) but not the catch-up buffer, then resizes so the agent repaints for that viewer.
+When the size does not change, the host's existing forced redraw (`session.rs`, `redraw`) makes
+the agent repaint, so the viewer never waits on a blank screen. An inline session keeps the
+replay, since its history is the phone's scrollback. Rejected: capping the
 replay at a size, which still shows stale frames, only fewer.
 
 ### Not in this change
