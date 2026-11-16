@@ -49,6 +49,14 @@ impl Modes {
         self.parser.advance(&mut self.state, bytes);
     }
 
+    /// Whether the observed output left the terminal on its alternate screen, as a full-screen
+    /// agent keeps it.
+    pub fn alternate_screen(&self) -> bool {
+        TRACKED.iter().enumerate().any(|(index, &(mode, _))| {
+            matches!(mode, 47 | 1047 | 1049) && self.state.set[index] == Some(true)
+        })
+    }
+
     /// The sequences that put a fresh terminal in the observed modes: only modes away
     /// from their reset state.
     pub fn preamble(&self) -> Vec<u8> {
@@ -92,6 +100,18 @@ impl Perform for ModeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_alternate_screen_is_known_until_left() {
+        let mut modes = Modes::new();
+        assert!(!modes.alternate_screen());
+        modes.observe(b"\x1b[?1049h");
+        assert!(modes.alternate_screen());
+        modes.observe(b"\x1b[?1049l");
+        assert!(!modes.alternate_screen(), "left again");
+        modes.observe(b"\x1b[?47h");
+        assert!(modes.alternate_screen(), "the older form too");
+    }
 
     fn preamble_after(chunks: &[&[u8]]) -> String {
         let mut modes = Modes::new();

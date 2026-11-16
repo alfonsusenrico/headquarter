@@ -24,7 +24,7 @@ mod terminal;
 use computers::{Computer, Computers};
 use link::{Command, Link};
 pub use mirror::{GroupRows, Home, PastConversation, Row, RowStatus, UsageMeter};
-use terminal::Terminal;
+use terminal::{Dragged, Terminal};
 pub use terminal::{Key, Paint, Screen, Span};
 
 uniffi::setup_scaffolding!();
@@ -129,7 +129,13 @@ struct State {
     watching: bool,
     /// An image on its way to the computer (add-image-upload D6).
     sending: Option<Sending>,
+    /// Connection events for the app's log, oldest first, until the app takes them
+    /// (fix-phone-scroll-link D1).
+    link_log: std::collections::VecDeque<String>,
 }
+
+/// The connection events kept while the app is away; older ones are dropped.
+const LINK_LOG_KEPT: usize = 32;
 
 /// How far an image being sent has got, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
@@ -172,6 +178,16 @@ impl Shared {
             .iter()
             .find(|known| known.id == id)
             .cloned()
+    }
+
+    /// Keeps a connection event for the app's log: how a link was made or ended, never
+    /// content.
+    pub(crate) fn note_link(&self, line: String) {
+        let mut state = self.lock();
+        if state.link_log.len() == LINK_LOG_KEPT {
+            state.link_log.pop_front();
+        }
+        state.link_log.push_back(line);
     }
 
     pub(crate) fn set_link(&self, status: LinkStatus) {
@@ -453,6 +469,7 @@ impl Phone {
                     holder: None,
                     watching: false,
                     sending: None,
+                    link_log: std::collections::VecDeque::new(),
                 }),
             }),
             key: SecretKey::from_bytes(&bytes),
@@ -463,6 +480,12 @@ impl Phone {
     /// Moves whenever anything below changes.
     pub fn version(&self) -> u64 {
         self.shared.version.load(Ordering::SeqCst)
+    }
+
+    /// The connection events since the last call, oldest first, for the app's log
+    /// (fix-phone-scroll-link D1).
+    pub fn take_link_log(&self) -> Vec<String> {
+        self.shared.lock().link_log.drain(..).collect()
     }
 
     /// Blocks until the version moves past `seen`, or for `timeout_ms`, and returns it. The
@@ -769,14 +792,18 @@ impl Phone {
     /// A full-screen agent scrolls itself, so it is sent wheel reports or arrows; other
     /// output scrolls the phone's history (fix-phone-scroll D1).
     pub fn scroll(&self, lines: i32, row: u16, col: u16) {
-        let to_agent = match self.shared.lock().terminal.as_mut() {
-            Some(terminal) => terminal.scroll(lines, row, col),
+        let dragged = match self.shared.lock().terminal.as_mut() {
+            Some(terminal) => terminal.drag(lines, row, col, Instant::now()),
             None => return,
         };
-        if to_agent.is_empty() {
-            self.shared.changed();
-        } else if let Ok(tx) = self.link_tx() {
-            let _ = tx.send(Command::Input(to_agent));
+        match dragged {
+            Dragged::Local => self.shared.changed(),
+            Dragged::Waiting => {}
+            Dragged::Send(batch) => {
+                if let Ok(tx) = self.link_tx() {
+                    send_scroll_batch(self.runtime.handle(), Arc::clone(&self.shared), tx, batch);
+                }
+            }
         }
     }
 
@@ -946,6 +973,44 @@ async fn pair_once(
     connection.close(0u32.into(), b"paired");
     endpoint.close().await;
     outcome
+}
+
+/// Sends a scroll batch, then a request the computer answers in order behind the output it
+/// has queued: `Usage`, the cheapest one every computer answers without side effects of its
+/// own. Its answer means the output from before this batch has arrived, and the lines dragged
+/// meanwhile go as the next batch (fix-phone-scroll-link D5).
+fn send_scroll_batch(
+    runtime: &tokio::runtime::Handle,
+    shared: Arc<Shared>,
+    tx: tokio::sync::mpsc::UnboundedSender<Command>,
+    batch: Vec<u8>,
+) {
+    if tx.send(Command::Input(batch)).is_err() {
+        return;
+    }
+    let (answer, answered) = oneshot::channel();
+    if tx
+        .send(Command::Ask {
+            request: Request::Usage {},
+            answer,
+        })
+        .is_err()
+    {
+        return;
+    }
+    let next_runtime = runtime.clone();
+    runtime.spawn(async move {
+        // A lost link drops the answer at once; the batch's own timeout covers the rest.
+        let _ = answered.await;
+        let next = shared
+            .lock()
+            .terminal
+            .as_mut()
+            .and_then(|terminal| terminal.batch_answered(Instant::now()));
+        if let Some(next) = next {
+            send_scroll_batch(&next_runtime, shared, tx, next);
+        }
+    });
 }
 
 #[cfg(test)]

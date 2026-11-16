@@ -4,6 +4,7 @@
 //! and dark tokens decide them.
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Scroll};
@@ -17,6 +18,62 @@ use hq_links::LinkFinder;
 const SCROLLBACK_LINES: usize = 2000;
 /// The most wheel reports or arrows one scroll sends, as the desktop's wheel.
 const SCROLL_REPORTS: u32 = 10;
+/// How long a scroll batch counts as on its way without an answer, in case the answer never
+/// comes (fix-phone-scroll-link D5).
+const BATCH_STALE: Duration = Duration::from_secs(2);
+/// The most drag lines kept waiting for the next batch: one batch, so a drag that outruns the
+/// link scrolls in bigger steps and stops one answer after the finger.
+const SCROLL_KEPT: i32 = SCROLL_REPORTS as i32;
+
+/// What a drag on the terminal did (fix-phone-scroll-link D5).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Dragged {
+    /// The phone's own history scrolled.
+    Local,
+    /// The lines wait for the batch on its way to be answered.
+    Waiting,
+    /// A batch for the agent to send now.
+    Send(Vec<u8>),
+}
+
+/// Drag lines for a full-screen agent, sent one batch at a time: the next batch waits until
+/// the computer has answered after the last one, so a slow link never queues repaints
+/// (fix-phone-scroll-link D5).
+#[derive(Debug, Default)]
+struct ScrollBatch {
+    pending: i32,
+    row: u16,
+    col: u16,
+    /// When the batch on its way was sent.
+    out_since: Option<Instant>,
+}
+
+impl ScrollBatch {
+    fn add(&mut self, lines: i32, row: u16, col: u16) {
+        self.pending = (self.pending + lines).clamp(-SCROLL_KEPT, SCROLL_KEPT);
+        self.row = row;
+        self.col = col;
+    }
+
+    /// The lines to send now, at most one batch: none while a batch is on its way.
+    fn take(&mut self, now: Instant) -> Option<(i32, u16, u16)> {
+        let waiting = self
+            .out_since
+            .is_some_and(|since| now.duration_since(since) < BATCH_STALE);
+        if waiting || self.pending == 0 {
+            return None;
+        }
+        let most = SCROLL_REPORTS as i32;
+        let lines = self.pending.clamp(-most, most);
+        self.pending -= lines;
+        self.out_since = Some(now);
+        Some((lines, self.row, self.col))
+    }
+
+    fn answered(&mut self) {
+        self.out_since = None;
+    }
+}
 
 /// A colour as the app resolves it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -123,6 +180,7 @@ pub(crate) struct Terminal {
     replies: Arc<Mutex<Vec<u8>>>,
     size: Size,
     links: LinkFinder,
+    batch: ScrollBatch,
 }
 
 impl Terminal {
@@ -142,7 +200,41 @@ impl Terminal {
             replies,
             size,
             links: LinkFinder::new(),
+            batch: ScrollBatch::default(),
         }
+    }
+
+    /// A drag of `lines` at a cell. The phone's own history scrolls at once. For a full-screen
+    /// agent the lines join the next batch, which goes when the batch before it was answered.
+    pub fn drag(&mut self, lines: i32, row: u16, col: u16, now: Instant) -> Dragged {
+        if lines == 0 {
+            return Dragged::Waiting;
+        }
+        if !self.scrolls_agent() {
+            self.scroll(lines, row, col);
+            return Dragged::Local;
+        }
+        self.batch.add(lines, row, col);
+        self.next_batch(now).map_or(Dragged::Waiting, Dragged::Send)
+    }
+
+    /// The computer answered after the last batch: the lines waiting since may go.
+    pub fn batch_answered(&mut self, now: Instant) -> Option<Vec<u8>> {
+        self.batch.answered();
+        self.next_batch(now)
+    }
+
+    fn next_batch(&mut self, now: Instant) -> Option<Vec<u8>> {
+        let (lines, row, col) = self.batch.take(now)?;
+        let bytes = self.scroll(lines, row, col);
+        (!bytes.is_empty()).then_some(bytes)
+    }
+
+    /// Whether a drag goes to the agent (wheel reports or arrows) rather than the history.
+    fn scrolls_agent(&self) -> bool {
+        let mode = *self.term.mode();
+        (mode.intersects(TermMode::MOUSE_MODE) && mode.contains(TermMode::SGR_MOUSE))
+            || mode.contains(TermMode::ALT_SCREEN)
     }
 
     /// Feeds agent output. Returns the replies the terminal owes the agent.
@@ -403,6 +495,81 @@ fn indexed(index: u8) -> Paint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A terminal whose agent asked for SGR wheel reports, as Claude Code's fullscreen mode does.
+    fn full_screen() -> Terminal {
+        let mut terminal = Terminal::new(40, 10);
+        terminal.feed(b"\x1b[?1049h\x1b[?1000h\x1b[?1006h");
+        terminal
+    }
+
+    fn reports(bytes: &[u8]) -> usize {
+        String::from_utf8_lossy(bytes).matches("\x1b[<").count()
+    }
+
+    #[test]
+    fn one_scroll_batch_is_on_its_way_at_a_time() {
+        let mut terminal = full_screen();
+        let start = Instant::now();
+        let Dragged::Send(first) = terminal.drag(2, 5, 5, start) else {
+            panic!("the first drag goes at once");
+        };
+        assert_eq!(reports(&first), 2);
+        assert_eq!(terminal.drag(3, 5, 5, start), Dragged::Waiting);
+        assert_eq!(terminal.drag(4, 5, 5, start), Dragged::Waiting);
+        let next = terminal
+            .batch_answered(start)
+            .expect("the waiting lines go");
+        assert_eq!(reports(&next), 7, "both drags in one batch");
+        assert_eq!(terminal.batch_answered(start), None, "nothing waits");
+    }
+
+    #[test]
+    fn a_batch_is_at_most_ten_reports_and_one_is_kept() {
+        let mut terminal = full_screen();
+        let start = Instant::now();
+        let Dragged::Send(first) = terminal.drag(1, 5, 5, start) else {
+            panic!("sent");
+        };
+        assert_eq!(reports(&first), 1);
+        for _ in 0..50 {
+            terminal.drag(1, 5, 5, start);
+        }
+        let second = terminal.batch_answered(start).unwrap();
+        assert_eq!(reports(&second), 10, "one batch is ten reports, kept");
+        assert_eq!(
+            terminal.batch_answered(start),
+            None,
+            "the rest of a fast drag is dropped"
+        );
+    }
+
+    #[test]
+    fn an_unanswered_batch_stops_holding_after_two_seconds() {
+        let mut terminal = full_screen();
+        let start = Instant::now();
+        assert!(matches!(terminal.drag(1, 5, 5, start), Dragged::Send(_)));
+        assert_eq!(
+            terminal.drag(1, 5, 5, start + Duration::from_secs(1)),
+            Dragged::Waiting
+        );
+        assert!(matches!(
+            terminal.drag(1, 5, 5, start + Duration::from_secs(3)),
+            Dragged::Send(_)
+        ));
+    }
+
+    #[test]
+    fn opposite_drags_cancel_out_and_history_scrolls_at_once() {
+        let mut terminal = full_screen();
+        let start = Instant::now();
+        assert!(matches!(terminal.drag(3, 5, 5, start), Dragged::Send(_)));
+        terminal.drag(2, 5, 5, start);
+        terminal.drag(-2, 5, 5, start);
+        assert_eq!(terminal.batch_answered(start), None, "they cancelled");
+        let mut inline = Terminal::new(40, 10);
+        assert_eq!(inline.drag(3, 5, 5, start), Dragged::Local);
+    }
 
     #[test]
     fn output_lands_on_the_screen_with_its_colours() {

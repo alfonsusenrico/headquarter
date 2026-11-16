@@ -319,6 +319,20 @@ impl Conn {
         }
         seen
     }
+
+    /// All output that arrives within `wait`.
+    fn output_for(&mut self, wait: Duration) -> String {
+        let deadline = Instant::now() + wait;
+        let mut seen = String::new();
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.frames.recv_timeout(left) {
+                Ok(Frame::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+                Ok(_) => {}
+                Err(_) => return seen,
+            }
+        }
+    }
 }
 
 fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
@@ -500,7 +514,7 @@ fn modes_after(bytes: &[u8]) -> alacritty_terminal::term::TermMode {
 }
 
 #[test]
-fn a_late_viewer_gets_the_modes_set_before_its_catch_up() {
+fn a_late_viewer_of_a_full_screen_agent_gets_its_modes_not_its_old_frames() {
     use alacritty_terminal::term::TermMode;
     let mut env = TestEnv::new("modes");
     env.stub("agy", FULL_SCREEN_STUB);
@@ -523,7 +537,12 @@ fn a_late_viewer_gets_the_modes_set_before_its_catch_up() {
         }),
         Response::Attached { .. }
     ));
-    let replay = late.output_until("filler-done");
+    let replay = late.output_for(Duration::from_secs(1));
+    assert!(
+        !replay.contains("filler-done") && !replay.contains("xxxx"),
+        "no old frames (fix-phone-scroll-link D6): {} bytes",
+        replay.len()
+    );
     let modes = modes_after(replay.as_bytes());
     for (mode, name) in [
         (TermMode::ALT_SCREEN, "alternate screen"),
@@ -531,12 +550,40 @@ fn a_late_viewer_gets_the_modes_set_before_its_catch_up() {
         (TermMode::SGR_MOUSE, "SGR mouse"),
         (TermMode::BRACKETED_PASTE, "bracketed paste"),
     ] {
-        assert!(modes.contains(mode), "{name} lost in the catch-up");
+        assert!(modes.contains(mode), "{name} lost");
     }
     assert!(
         !modes.contains(TermMode::FOCUS_IN_OUT),
         "a mode switched off again stays off"
     );
+}
+
+/// An agent that prints inline and stays on the main screen.
+const INLINE_STUB: &str = r#"printf 'inline-1\ninline-2\ninline-done\n'
+sleep 30
+"#;
+
+#[test]
+fn a_late_viewer_of_an_inline_agent_gets_its_output_again() {
+    let mut env = TestEnv::new("inline");
+    env.stub("agy", INLINE_STUB);
+    env.start_daemon();
+    let session = env.create(Agent::Agy);
+    let mut first = env.connect();
+    first.request(&Request::Attach {
+        session: session.id.clone(),
+        cols: 80,
+        rows: 24,
+    });
+    first.output_until("inline-done");
+    let mut late = env.connect();
+    late.request(&Request::Attach {
+        session: session.id.clone(),
+        cols: 80,
+        rows: 24,
+    });
+    let replay = late.output_until("inline-done");
+    assert!(replay.contains("inline-1"), "the history comes again");
 }
 
 /// A Claude Code stand-in that reports a background Bash call through the hooks, as
