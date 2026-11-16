@@ -24,7 +24,7 @@ mod terminal;
 use computers::{Computer, Computers};
 use link::{Command, Link};
 pub use mirror::{GroupRows, Home, PastConversation, Row, RowStatus, UsageMeter};
-use terminal::Terminal;
+use terminal::{Dragged, Terminal};
 pub use terminal::{Key, Paint, Screen, Span};
 
 uniffi::setup_scaffolding!();
@@ -792,14 +792,18 @@ impl Phone {
     /// A full-screen agent scrolls itself, so it is sent wheel reports or arrows; other
     /// output scrolls the phone's history (fix-phone-scroll D1).
     pub fn scroll(&self, lines: i32, row: u16, col: u16) {
-        let to_agent = match self.shared.lock().terminal.as_mut() {
-            Some(terminal) => terminal.scroll(lines, row, col),
+        let dragged = match self.shared.lock().terminal.as_mut() {
+            Some(terminal) => terminal.drag(lines, row, col, Instant::now()),
             None => return,
         };
-        if to_agent.is_empty() {
-            self.shared.changed();
-        } else if let Ok(tx) = self.link_tx() {
-            let _ = tx.send(Command::Input(to_agent));
+        match dragged {
+            Dragged::Local => self.shared.changed(),
+            Dragged::Waiting => {}
+            Dragged::Send(batch) => {
+                if let Ok(tx) = self.link_tx() {
+                    send_scroll_batch(self.runtime.handle(), Arc::clone(&self.shared), tx, batch);
+                }
+            }
         }
     }
 
@@ -969,6 +973,44 @@ async fn pair_once(
     connection.close(0u32.into(), b"paired");
     endpoint.close().await;
     outcome
+}
+
+/// Sends a scroll batch, then a request the computer answers in order behind the output it
+/// has queued: `Usage`, the cheapest one every computer answers without side effects of its
+/// own. Its answer means the output from before this batch has arrived, and the lines dragged
+/// meanwhile go as the next batch (fix-phone-scroll-link D5).
+fn send_scroll_batch(
+    runtime: &tokio::runtime::Handle,
+    shared: Arc<Shared>,
+    tx: tokio::sync::mpsc::UnboundedSender<Command>,
+    batch: Vec<u8>,
+) {
+    if tx.send(Command::Input(batch)).is_err() {
+        return;
+    }
+    let (answer, answered) = oneshot::channel();
+    if tx
+        .send(Command::Ask {
+            request: Request::Usage {},
+            answer,
+        })
+        .is_err()
+    {
+        return;
+    }
+    let next_runtime = runtime.clone();
+    runtime.spawn(async move {
+        // A lost link drops the answer at once; the batch's own timeout covers the rest.
+        let _ = answered.await;
+        let next = shared
+            .lock()
+            .terminal
+            .as_mut()
+            .and_then(|terminal| terminal.batch_answered(Instant::now()));
+        if let Some(next) = next {
+            send_scroll_batch(&next_runtime, shared, tx, next);
+        }
+    });
 }
 
 #[cfg(test)]
