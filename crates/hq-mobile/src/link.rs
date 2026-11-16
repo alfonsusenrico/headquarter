@@ -350,7 +350,7 @@ async fn connect(
     let mut session = Session {
         shared,
         send,
-        recv,
+        recv: Some(recv),
         pending: VecDeque::new(),
     };
     // Subscribe before listing, as the desktop does: a change between the two is then
@@ -424,7 +424,8 @@ fn removed_by_computer(connection: &Connection) -> bool {
 struct Session<'a> {
     shared: &'a Arc<Shared>,
     send: SendStream,
-    recv: RecvStream,
+    /// Read directly during setup, then handed to the frame reader for good.
+    recv: Option<RecvStream>,
     /// Answers owed, oldest first: the host answers in order.
     pending: VecDeque<oneshot::Sender<Response>>,
 }
@@ -439,7 +440,7 @@ impl Session<'_> {
     async fn ask_now(&mut self, request: Request) -> Option<Response> {
         self.write(&Frame::request(&request)).await.ok()?;
         loop {
-            match hq_remote::read_frame(&mut self.recv).await {
+            match hq_remote::read_frame(self.recv.as_mut()?).await {
                 Ok(Some(Frame::Control(bytes))) => {
                     let response = Response::parse(&bytes).ok()?;
                     if let Taken::Answer(answer) = self.shared.take_in(response) {
@@ -453,9 +454,25 @@ impl Session<'_> {
     }
 
     async fn serve(&mut self, rx: &mut mpsc::UnboundedReceiver<Command>) -> Ending {
+        let Some(recv) = self.recv.take() else {
+            return lost(true, "the stream was already being read");
+        };
+        let (mut frames, reader) = read_frames(recv);
+        let ending = self.serve_frames(&mut frames, rx).await;
+        reader.abort();
+        ending
+    }
+
+    async fn serve_frames(
+        &mut self,
+        frames: &mut Frames,
+        rx: &mut mpsc::UnboundedReceiver<Command>,
+    ) -> Ending {
         loop {
             tokio::select! {
-                frame = hq_remote::read_frame(&mut self.recv) => match frame {
+                // A channel, not `read_frame` itself: a command winning this race must never
+                // drop half a frame (fix-phone-scroll-link D4).
+                frame = frames.recv() => match frame.unwrap_or(Ok(None)) {
                     Ok(Some(Frame::Control(bytes))) => {
                         let Ok(response) = Response::parse(&bytes) else { continue };
                         match self.shared.take_in(response) {
@@ -506,6 +523,29 @@ impl Session<'_> {
     }
 }
 
+/// Whole frames from the computer, or how reading ended.
+type Frames = mpsc::Receiver<Result<Option<Frame>, hq_protocol::FrameError>>;
+
+/// Reads frames whole in a task of its own and hands them over a channel. Reading a frame is
+/// two `read_exact` calls, which lose bytes if dropped halfway, so `read_frame` must never be one
+/// side of a `select!` (fix-phone-scroll-link D4). The task ends after the stream does.
+fn read_frames<R>(mut recv: R) -> (Frames, tokio::task::JoinHandle<()>)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    let (frames_tx, frames) = mpsc::channel(16);
+    let reader = tokio::spawn(async move {
+        loop {
+            let frame = hq_remote::read_frame(&mut recv).await;
+            let more = matches!(frame, Ok(Some(_)));
+            if frames_tx.send(frame).await.is_err() || !more {
+                break;
+            }
+        }
+    });
+    (frames, reader)
+}
+
 fn lost(was_connected: bool, why: impl Into<String>) -> Ending {
     Ending::Lost {
         was_connected,
@@ -552,6 +592,41 @@ fn path_kind(connection: &Connection) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_command_mid_frame_loses_no_bytes() {
+        let (mut computer, phone) = tokio::io::duplex(64);
+        let (mut frames, _reader) = read_frames(phone);
+        let first = Frame::Output(vec![7; 300]);
+        let second = Frame::Output(vec![9; 40]);
+        let mut wire = Vec::new();
+        hq_remote::write_frame(&mut wire, &first).await.unwrap();
+        hq_remote::write_frame(&mut wire, &second).await.unwrap();
+        // The computer sends the frames a few bytes at a time while commands keep winning the
+        // race, as a drag's scroll commands do.
+        let sender = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            for chunk in wire.chunks(7) {
+                computer.write_all(chunk).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            computer
+        });
+        let mut ticks = tokio::time::interval(Duration::from_micros(100));
+        let mut got = Vec::new();
+        while got.len() < 2 {
+            tokio::select! {
+                frame = frames.recv() => got.push(frame.unwrap().unwrap().unwrap()),
+                _ = ticks.tick() => {}
+            }
+        }
+        assert_eq!(got, [first, second]);
+        drop(sender.await.unwrap());
+        assert!(
+            matches!(frames.recv().await, Some(Ok(None))),
+            "the end of the stream comes through"
+        );
+    }
 
     #[test]
     fn each_ending_has_one_log_line_without_content() {
