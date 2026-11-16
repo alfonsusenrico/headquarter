@@ -37,10 +37,49 @@ again, and whether and how the link ends.
 on Wi-Fi and then on mobile data. A capture with a personal notification is deleted. No PIN is
 entered.
 
-## Phase 2
+## Phase 1 findings (2026-11-16)
 
-Written here from Phase 1's evidence and shown to the owner before it is built. Candidates are in
-the proposal.
+Reproduced with the stand-in phone and a stand-in full-screen agent over n0's relay
+(`research/evidence/fix-phone-scroll-link/summary.md`):
+
+1. Dropped links: `Session::serve` races `read_frame` against commands in `tokio::select!`.
+   `read_frame` is not cancellation-safe (two `read_exact`), so a command arriving mid-frame drops
+   bytes and the next header is read from payload: `read: frame of 993085467 bytes exceeds
+   1048576`, three times in a 10 s drag. Reading frames in a task of their own kept the link
+   through the same drags.
+2. Freeze: about 100 KB/s of repaints for a finger-paced drag against about 42 KB/s through the
+   relay: the screen was 15.5 s behind after a 10 s drag (0.5 s direct).
+3. Rescaled look: a reattach replays up to 1 MB of old frames, some drawn for another viewer's
+   size, before the agent repaints for the phone.
+
+## Phase 2 decisions (proposed, for the owner's approval)
+
+### D4. Frames are read whole, in a task of their own
+
+The serving loop waits on a channel the reader task fills, which is cancellation-safe. Setup
+(`ask_now`) reads as now, before the task starts. Rejected: making `read_frame` resumable (a
+buffered reader kept across `select!` rounds): more code in a shared crate for the same result.
+
+### D5. One scroll batch in flight
+
+The core adds a drag's lines to a pending count and sends them as one batch of wheel reports (at
+most 10) only when the previous batch has been answered: output arrived from the session, or
+300 ms passed. Over a fast link that is every frame. Over a slow relay the scroll takes bigger
+steps instead of queueing repaints, so the screen stays within one batch of the finger. Arrow keys
+on the alternate screen without mouse reports follow the same rule. Rejected: a fixed rate limit,
+which is too slow direct or too fast relayed.
+
+### D6. A full-screen session reattaches without its old frames
+
+When the session is on the alternate screen, the host sends the attaching viewer the terminal
+modes (as now) but not the catch-up buffer, then resizes so the agent repaints for that viewer. An
+inline session keeps the replay, since its history is the phone's scrollback. Rejected: capping the
+replay at a size, which still shows stale frames, only fewer.
+
+### Not in this change
+
+Why the phone is never direct on Wi-Fi: recorded in the evidence with the owner's phone, fixed
+separately if it is Headquarter's.
 
 ## Risks
 
