@@ -7,10 +7,10 @@
 - [x] 1.2 Reproduction with the stand-in phone and a stand-in full-screen agent over n0's relay
   (D2). Evidence: `research/evidence/fix-phone-scroll-link/`: wheel reports sent, output bytes per
   second, catch-up time, how the link ended.
-- [ ] 1.3 With the owner's go: the owner's phone with `adb logcat` on Wi-Fi and mobile data (D3),
+- [x] 1.3 (2026-11-16, verification.md) With the owner's go: the owner's phone with `adb logcat` on Wi-Fi and mobile data (D3),
   folded into 3.2 since Phase 1 confirmed the causes without it. Evidence: the log lines, saved
   without personal data.
-- [ ] 1.4 Why the phone is never direct on Wi-Fi, during 3.2 on the owner's phone. Evidence: a note
+- [x] 1.4 (2026-11-16: the host logs the path only at connect time; follow-up) Why the phone is never direct on Wi-Fi, during 3.2 on the owner's phone. Evidence: a note
   in `research/evidence/`.
 - [x] 1.5 Write the confirmed cause and the chosen fix into `design.md` (Phase 2) and show the
   owner before building it.
@@ -36,7 +36,7 @@ Expected Result: a minute of scrolling keeps the link, and a reconnect shows the
 
 - [x] 3.1 (2026-11-16 at c752fe1: check 666 tests, android-core, ktlint, Lint, debug APK) `./scripts/check`, `./scripts/android-core`, the Android build and Lint; the Windows check
   runs on the pull request.
-- [ ] 3.2 With the owner's go: a debug APK on the owner's phone, a minute of scrolling a fullscreen
+- [x] 3.2 (2026-11-16, verification.md) With the owner's go: a debug APK on the owner's phone, a minute of scrolling a fullscreen
   Claude Code session on Wi-Fi and on mobile data.
 - [ ] 3.3 After the owner accepts: archive, push `fix/phone-scroll-link`, open the PR, report its
   URL.
