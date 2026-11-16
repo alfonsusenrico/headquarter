@@ -62,12 +62,23 @@ buffered reader kept across `select!` rounds): more code in a shared crate for t
 
 ### D5. One scroll batch in flight
 
-The core adds a drag's lines to a pending count and sends them as one batch of wheel reports (at
-most 10) only when the previous batch has been answered: output arrived from the session, or
-300 ms passed. Over a fast link that is every frame. Over a slow relay the scroll takes bigger
-steps instead of queueing repaints, so the screen stays within one batch of the finger. Arrow keys
-on the alternate screen without mouse reports follow the same rule. Rejected: a fixed rate limit,
-which is too slow direct or too fast relayed.
+The core adds a drag's lines to a pending count (at most one batch, 10 lines, kept) and sends them
+as one batch of wheel reports (at most 10) only when the previous batch has been answered. Arrow
+keys on the alternate screen without mouse reports follow the same rule. Over a fast link that is
+every frame. Over a slow relay the scroll takes bigger steps instead of queueing repaints, and stops
+one answer after the finger.
+
+"Answered" is the answer to a `Usage` request sent right behind each batch (2 s at most, should it
+never come). The computer answers requests in order behind the output it has already queued for
+the phone, so the answer arrives only once the output from before the batch has. `Usage` is the
+cheapest request every computer answers with no side effect beyond its own interval-limited
+Codex read. Changed while building (2026-11-16) from "output arrived, or 300 ms": during a relay
+backlog old output keeps arriving, which would release a batch per frame and keep the backlog; and
+from two batches kept to one, which brought the stand-in from 2.0 s to 1.5 s behind the finger.
+
+Rejected: a fixed rate limit, which is too slow direct or too fast relayed. A new `Ping` request:
+a host that does not know a request closes the connection, so it needs a protocol bump and every
+computer, app and phone updated together.
 
 ### D6. A full-screen session reattaches without its old frames
 
