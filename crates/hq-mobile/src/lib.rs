@@ -129,7 +129,13 @@ struct State {
     watching: bool,
     /// An image on its way to the computer (add-image-upload D6).
     sending: Option<Sending>,
+    /// Connection events for the app's log, oldest first, until the app takes them
+    /// (fix-phone-scroll-link D1).
+    link_log: std::collections::VecDeque<String>,
 }
+
+/// The connection events kept while the app is away; older ones are dropped.
+const LINK_LOG_KEPT: usize = 32;
 
 /// How far an image being sent has got, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
@@ -172,6 +178,16 @@ impl Shared {
             .iter()
             .find(|known| known.id == id)
             .cloned()
+    }
+
+    /// Keeps a connection event for the app's log: how a link was made or ended, never
+    /// content.
+    pub(crate) fn note_link(&self, line: String) {
+        let mut state = self.lock();
+        if state.link_log.len() == LINK_LOG_KEPT {
+            state.link_log.pop_front();
+        }
+        state.link_log.push_back(line);
     }
 
     pub(crate) fn set_link(&self, status: LinkStatus) {
@@ -453,6 +469,7 @@ impl Phone {
                     holder: None,
                     watching: false,
                     sending: None,
+                    link_log: std::collections::VecDeque::new(),
                 }),
             }),
             key: SecretKey::from_bytes(&bytes),
@@ -463,6 +480,12 @@ impl Phone {
     /// Moves whenever anything below changes.
     pub fn version(&self) -> u64 {
         self.shared.version.load(Ordering::SeqCst)
+    }
+
+    /// The connection events since the last call, oldest first, for the app's log
+    /// (fix-phone-scroll-link D1).
+    pub fn take_link_log(&self) -> Vec<String> {
+        self.shared.lock().link_log.drain(..).collect()
     }
 
     /// Blocks until the version moves past `seen`, or for `timeout_ms`, and returns it. The

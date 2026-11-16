@@ -90,8 +90,9 @@ impl Link {
 
 /// How one connection ended.
 enum Ending {
-    /// Dropped or unreachable. Try again.
-    Lost { was_connected: bool },
+    /// Dropped or unreachable. Try again. `why` names the cause without content, for the
+    /// phone's log (fix-phone-scroll-link D1).
+    Lost { was_connected: bool, why: String },
     /// No point retrying until something changes: the phone was removed, or the versions
     /// differ.
     Final(LinkStatus),
@@ -116,7 +117,9 @@ async fn run(
             None => LinkStatus::Connecting,
             Some(since_ms) => LinkStatus::Reconnecting { since_ms, attempts },
         });
-        match connect(&shared, &key, &computer, &mut rx).await {
+        let ending = connect(&shared, &key, &computer, &mut rx).await;
+        shared.note_link(ending_line(&ending));
+        match ending {
             Ending::Stopped => return,
             Ending::Final(status) => {
                 shared.set_link(status);
@@ -126,7 +129,7 @@ async fn run(
                 }
                 return;
             }
-            Ending::Lost { was_connected } => {
+            Ending::Lost { was_connected, .. } => {
                 // A link being stopped, or for a computer just forgotten, says nothing more:
                 // the status now belongs to whatever replaced it.
                 if rx.is_closed() || shared.computer(&id).is_none() {
@@ -303,24 +306,19 @@ async fn connect(
     computer: &Computer,
     rx: &mut mpsc::UnboundedReceiver<Command>,
 ) -> Ending {
-    let lost = Ending::Lost {
-        was_connected: false,
-    };
     let Some(addr) = address(computer) else {
         return Ending::Final(LinkStatus::NotKnown);
     };
     let relays = relays_for(computer.relay.as_deref());
-    let Ok((endpoint, connection, mut send, mut recv)) = dial(key, &relays, addr).await else {
-        return lost;
+    let (endpoint, connection, mut send, mut recv) = match dial(key, &relays, addr).await {
+        Ok(dialled) => dialled,
+        Err(error) => return lost(false, format!("dial: {error}")),
     };
     let hello = Request::Hello {
         protocol: PROTOCOL_VERSION,
     };
-    if hq_remote::write_frame(&mut send, &Frame::request(&hello))
-        .await
-        .is_err()
-    {
-        return lost;
+    if let Err(error) = hq_remote::write_frame(&mut send, &Frame::request(&hello)).await {
+        return lost(false, format!("hello: {error}"));
     }
     // The gateway's welcome comes first. A refusal instead means the computer no longer
     // knows this phone.
@@ -341,13 +339,13 @@ async fn connect(
             code: ErrorCode::NotAllowed,
             ..
         }) => return Ending::Final(LinkStatus::NotKnown),
-        _ => return lost,
+        _ => return lost(false, "no welcome from the gateway"),
     }
     if !matches!(
         read_response(&mut recv).await,
         Some(Response::Welcome { .. })
     ) {
-        return lost;
+        return lost(false, "no welcome from the host");
     }
     let mut session = Session {
         shared,
@@ -366,10 +364,12 @@ async fn connect(
             Some(Response::Sessions { sessions, groups }) => shared.listed(sessions, groups),
             Some(Response::Usage { agents }) => shared.usage(agents),
             Some(Response::Done) => {}
-            _ => return lost,
+            _ => return lost(false, "no answer while setting up"),
         }
     }
     shared.connected(connection.clone());
+    let connected_at = std::time::Instant::now();
+    shared.note_link(format!("link connected: path {}", path_kind(&connection)));
     if let Some(open) = shared.reopen() {
         let request = match open.shell {
             true => Request::AttachShell {
@@ -384,10 +384,8 @@ async fn connect(
             },
         };
         let (answer, _ignored) = oneshot::channel();
-        if session.write(&Frame::request(&request)).await.is_err() {
-            return Ending::Lost {
-                was_connected: true,
-            };
+        if let Err(error) = session.write(&Frame::request(&request)).await {
+            return lost(true, format!("write: {error}"));
         }
         session.pending.push_back(answer);
     }
@@ -397,6 +395,14 @@ async fn connect(
         Ending::Lost { .. } if removed_by_computer(&connection) => {
             Ending::Final(LinkStatus::NotKnown)
         }
+        Ending::Lost { was_connected, why } => Ending::Lost {
+            was_connected,
+            why: format!(
+                "{why}; path {}; connected {} s",
+                path_kind(&connection),
+                connected_at.elapsed().as_secs()
+            ),
+        },
         ending => ending,
     };
     shared.disconnected(&connection);
@@ -424,10 +430,8 @@ struct Session<'a> {
 }
 
 impl Session<'_> {
-    async fn write(&mut self, frame: &Frame) -> Result<(), ()> {
-        hq_remote::write_frame(&mut self.send, frame)
-            .await
-            .map_err(|_| ())
+    async fn write(&mut self, frame: &Frame) -> Result<(), hq_protocol::FrameError> {
+        hq_remote::write_frame(&mut self.send, frame).await
     }
 
     /// Sends a request during setup and waits for its answer, taking in the changes that
@@ -449,9 +453,6 @@ impl Session<'_> {
     }
 
     async fn serve(&mut self, rx: &mut mpsc::UnboundedReceiver<Command>) -> Ending {
-        let lost = Ending::Lost {
-            was_connected: true,
-        };
         loop {
             tokio::select! {
                 frame = hq_remote::read_frame(&mut self.recv) => match frame {
@@ -467,20 +468,24 @@ impl Session<'_> {
                             Taken::Read(session) => {
                                 let (answer, _ignored) = oneshot::channel();
                                 self.pending.push_back(answer);
-                                if self.write(&Frame::request(&Request::Seen { session })).await.is_err() {
-                                    return lost;
+                                let seen = Frame::request(&Request::Seen { session });
+                                if let Err(error) = self.write(&seen).await {
+                                    return lost(true, format!("write: {error}"));
                                 }
                             }
                         }
                     }
                     Ok(Some(Frame::Output(bytes))) => {
                         let replies = self.shared.output(&bytes);
-                        if !replies.is_empty() && self.write(&Frame::Input(replies)).await.is_err() {
-                            return lost;
+                        if !replies.is_empty()
+                            && let Err(error) = self.write(&Frame::Input(replies)).await
+                        {
+                            return lost(true, format!("write: {error}"));
                         }
                     }
                     Ok(Some(Frame::Input(_))) => {}
-                    _ => return lost,
+                    Ok(None) => return lost(true, "the computer ended the stream"),
+                    Err(error) => return lost(true, format!("read: {error}")),
                 },
                 command = rx.recv() => {
                     let written = match command {
@@ -492,8 +497,8 @@ impl Session<'_> {
                         Some(Command::Tell(request)) => self.write(&Frame::request(&request)).await,
                         Some(Command::Input(bytes)) => self.write(&Frame::Input(bytes)).await,
                     };
-                    if written.is_err() {
-                        return lost;
+                    if let Err(error) = written {
+                        return lost(true, format!("write: {error}"));
                     }
                 }
             }
@@ -501,9 +506,79 @@ impl Session<'_> {
     }
 }
 
+fn lost(was_connected: bool, why: impl Into<String>) -> Ending {
+    Ending::Lost {
+        was_connected,
+        why: why.into(),
+    }
+}
+
+/// The phone's log line for how a link ended: connection events only, never a session, input or
+/// output (fix-phone-scroll-link D1).
+fn ending_line(ending: &Ending) -> String {
+    match ending {
+        Ending::Lost {
+            was_connected: true,
+            why,
+        } => format!("link lost: {why}"),
+        Ending::Lost {
+            was_connected: false,
+            why,
+        } => format!("link not made: {why}"),
+        Ending::Final(status) => format!("link gave up: {}", final_reason(status)),
+        Ending::Stopped => "link stopped by the app".to_owned(),
+    }
+}
+
+fn final_reason(status: &LinkStatus) -> &'static str {
+    match status {
+        LinkStatus::NotKnown => "the computer no longer knows this phone",
+        LinkStatus::ComputerTooOld { .. } => "the computer runs an older Headquarter",
+        LinkStatus::AppTooOld { .. } => "the computer runs a newer Headquarter",
+        _ => "no computer to reach",
+    }
+}
+
+/// Whether the connection runs through a relay or directly.
+fn path_kind(connection: &Connection) -> &'static str {
+    let paths = connection.paths();
+    match paths.iter().find(|path| path.is_selected()) {
+        Some(path) if path.is_relay() => "relayed",
+        Some(_) => "direct",
+        None => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_ending_has_one_log_line_without_content() {
+        assert_eq!(
+            ending_line(&lost(
+                true,
+                "read: connection error: timed out; path relayed; connected 41 s"
+            )),
+            "link lost: read: connection error: timed out; path relayed; connected 41 s"
+        );
+        assert_eq!(
+            ending_line(&lost(false, "dial: no route")),
+            "link not made: dial: no route"
+        );
+        assert_eq!(ending_line(&Ending::Stopped), "link stopped by the app");
+        assert_eq!(
+            ending_line(&Ending::Final(LinkStatus::ComputerTooOld {
+                version: "0.1.13".into()
+            })),
+            "link gave up: the computer runs an older Headquarter",
+            "no version or name in the line"
+        );
+        assert_eq!(
+            ending_line(&Ending::Final(LinkStatus::NotKnown)),
+            "link gave up: the computer no longer knows this phone"
+        );
+    }
 
     #[test]
     fn a_version_difference_names_the_side_to_update() {

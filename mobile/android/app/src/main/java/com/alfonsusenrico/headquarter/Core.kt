@@ -106,6 +106,8 @@ class Core(
                 var seen = versionFlow.value
                 while (isActive) {
                     val now = phone.waitChange(seen, WAIT_MS)
+                    // How links were made and ended, connection events only (fix-phone-scroll-link D1).
+                    phone.takeLinkLog().forEach { android.util.Log.i("Headquarter", it) }
                     if (now != seen) {
                         seen = now
                         versionFlow.value = now
